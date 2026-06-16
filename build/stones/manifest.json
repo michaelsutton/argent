@@ -1,0 +1,96 @@
+{
+  "app": "Stones",
+  "root": "/home/michael/kaspanet/argent/examples/stones/app.ag",
+  "modules": [
+    "/home/michael/kaspanet/argent/examples/stones/app.ag",
+    "/home/michael/kaspanet/argent/examples/stones/types.ag",
+    "/home/michael/kaspanet/argent/examples/stones/league.ag",
+    "/home/michael/kaspanet/argent/examples/stones/player.ag",
+    "/home/michael/kaspanet/argent/examples/stones/game.ag",
+    "/home/michael/kaspanet/argent/examples/stones/settle.ag"
+  ],
+  "templates": [
+    { "actor": "League", "symbol": "template_league", "hash": null },
+    { "actor": "Player", "symbol": "template_player", "hash": null },
+    { "actor": "StonesGame", "symbol": "template_stones_game", "hash": null },
+    { "actor": "StonesSettle", "symbol": "template_stones_settle", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "League",
+      "state": "LeagueState",
+      "sil": "sil/League.sil",
+      "entries": [
+        {
+          "name": "register_player",
+          "kind": "leader",
+          "consumes": [],
+          "routes": [{ "output": "lane", "actor": "League", "state": "self.state" }, { "output": "player", "actor": "Player", "state": "next_player" }]
+        }
+      ]
+    },
+    {
+      "name": "Player",
+      "state": "PlayerState",
+      "sil": "sil/Player.sil",
+      "entries": [
+        {
+          "name": "start_game",
+          "kind": "leader",
+          "consumes": [{ "name": "opponent", "actor": "Player" }],
+          "routes": [{ "output": "self_out", "actor": "Player", "state": "next_self" }, { "output": "opponent_out", "actor": "Player", "state": "next_opponent" }, { "output": "game", "actor": "StonesGame", "state": "next_game" }]
+        },
+        {
+          "name": "accept_start",
+          "kind": "delegate",
+          "consumes": [{ "name": "starter", "actor": "Player" }],
+          "routes": []
+        },
+        {
+          "name": "settle",
+          "kind": "delegate",
+          "consumes": [{ "name": "settle", "actor": "StonesSettle" }],
+          "routes": []
+        },
+        {
+          "name": "retire",
+          "kind": "leader",
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    },
+    {
+      "name": "StonesGame",
+      "state": "GameState",
+      "sil": "sil/StonesGame.sil",
+      "entries": [
+        {
+          "name": "take",
+          "kind": "leader",
+          "consumes": [],
+          "routes": [{ "output": "next", "actor": "StonesSettle", "state": "ticket" }, { "output": "next", "actor": "StonesGame", "state": "next_game" }]
+        },
+        {
+          "name": "concede",
+          "kind": "leader",
+          "consumes": [],
+          "routes": [{ "output": "settle", "actor": "StonesSettle", "state": "ticket" }]
+        }
+      ]
+    },
+    {
+      "name": "StonesSettle",
+      "state": "SettleState",
+      "sil": "sil/StonesSettle.sil",
+      "entries": [
+        {
+          "name": "settle",
+          "kind": "leader",
+          "consumes": [{ "name": "player_a_in", "actor": "Player" }, { "name": "player_b_in", "actor": "Player" }],
+          "routes": [{ "output": "player_a_out", "actor": "Player", "state": "next_player_a" }, { "output": "player_b_out", "actor": "Player", "state": "next_player_b" }]
+        }
+      ]
+    }
+  ]
+}
