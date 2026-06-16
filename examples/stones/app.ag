@@ -1,0 +1,15 @@
+// Root manifest: the compiler starts here and loads this module graph.
+import "./types.ag";
+import "./league.ag";
+import "./player.ag";
+import "./game.ag";
+import "./settle.ag";
+
+// `app` names one closed actor/template family.
+app Stones {
+    actor League;
+    actor Player;
+    actor StonesGame;
+    actor StonesSettle;
+}
+

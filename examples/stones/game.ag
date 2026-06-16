@@ -1,0 +1,72 @@
+import "./types.ag";
+
+// Actor imports are template capabilities for cross-actor `become`.
+import actor StonesSettle from "./settle.ag";
+
+actor StonesGame owns GameState {
+    entry take(
+        amount: int,
+        player_id: byte[32],
+        move_sig: signer
+    ) emits {
+        // Union-typed auth output: the entry chooses one successor actor at runtime.
+        next: StonesGame | StonesSettle at auth[0];
+    } {
+        require(pile > 0);
+        require(amount >= 1);
+        require(amount <= max_take);
+        require(amount <= pile);
+
+        let actor_ref = player_ref(blake2b(move_sig.pubkey), player_id);
+        let expected_ref = side_player(turn, player_a, player_b);
+        require(actor_ref == expected_ref);
+        require(move_sig.valid);
+
+        let next_pile = pile - amount;
+        require(next.value == self.value);
+
+        if (next_pile == 0) {
+            let ticket = SettleState {
+                player_a: player_a,
+                player_b: player_b,
+                status: win_status(turn),
+            };
+
+            // Single-output `become` lowers to one authorized successor output.
+            become next <- StonesSettle(ticket);
+        }
+
+        let next_game = GameState {
+            player_a: player_a,
+            player_b: player_b,
+            pile: next_pile,
+            max_take: max_take,
+            turn: other_side(turn),
+        };
+
+        // Same entrypoint, different successor actor in the declared emits set.
+        become next <- StonesGame(next_game);
+    }
+
+    entry concede(
+        player_id: byte[32],
+        move_sig: signer
+    ) emits {
+        settle: StonesSettle at auth[0];
+    } {
+        let actor_ref = player_ref(blake2b(move_sig.pubkey), player_id);
+        let expected_ref = side_player(turn, player_a, player_b);
+        require(actor_ref == expected_ref);
+        require(move_sig.valid);
+        require(settle.value == self.value);
+
+        let winner = other_side(turn);
+        let ticket = SettleState {
+            player_a: player_a,
+            player_b: player_b,
+            status: win_status(winner),
+        };
+
+        become settle <- StonesSettle(ticket);
+    }
+}

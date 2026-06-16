@@ -1,0 +1,34 @@
+import "./types.ag";
+
+// Actor imports are template capabilities for cross-actor `become` outputs.
+import actor Player from "./player.ag";
+
+actor League owns LeagueState {
+    entry register_player(owner_sig: signer) emits {
+        // Named auth outputs lower to `OpAuthOutputIdx(active, n)`.
+        lane: League at auth[0];
+        player: Player at auth[1];
+    } {
+        let owner = blake2b(owner_sig.pubkey);
+        let player_id = unique("StonesPlayer", self.outpoint);
+
+        let next_player = PlayerState {
+            owner: owner,
+            player_id: player_id,
+            open_games: 0,
+            games: 0,
+            wins: 0,
+            losses: 0,
+        };
+
+        // Output handles are read-only transaction views, so value policy is ordinary code.
+        require(lane.value == self.value);
+        require(player.value > 0);
+
+        // Atomic `become` lowers to output-count and template checks.
+        become {
+            lane <- League(self.state);
+            player <- Player(next_player);
+        };
+    }
+}

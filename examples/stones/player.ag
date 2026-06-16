@@ -1,0 +1,103 @@
+import "./types.ag";
+
+// Actor imports are template capabilities for cross-actor outputs.
+import actor StonesGame from "./game.ag";
+import actor StonesSettle from "./settle.ag";
+
+actor Player owns PlayerState {
+    entry start_game(
+        owner_sig: signer,
+
+        // Foreign actor input at a fixed covenant input slot.
+        opponent: input Player at cov[1],
+
+        first_turn: int,
+        pile: int,
+        max_take: int
+    ) emits {
+        // Named auth outputs define the transaction output shape.
+        self_out: Player at auth[0];
+        opponent_out: Player at auth[1];
+        game: StonesGame at auth[2];
+    } {
+        require(blake2b(owner_sig.pubkey) == owner);
+        require(owner_sig.valid);
+
+        // Exact covenant input shape lowers to count and index checks.
+        require cov.inputs == [self, opponent];
+
+        require(opponent.player_id != player_id);
+        require(first_turn == SIDE_A || first_turn == SIDE_B);
+        require(pile > 0);
+        require(max_take > 0);
+
+        let self_ref = player_ref(owner, player_id);
+        let opponent_ref = player_ref(opponent.owner, opponent.player_id);
+
+        let next_self = PlayerState {
+            owner: owner,
+            player_id: player_id,
+            open_games: open_games + 1,
+            games: games,
+            wins: wins,
+            losses: losses,
+        };
+
+        let next_opponent = PlayerState {
+            owner: opponent.owner,
+            player_id: opponent.player_id,
+            open_games: opponent.open_games + 1,
+            games: opponent.games,
+            wins: opponent.wins,
+            losses: opponent.losses,
+        };
+
+        let next_game = GameState {
+            player_a: self_ref,
+            player_b: opponent_ref,
+            pile: pile,
+            max_take: max_take,
+            turn: first_turn,
+        };
+
+        require(self_out.value == self.value);
+        require(opponent_out.value == opponent.value);
+        require(game.value > 0);
+
+        // Multi-output `become` is an atomic successor set.
+        become {
+            self_out <- Player(next_self);
+            opponent_out <- Player(next_opponent);
+            game <- StonesGame(next_game);
+        };
+    }
+
+    entry accept_start(
+        owner_sig: signer,
+
+        // The delegate reads the leading Player input but emits nothing.
+        starter: input Player at cov[0]
+    ) emits none {
+        require(blake2b(owner_sig.pubkey) == owner);
+        require(owner_sig.valid);
+
+        // Delegate entries still declare the shared transaction shape.
+        require cov.inputs == [starter, self];
+
+        require(starter.player_id != player_id);
+    }
+
+    entry delegate_settle(
+        // Typed foreign input replaces manual prefix/suffix template reads.
+        settle: input StonesSettle at cov[0]
+    ) emits none {
+        let self_ref = player_ref(owner, player_id);
+        require(self_ref == settle.player_a || self_ref == settle.player_b);
+    }
+
+    entry retire(owner_sig: signer) emits none {
+        require(blake2b(owner_sig.pubkey) == owner);
+        require(owner_sig.valid);
+        require(open_games == 0);
+    }
+}

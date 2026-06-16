@@ -1,0 +1,70 @@
+// Shared constants, state layouts, and helpers for the Stones app.
+
+const int SIDE_A = 0;
+const int SIDE_B = 1;
+
+const int LIVE = 0;
+const int A_WIN = 1;
+const int B_WIN = 2;
+
+// Shared state layouts are defined once and imported by actors.
+state LeagueState {
+    byte[32] admin;
+    int default_pile;
+    int default_max_take;
+}
+
+state PlayerState {
+    byte[32] owner;
+    byte[32] player_id;
+    int open_games;
+    int games;
+    int wins;
+    int losses;
+}
+
+state GameState {
+    byte[32] player_a;
+    byte[32] player_b;
+    int pile;
+    int max_take;
+    int turn;
+}
+
+state SettleState {
+    byte[32] player_a;
+    byte[32] player_b;
+    int status;
+}
+
+fn player_ref(owner: byte[32], player_id: byte[32]) -> byte[32] {
+    return blake2b(owner + player_id);
+}
+
+fn side_player(side: int, player_a: byte[32], player_b: byte[32]) -> byte[32] {
+    if (side == SIDE_A) {
+        return player_a;
+    }
+
+    require(side == SIDE_B);
+    return player_b;
+}
+
+fn other_side(side: int) -> int {
+    if (side == SIDE_A) {
+        return SIDE_B;
+    }
+
+    require(side == SIDE_B);
+    return SIDE_A;
+}
+
+fn win_status(side: int) -> int {
+    if (side == SIDE_A) {
+        return A_WIN;
+    }
+
+    require(side == SIDE_B);
+    return B_WIN;
+}
+
