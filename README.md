@@ -17,6 +17,27 @@ The first full multi-file app sketch is [examples/stones](examples/stones), a
 small two-player game with `League`, `Player`, `StonesGame`, and `StonesSettle`
 actors.
 
+## Prototype compiler
+
+`argentc` currently parses the multi-file app graph, builds an actor/state AST,
+extracts `become` routes, and emits plain Silverscript skeletons plus a manifest.
+
+```sh
+cargo run -- build examples/stones/app.ag --out build/stones
+```
+
+The generated Silverscript includes:
+
+- hidden template-table constructor fields for every actor in the app
+- full hidden-plus-user state structs for cross-template reads and writes
+- typed foreign input reads via `readInputStateWithTemplate`
+- auth output shape checks
+- extracted `become` route notes showing the future `validateOutputStateWithTemplate`
+  calls
+
+The next compiler pass is body lowering: turning Argent expressions and state
+constructors into concrete Silverscript state objects and route validations.
+
 Core ideas to test:
 
 - `state` declarations define reusable covenant state layouts.

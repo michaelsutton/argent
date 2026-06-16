@@ -1,0 +1,156 @@
+use crate::error::{ArgentError, Result};
+
+#[derive(Debug, Clone)]
+pub struct Token {
+    pub kind: TokenKind,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenKind {
+    Ident(String),
+    Number(String),
+    Str(String),
+    Arrow,
+    LeftArrow,
+    Symbol(char),
+    Eof,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+pub fn lex(source: &str) -> Result<Vec<Token>> {
+    let mut lexer = Lexer {
+        source,
+        bytes: source.as_bytes(),
+        pos: 0,
+        tokens: Vec::new(),
+    };
+    lexer.run()?;
+    Ok(lexer.tokens)
+}
+
+struct Lexer<'a> {
+    source: &'a str,
+    bytes: &'a [u8],
+    pos: usize,
+    tokens: Vec<Token>,
+}
+
+impl Lexer<'_> {
+    fn run(&mut self) -> Result<()> {
+        while self.pos < self.bytes.len() {
+            let b = self.bytes[self.pos];
+            match b {
+                b' ' | b'\t' | b'\r' | b'\n' => self.pos += 1,
+                b'/' if self.peek_byte(1) == Some(b'/') => self.skip_line_comment(),
+                b'"' => self.lex_string()?,
+                b'0'..=b'9' => self.lex_number(),
+                b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.lex_ident(),
+                b'-' if self.peek_byte(1) == Some(b'>') => {
+                    let start = self.pos;
+                    self.pos += 2;
+                    self.push(TokenKind::Arrow, start, self.pos);
+                }
+                b'<' if self.peek_byte(1) == Some(b'-') => {
+                    let start = self.pos;
+                    self.pos += 2;
+                    self.push(TokenKind::LeftArrow, start, self.pos);
+                }
+                b'{' | b'}' | b'(' | b')' | b'[' | b']' | b';' | b':' | b',' | b'|' | b'&'
+                | b'!' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'.' => {
+                    let start = self.pos;
+                    self.pos += 1;
+                    self.push(TokenKind::Symbol(b as char), start, self.pos);
+                }
+                _ => {
+                    return Err(ArgentError::new(format!(
+                        "unexpected byte {:?} at offset {}",
+                        b as char, self.pos
+                    )));
+                }
+            }
+        }
+        self.push(TokenKind::Eof, self.pos, self.pos);
+        Ok(())
+    }
+
+    fn peek_byte(&self, offset: usize) -> Option<u8> {
+        self.bytes.get(self.pos + offset).copied()
+    }
+
+    fn skip_line_comment(&mut self) {
+        while self.pos < self.bytes.len() && self.bytes[self.pos] != b'\n' {
+            self.pos += 1;
+        }
+    }
+
+    fn lex_string(&mut self) -> Result<()> {
+        let start = self.pos;
+        self.pos += 1;
+        let mut out = String::new();
+        while self.pos < self.bytes.len() {
+            match self.bytes[self.pos] {
+                b'"' => {
+                    self.pos += 1;
+                    self.push(TokenKind::Str(out), start, self.pos);
+                    return Ok(());
+                }
+                b'\\' => {
+                    self.pos += 1;
+                    let escaped = *self
+                        .bytes
+                        .get(self.pos)
+                        .ok_or_else(|| ArgentError::new("unterminated string escape"))?;
+                    out.push(escaped as char);
+                    self.pos += 1;
+                }
+                b => {
+                    out.push(b as char);
+                    self.pos += 1;
+                }
+            }
+        }
+        Err(ArgentError::new(format!(
+            "unterminated string at offset {start}"
+        )))
+    }
+
+    fn lex_number(&mut self) {
+        let start = self.pos;
+        while matches!(self.peek_byte(0), Some(b'0'..=b'9')) {
+            self.pos += 1;
+        }
+        self.push(
+            TokenKind::Number(self.source[start..self.pos].to_string()),
+            start,
+            self.pos,
+        );
+    }
+
+    fn lex_ident(&mut self) {
+        let start = self.pos;
+        while matches!(
+            self.peek_byte(0),
+            Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
+        ) {
+            self.pos += 1;
+        }
+        self.push(
+            TokenKind::Ident(self.source[start..self.pos].to_string()),
+            start,
+            self.pos,
+        );
+    }
+
+    fn push(&mut self, kind: TokenKind, start: usize, end: usize) {
+        self.tokens.push(Token {
+            kind,
+            span: Span { start, end },
+        });
+    }
+}
