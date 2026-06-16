@@ -1,0 +1,73 @@
+// A tiny single-file Argent app for showing the core idea.
+//
+// The source describes a closed two-actor state machine:
+// Issuer -> Issuer + Ticket, then Ticket -> Ticket.
+
+state IssuerState {
+    byte[32] admin;
+    int next_serial;
+}
+
+state TicketState {
+    byte[32] owner;
+    int serial;
+    int redeemed;
+}
+
+actor Issuer owns IssuerState {
+    entry issue(
+        admin_sig: sig,
+        admin_pk: pubkey,
+        owner_pk: pubkey
+    )
+    // `emits` declares the complete output shape this entry may create.
+    emits {
+        issuer: Issuer;
+        ticket: Ticket;
+    } {
+        require(blake2b(admin_pk) == admin);
+        require(checkSig(admin_sig, admin_pk));
+
+        let serial = next_serial;
+        let owner = blake2b(owner_pk);
+
+        let next_issuer = IssuerState { admin: admin, next_serial: next_serial + 1, };
+        let new_ticket = TicketState { owner: owner, serial: serial, redeemed: 0, };
+
+        require(issuer.value == self.value);
+        require(ticket.value > 0);
+
+        // `Ticket` is a first-class app actor here: the source simply says this
+        // output should become a Ticket with `new_ticket` state. Argent lowers
+        // that into a check that the output scriptPubKey is the expected P2SH
+        // of the full Ticket contract template plus the expected state bytes.
+        become {
+            issuer <- Issuer(next_issuer);
+            ticket <- Ticket(new_ticket);
+        };
+    }
+}
+
+actor Ticket owns TicketState {
+    entry redeem(owner_sig: sig, owner_pk: pubkey) emits {
+        next: Ticket;
+    } {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+        require(redeemed == 0);
+        require(next.value == self.value);
+
+        let redeemed_ticket = TicketState {
+            owner: owner,
+            serial: serial,
+            redeemed: 1,
+        };
+
+        become next <- Ticket(redeemed_ticket);
+    }
+}
+
+app Tickets {
+    actor Issuer;
+    actor Ticket;
+}

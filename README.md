@@ -14,8 +14,10 @@ actors, state, transition shape, and tail-dispatch intent, while the compiler
 generates plain Silverscript for route plumbing, template propagation, typed
 foreign-state reads, and successor-state validation.
 
-The current app is [examples/stones](examples/stones), a small two-player game
-with `League`, `Player`, `StonesGame`, and `StonesSettle` actors.
+For a tiny screenshot-friendly example, see [examples/tickets.ag](examples/tickets.ag),
+a single-file app with `Issuer` and `Ticket` actors. The larger current app is
+[examples/stones](examples/stones), a small two-player game with `League`,
+`Player`, `StonesGame`, and `StonesSettle` actors.
 
 Design notes and open questions live in
 [docs/argent-design.md](docs/argent-design.md).
@@ -53,6 +55,12 @@ Build the Stones example:
 
 ```sh
 cargo run -- build examples/stones/app.ag --out build/stones
+```
+
+Build the tiny Tickets example:
+
+```sh
+cargo run -- build examples/tickets.ag --out build/tickets
 ```
 
 The generated artifacts are written under `build/stones`:

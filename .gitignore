@@ -2,3 +2,5 @@
 /build/*
 !/build/stones/
 !/build/stones/**
+!/build/tickets/
+!/build/tickets/**

@@ -1,0 +1,41 @@
+{
+  "app": "Tickets",
+  "root": "/home/michael/kaspanet/argent/examples/tickets.ag",
+  "modules": [
+    "/home/michael/kaspanet/argent/examples/tickets.ag"
+  ],
+  "templates": [
+    { "actor": "Issuer", "symbol": "template_issuer", "hash": null },
+    { "actor": "Ticket", "symbol": "template_ticket", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Issuer",
+      "state": "IssuerState",
+      "sil": "sil/Issuer.sil",
+      "entries": [
+        {
+          "name": "issue",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "issuer", "auth_index": 0, "actors": ["Issuer"] }, { "name": "ticket", "auth_index": 1, "actors": ["Ticket"] }] },
+          "consumes": [],
+          "routes": [{ "output": "issuer", "actor": "Issuer", "state": "next_issuer" }, { "output": "ticket", "actor": "Ticket", "state": "new_ticket" }]
+        }
+      ]
+    },
+    {
+      "name": "Ticket",
+      "state": "TicketState",
+      "sil": "sil/Ticket.sil",
+      "entries": [
+        {
+          "name": "redeem",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "next", "auth_index": 0, "actors": ["Ticket"] }] },
+          "consumes": [],
+          "routes": [{ "output": "next", "actor": "Ticket", "state": "redeemed_ticket" }]
+        }
+      ]
+    }
+  ]
+}
