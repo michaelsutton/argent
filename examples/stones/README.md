@@ -39,7 +39,7 @@ Compiler features this example should eventually exercise:
 - multi-file imports
 - shared state layouts
 - named actor templates
-- owner and side-to-move signer checks
+- owner and side-to-move signature checks
 - typed foreign covenant inputs
 - single-output `become`
 - multi-output atomic `become`

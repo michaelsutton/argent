@@ -13,6 +13,8 @@ still under discussion.
 - `emits` declares authorized output shape.
 - `become` is tail-dispatch into successor actor state.
 - Typed covenant inputs should hide `readInputStateWithTemplate` boilerplate.
+- Basic Silverscript data types should stay visible as-is, such as `sig` and
+  `pubkey`; Argent should not invent wrapper primitive types.
 - Prefix/suffix witnesses are generated Silverscript ABI, not Argent source
   surface.
 - Every `become` route must be allowed by the entry's `emits` declaration.
@@ -51,6 +53,8 @@ paths are the only places where hidden ABI state may be initialized or changed.
 
 Open questions:
 
+- Should imports name required symbols explicitly, such as
+  `import PlayerState, GameState, player_ref from "./types.ag";`?
 - Should hidden ABI fields be emitted as leading state fields, a named generated
   struct prefix, or another ABI convention?
 - Do we need explicit source syntax for privileged bootstrap/handoff paths?

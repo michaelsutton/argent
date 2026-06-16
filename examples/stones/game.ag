@@ -7,7 +7,8 @@ actor StonesGame owns GameState {
     entry take(
         amount: int,
         player_id: byte[32],
-        move_sig: signer
+        move_sig: sig,
+        move_pk: pubkey
     ) emits {
         // Union-typed output: the entry chooses one successor actor at runtime.
         next: StonesGame | StonesSettle;
@@ -17,10 +18,10 @@ actor StonesGame owns GameState {
         require(amount <= max_take);
         require(amount <= pile);
 
-        let actor_ref = player_ref(blake2b(move_sig.pubkey), player_id);
+        let actor_ref = player_ref(blake2b(move_pk), player_id);
         let expected_ref = side_player(turn, player_a, player_b);
         require(actor_ref == expected_ref);
-        require(move_sig.valid);
+        require(checkSig(move_sig, move_pk));
 
         let next_pile = pile - amount;
         require(next.value == self.value);
@@ -50,14 +51,15 @@ actor StonesGame owns GameState {
 
     entry concede(
         player_id: byte[32],
-        move_sig: signer
+        move_sig: sig,
+        move_pk: pubkey
     ) emits {
         settle: StonesSettle;
     } {
-        let actor_ref = player_ref(blake2b(move_sig.pubkey), player_id);
+        let actor_ref = player_ref(blake2b(move_pk), player_id);
         let expected_ref = side_player(turn, player_a, player_b);
         require(actor_ref == expected_ref);
-        require(move_sig.valid);
+        require(checkSig(move_sig, move_pk));
         require(settle.value == self.value);
 
         let winner = other_side(turn);

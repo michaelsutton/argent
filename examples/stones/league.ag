@@ -4,11 +4,12 @@ import "./types.ag";
 import actor Player from "./player.ag";
 
 actor League owns LeagueState {
-    entry register_player(owner_sig: signer) emits {
+    entry register_player(owner_sig: sig, owner_pk: pubkey) emits {
         lane: League;
         player: Player;
     } {
-        let owner = blake2b(owner_sig.pubkey);
+        require(checkSig(owner_sig, owner_pk));
+        let owner = blake2b(owner_pk);
         let player_id = unique("StonesPlayer", self.outpoint);
 
         let next_player = PlayerState {

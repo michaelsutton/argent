@@ -6,7 +6,8 @@ import actor StonesSettle from "./settle.ag";
 
 actor Player owns PlayerState {
     entry start_game(
-        owner_sig: signer,
+        owner_sig: sig,
+        owner_pk: pubkey,
         first_turn: int,
         pile: int,
         max_take: int
@@ -18,8 +19,8 @@ actor Player owns PlayerState {
         opponent_out: Player;
         game: StonesGame;
     } {
-        require(blake2b(owner_sig.pubkey) == owner);
-        require(owner_sig.valid);
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
 
         require(opponent.player_id != player_id);
         require(first_turn == SIDE_A || first_turn == SIDE_B);
@@ -68,11 +69,11 @@ actor Player owns PlayerState {
     }
 
     // Delegate entries are non-leader checks in a coordinated transition.
-    delegate accept_start(owner_sig: signer) consumes {
+    delegate accept_start(owner_sig: sig, owner_pk: pubkey) consumes {
         starter: Player;
     } {
-        require(blake2b(owner_sig.pubkey) == owner);
-        require(owner_sig.valid);
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
 
         require(starter.player_id != player_id);
     }
@@ -84,9 +85,9 @@ actor Player owns PlayerState {
         require(self_ref == settle.player_a || self_ref == settle.player_b);
     }
 
-    entry retire(owner_sig: signer) emits none {
-        require(blake2b(owner_sig.pubkey) == owner);
-        require(owner_sig.valid);
+    entry retire(owner_sig: sig, owner_pk: pubkey) emits none {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
         require(open_games == 0);
     }
 }
