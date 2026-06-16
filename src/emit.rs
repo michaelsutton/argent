@@ -30,6 +30,9 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
 struct Model<'a> {
     app_name: String,
     template_actors: Vec<String>,
+    consts: Vec<&'a ConstDecl>,
+    source_states: Vec<&'a StateDecl>,
+    functions: Vec<&'a FunctionDecl>,
     states: BTreeMap<String, &'a StateDecl>,
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
     actors: Vec<&'a ActorDecl>,
@@ -37,6 +40,21 @@ struct Model<'a> {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
+        let consts = program
+            .modules
+            .iter()
+            .flat_map(|module| module.consts.iter())
+            .collect::<Vec<_>>();
+        let source_states = program
+            .modules
+            .iter()
+            .flat_map(|module| module.states.iter())
+            .collect::<Vec<_>>();
+        let functions = program
+            .modules
+            .iter()
+            .flat_map(|module| module.functions.iter())
+            .collect::<Vec<_>>();
         let states = program
             .states()
             .map(|state| (state.name.clone(), state))
@@ -73,6 +91,9 @@ impl<'a> Model<'a> {
         let model = Self {
             app_name,
             template_actors,
+            consts,
+            source_states,
+            functions,
             states,
             actors_by_name: all_actors,
             actors,
@@ -310,6 +331,8 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str(&args.join(",\n"));
     out.push_str("\n) {\n");
 
+    emit_shared_declarations(&mut out, model);
+
     out.push_str(
         "    // Hidden template capability table generated from the Argent app manifest.\n",
     );
@@ -344,6 +367,54 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 
     out.push_str("}\n");
     Ok(out)
+}
+
+fn emit_shared_declarations(out: &mut String, model: &Model<'_>) {
+    if !model.consts.is_empty() {
+        out.push_str("    // Shared constants imported from Argent modules.\n");
+        for konst in &model.consts {
+            out.push_str(&format!(
+                "    {} constant {} = {};\n",
+                konst.ty.to_sil(),
+                konst.name,
+                konst.value
+            ));
+        }
+        out.push('\n');
+    }
+
+    if !model.source_states.is_empty() {
+        out.push_str("    // User state structs imported from Argent modules.\n");
+        for state in &model.source_states {
+            out.push_str(&format!("    struct {} {{\n", state.name));
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
+            }
+            out.push_str("    }\n");
+        }
+        out.push('\n');
+    }
+
+    if !model.functions.is_empty() {
+        out.push_str("    // Shared helper functions imported from Argent modules.\n");
+        for function in &model.functions {
+            let params = function
+                .params
+                .iter()
+                .map(|param| format!("{} {}", param.ty.to_sil(), param.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!(
+                "    function {}({}) : {} {{\n",
+                function.name,
+                params,
+                function.return_ty.to_sil()
+            ));
+            out.push_str(&indent_block_body(&function.body, 8));
+            out.push_str("    }\n");
+        }
+        out.push('\n');
+    }
 }
 
 fn emit_full_state_structs(out: &mut String, model: &Model<'_>) -> Result<()> {
@@ -745,6 +816,40 @@ fn compact_expr(input: &str) -> String {
     } else {
         compact
     }
+}
+
+fn indent_block_body(body: &str, spaces: usize) -> String {
+    let indent = " ".repeat(spaces);
+    let trimmed = body.trim_matches('\n');
+    if trimmed.trim().is_empty() {
+        return String::new();
+    }
+
+    let common_indent = trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            line.chars()
+                .take_while(|ch| *ch == ' ' || *ch == '\t')
+                .count()
+        })
+        .min()
+        .unwrap_or(0);
+
+    let mut out = String::new();
+    for line in trimmed.lines() {
+        if line.trim().is_empty() {
+            out.push('\n');
+        } else {
+            out.push_str(&indent);
+            out.push_str(
+                line.get(common_indent..)
+                    .unwrap_or_else(|| line.trim_start()),
+            );
+            out.push('\n');
+        }
+    }
+    out
 }
 
 fn json_escape(input: &str) -> String {

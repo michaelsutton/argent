@@ -15,6 +15,69 @@ contract Player(
     int init_wins,
     int init_losses
 ) {
+    // Shared constants imported from Argent modules.
+    int constant SIDE_A = 0;
+    int constant SIDE_B = 1;
+    int constant LIVE = 0;
+    int constant A_WIN = 1;
+    int constant B_WIN = 2;
+
+    // User state structs imported from Argent modules.
+    struct LeagueState {
+        byte[32] admin;
+        int default_pile;
+        int default_max_take;
+    }
+    struct PlayerState {
+        byte[32] owner;
+        byte[32] player_id;
+        int open_games;
+        int games;
+        int wins;
+        int losses;
+    }
+    struct GameState {
+        byte[32] player_a;
+        byte[32] player_b;
+        int pile;
+        int max_take;
+        int turn;
+    }
+    struct SettleState {
+        byte[32] player_a;
+        byte[32] player_b;
+        int status;
+    }
+
+    // Shared helper functions imported from Argent modules.
+    function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
+        return blake2b(owner + player_id);
+    }
+    function side_player(int side, byte[32] player_a, byte[32] player_b) : byte[32] {
+        if (side == SIDE_A) {
+            return player_a;
+        }
+
+        require(side == SIDE_B);
+        return player_b;
+    }
+    function other_side(int side) : int {
+        if (side == SIDE_A) {
+            return SIDE_B;
+        }
+
+        require(side == SIDE_B);
+        return SIDE_A;
+    }
+    function win_status(int side) : int {
+        if (side == SIDE_A) {
+            return A_WIN;
+        }
+
+        require(side == SIDE_B);
+        return B_WIN;
+    }
+
     // Hidden template capability table generated from the Argent app manifest.
     byte[32] template_league = init_template_league;
     byte[32] template_player = init_template_player;
