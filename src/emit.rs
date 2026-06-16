@@ -203,35 +203,45 @@ fn emit_entry(
         out.push('\n');
     }
 
-    let input_params = entry
-        .params
-        .iter()
-        .filter_map(|param| match &param.kind {
-            ParamKind::Input { actor, cov_index } => Some((&param.name, actor, *cov_index)),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if !input_params.is_empty() {
+    if !entry.consumes.is_empty() {
         out.push_str("        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);\n");
-        let min_count = input_params
-            .iter()
-            .map(|(_, _, index)| index + 1)
-            .max()
-            .unwrap_or(0);
-        out.push_str(&format!(
-            "        require(OpCovInputCount(cov_id) >= {min_count});\n"
-        ));
-        for (name, actor, cov_index) in input_params {
-            let ident = to_snake(actor);
-            let state_struct = full_state_struct_name(actor);
-            let _state = model.actor_state(actor)?;
+        match entry.kind {
+            EntryKind::Leader => {
+                let count = entry.consumes.len() + 1;
+                out.push_str(&format!(
+                    "        require(OpCovInputCount(cov_id) == {count});\n"
+                ));
+                out.push_str(
+                    "        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);\n",
+                );
+            }
+            EntryKind::Delegate => {
+                let min_count = entry.consumes.len() + 1;
+                out.push_str(&format!(
+                    "        require(OpCovInputCount(cov_id) >= {min_count});\n"
+                ));
+                out.push_str(
+                    "        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);\n",
+                );
+            }
+        }
+
+        let slot_offset = match entry.kind {
+            EntryKind::Leader => 1,
+            EntryKind::Delegate => 0,
+        };
+        for (idx, consume) in entry.consumes.iter().enumerate() {
+            let cov_index = slot_offset + idx;
+            let ident = to_snake(&consume.actor);
+            let state_struct = full_state_struct_name(&consume.actor);
+            let _state = model.actor_state(&consume.actor)?;
             out.push_str(&format!(
                 "        int {}_input_idx = OpCovInputIdx(cov_id, {}); // Argent input {} at cov[{}]\n",
-                name, cov_index, actor, cov_index
+                consume.name, cov_index, consume.actor, cov_index
             ));
             out.push_str(&format!(
-                "        {state_struct} {name} = readInputStateWithTemplate({name}_input_idx, {ident}_prefix_len, {ident}_suffix_len, template_{ident});\n"
+                "        {state_struct} {} = readInputStateWithTemplate({}_input_idx, {ident}_prefix_len, {ident}_suffix_len, template_{ident});\n",
+                consume.name, consume.name
             ));
         }
     }
@@ -276,14 +286,7 @@ fn emit_entry(
 fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for param in params {
-        match &param.kind {
-            ParamKind::Plain(ty) => out.push(format!("{} {}", ty.to_sil(), param.name)),
-            ParamKind::Signer => {
-                out.push(format!("sig {}_sig", param.name));
-                out.push(format!("pubkey {}_pk", param.name));
-            }
-            ParamKind::Input { .. } => {}
-        }
+        out.push(format!("{} {}", param.ty.to_sil(), param.name));
     }
     for actor_name in witness_actors {
         let ident = to_snake(actor_name);
@@ -295,10 +298,8 @@ fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<St
 
 fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
     let mut required = BTreeSet::new();
-    for param in &entry.params {
-        if let ParamKind::Input { actor, .. } = &param.kind {
-            required.insert(actor.clone());
-        }
+    for consume in &entry.consumes {
+        required.insert(consume.actor.clone());
     }
 
     match &entry.emits {
@@ -430,6 +431,25 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
                 "          \"name\": \"{}\",\n",
                 json_escape(&entry.name)
             ));
+            out.push_str(&format!(
+                "          \"kind\": \"{}\",\n",
+                match entry.kind {
+                    EntryKind::Leader => "leader",
+                    EntryKind::Delegate => "delegate",
+                }
+            ));
+            out.push_str("          \"consumes\": [");
+            for (consume_idx, consume) in entry.consumes.iter().enumerate() {
+                if consume_idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!(
+                    "{{ \"name\": \"{}\", \"actor\": \"{}\" }}",
+                    json_escape(&consume.name),
+                    json_escape(&consume.actor)
+                ));
+            }
+            out.push_str("],\n");
             out.push_str("          \"routes\": [");
             for (route_idx, route) in entry.routes.iter().enumerate() {
                 if route_idx > 0 {

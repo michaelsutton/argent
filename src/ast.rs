@@ -59,24 +59,31 @@ pub struct ActorDecl {
 
 #[derive(Debug, Clone)]
 pub struct EntryDecl {
+    pub kind: EntryKind,
     pub name: String,
     pub params: Vec<ParamDecl>,
+    pub consumes: Vec<ConsumeDecl>,
     pub emits: EmitSpec,
     pub body: String,
     pub routes: Vec<RouteCall>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ParamDecl {
-    pub name: String,
-    pub kind: ParamKind,
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EntryKind {
+    Leader,
+    Delegate,
 }
 
 #[derive(Debug, Clone)]
-pub enum ParamKind {
-    Plain(TypeRef),
-    Signer,
-    Input { actor: String, cov_index: usize },
+pub struct ParamDecl {
+    pub name: String,
+    pub ty: TypeRef,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConsumeDecl {
+    pub name: String,
+    pub actor: String,
 }
 
 #[derive(Debug, Clone)]

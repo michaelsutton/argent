@@ -133,7 +133,7 @@ impl Parser {
         self.expect_symbol('{')?;
         let mut entries = Vec::new();
         while !self.check_symbol('}') {
-            entries.push(self.parse_entry()?);
+            entries.push(self.parse_actor_item()?);
         }
         self.expect_symbol('}')?;
         Ok(ActorDecl {
@@ -143,19 +143,62 @@ impl Parser {
         })
     }
 
+    fn parse_actor_item(&mut self) -> Result<EntryDecl> {
+        if self.check_ident("entry") {
+            self.parse_entry()
+        } else if self.check_ident("delegate") {
+            self.parse_delegate()
+        } else {
+            Err(self.error(format!(
+                "expected `entry` or `delegate`, found {}",
+                self.describe_current()
+            )))
+        }
+    }
+
     fn parse_entry(&mut self) -> Result<EntryDecl> {
         self.expect_ident("entry")?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
+        let consumes = if self.check_ident("consumes") {
+            self.parse_consumes()?
+        } else {
+            Vec::new()
+        };
         self.expect_ident("emits")?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
         let routes =
             collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
         Ok(EntryDecl {
+            kind: EntryKind::Leader,
             name,
             params,
+            consumes,
             emits,
+            body,
+            routes,
+        })
+    }
+
+    fn parse_delegate(&mut self) -> Result<EntryDecl> {
+        self.expect_ident("delegate")?;
+        let name = self.expect_any_ident()?;
+        let params = self.parse_param_list()?;
+        let consumes = if self.check_ident("consumes") {
+            self.parse_consumes()?
+        } else {
+            Vec::new()
+        };
+        let body = self.consume_block_text()?;
+        let routes =
+            collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
+        Ok(EntryDecl {
+            kind: EntryKind::Delegate,
+            name,
+            params,
+            consumes,
+            emits: EmitSpec::None,
             body,
             routes,
         })
@@ -181,8 +224,8 @@ impl Parser {
         while !self.check_symbol(')') {
             let name = self.expect_any_ident()?;
             self.expect_symbol(':')?;
-            let kind = self.parse_param_kind()?;
-            params.push(ParamDecl { name, kind });
+            let ty = self.parse_type_from_current()?;
+            params.push(ParamDecl { name, ty });
             if self.consume_symbol(',') {
                 continue;
             }
@@ -192,23 +235,19 @@ impl Parser {
         Ok(params)
     }
 
-    fn parse_param_kind(&mut self) -> Result<ParamKind> {
-        if self.consume_ident("input") {
+    fn parse_consumes(&mut self) -> Result<Vec<ConsumeDecl>> {
+        self.expect_ident("consumes")?;
+        self.expect_symbol('{')?;
+        let mut consumes = Vec::new();
+        while !self.check_symbol('}') {
+            let name = self.expect_any_ident()?;
+            self.expect_symbol(':')?;
             let actor = self.expect_any_ident()?;
-            self.expect_ident("at")?;
-            self.expect_ident("cov")?;
-            self.expect_symbol('[')?;
-            let cov_index = self
-                .expect_number()?
-                .parse::<usize>()
-                .map_err(|_| self.error("invalid cov index"))?;
-            self.expect_symbol(']')?;
-            Ok(ParamKind::Input { actor, cov_index })
-        } else if self.consume_ident("signer") {
-            Ok(ParamKind::Signer)
-        } else {
-            Ok(ParamKind::Plain(self.parse_type_from_current()?))
+            self.expect_symbol(';')?;
+            consumes.push(ConsumeDecl { name, actor });
         }
+        self.expect_symbol('}')?;
+        Ok(consumes)
     }
 
     fn parse_type(&mut self) -> Result<TypeRef> {
@@ -246,14 +285,18 @@ impl Parser {
                 let name = self.expect_any_ident()?;
                 self.expect_symbol(':')?;
                 let actors = self.parse_actor_union_until_at()?;
-                self.expect_ident("at")?;
-                self.expect_ident("auth")?;
-                self.expect_symbol('[')?;
-                let auth_index = self
-                    .expect_number()?
-                    .parse::<usize>()
-                    .map_err(|_| self.error("invalid auth index"))?;
-                self.expect_symbol(']')?;
+                let auth_index = if self.consume_ident("at") {
+                    self.expect_ident("auth")?;
+                    self.expect_symbol('[')?;
+                    let auth_index = self
+                        .expect_number()?
+                        .parse::<usize>()
+                        .map_err(|_| self.error("invalid auth index"))?;
+                    self.expect_symbol(']')?;
+                    auth_index
+                } else {
+                    outputs.len()
+                };
                 self.expect_symbol(';')?;
                 outputs.push(EmitOutput {
                     name,
