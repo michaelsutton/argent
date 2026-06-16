@@ -1,8 +1,13 @@
 # Argent Design Notes
 
-Argent is an actor-style frontend for multi-contract Silverscript apps. This
-note is a parking lot for design commitments and, more importantly, the parts
-still under discussion.
+Argent is an actor-style frontend for building multi-contract Silverscript apps
+as closed, well-formed covenant state machines. This note is a parking lot for
+design commitments and, more importantly, the parts still under discussion.
+
+The project is experimental and in very early stages. These notes are not a
+specification; they are a working map of the current prototype and the design
+pressure we have noticed while studying chess-style Silverscript apps.
+They are also not a roadmap or commitment that the project will continue.
 
 ## Settled For Now
 
@@ -20,9 +25,14 @@ still under discussion.
 - Every `become` route must be allowed by the entry's `emits` declaration.
 - Covenant input/output shape is a first-class Argent concern, even if syntax is
   still pending.
+- The main language/compiler contribution is hiding route logic, template
+  propagation, and mechanical safety checks from application code.
 - Named actor flows should use a leader-auth output pattern by default.
 - True cov-output N:M transitions are singleton per covenant id per transaction;
   Argent should not fight that limitation by default.
+- Helper function bodies are expected to already be valid Silverscript-shaped
+  code. Argent should not work hard to repair or verify user helper code; that is
+  delegated to Silverscript.
 
 ## Template Hash Rule
 
@@ -126,6 +136,53 @@ Open questions:
 - Should the compiler auto-select flat vs Merkle based on app size, or should the
   source choose?
 
+## Same-Template Shortcuts
+
+Same-template outputs should use the cheaper same-script validation path.
+
+Desired lowering rule:
+
+```text
+become self_template_actor(next_state)
+  -> validateOutputState(output_idx, next_state)
+
+become foreign_template_actor(next_state)
+  -> validateOutputStateWithTemplate(output_idx, next_state, prefix, suffix, template_hash)
+```
+
+This should remove prefix/suffix witness parameters for outputs that continue
+the active input's template, such as `League -> League`, `Player -> Player`, or
+`StonesGame -> StonesGame`.
+
+Input reads are subtler. A consumed peer may have the same actor type as the
+active input, but covenant grouping alone does not prove that the peer input's
+redeem script is really the same template. For peer inputs, even same-actor
+inputs should keep `readInputStateWithTemplate(...)` unless another explicit
+proof establishes same-template identity.
+
+Safe default:
+
+```text
+self/current input fields:
+  use contract fields, or readInputState(this.activeInputIndex) when a State value is needed
+
+consumed peer input:
+  use readInputStateWithTemplate(peer_idx, prefix_len, suffix_len, expected_template)
+```
+
+This matches the chess `delegate_start_game` pattern: it reads another `Player`
+with `readInputStateWithTemplate` so the delegate independently proves that the
+leader input is really a Player template, not just an arbitrary input in the same
+covenant group.
+
+Open questions:
+
+- Should Argent infer same-template output shortcuts automatically? Probably yes.
+- Should source syntax expose "already proven same template" peer inputs, or keep
+  the conservative template-read default?
+- Can the transaction builder carry reusable proof metadata so same-template peer
+  inputs can opt into `readInputState(...)` safely in special cases?
+
 ## Input And Output Shape
 
 The source wants to say:
@@ -134,8 +191,8 @@ The source wants to say:
 require cov.inputs == [self, opponent];
 ```
 
-The compiler currently only emits a loose minimum count check. That is not the
-final rule.
+The compiler currently emits exact leader covenant input counts and conservative
+delegate minimum counts. That is not the final declared-shape rule.
 
 Covenant shape should be first-class in Argent. The source spelling is still
 open, but this should not remain ordinary unchecked user body text.
@@ -169,17 +226,24 @@ Open questions:
 
 ## Body Lowering
 
-The current compiler parses structure and extracts `become` routes, but does not
-lower ordinary entry bodies yet.
+The current compiler lowers the Stones subset into plain Silverscript. It handles
+terminal `become`, simple locals, `if/else`, state constructors, output-handle
+values, consumed-input values, and generated route validation.
+
+This is intentionally not a full Argent typechecker yet. The compiler performs
+only enough source analysis to lower the prototype. Silverscript remains the
+authority for final helper/body validity where possible.
 
 Open questions:
 
 - How much of Argent expression syntax should be Silverscript-like?
-- Should helper functions lower by copying their raw bodies, or should Argent own
-  a real expression AST early?
+- Should Argent own a real expression AST early, or keep copying Silverscript-like
+  helper code through?
 - How should state constructors lower into hidden-plus-user state structs?
 - How should union outputs be lowered when one handle can target several actors?
 - What diagnostics should users get when a route needs a missing template witness?
+- How much validation belongs in Argent before handing generated Silverscript to
+  `silverc`?
 
 ## Lane Protection
 
@@ -202,6 +266,7 @@ Argent-generated code must eventually enforce:
 - exact authorized output shape where declared
 - hidden ABI state preservation
 - typed foreign input template checks
+- same-template output validation through `validateOutputState` where applicable
 - route commitment membership checks
 - successor state validation with the chosen template
 - no `become` route outside the entry's declared `emits` set

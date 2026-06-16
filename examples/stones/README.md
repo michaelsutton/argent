@@ -1,12 +1,14 @@
 # Stones
 
-Stones is the first full Argent app sketch.
+Stones is the first full Argent app prototype.
+
+This example is intentionally small. Its job is to exercise the multi-actor
+compiler path without burying the reader in game logic.
 
 Rules: two players share a pile of stones. On each turn, the current player
 takes `1..max_take` stones. The player who takes the last stone wins.
 
-The app exists to keep game logic small while exercising a real multi-actor
-covenant system:
+Actors:
 
 - `League` registers player accounts.
 - `Player` accounts start games and later delegate settlement.
@@ -30,18 +32,47 @@ StonesGame
     -> StonesSettle
 
 StonesSettle + Player + Player
-  settle / delegate_settle / delegate_settle
+  settle / settle / settle
     -> Player + Player
 ```
 
-Compiler features this example should eventually exercise:
+Build:
+
+```sh
+cargo run -- build examples/stones/app.ag --out build/stones
+```
+
+Generated Silverscript:
+
+```text
+build/stones/sil/League.sil
+build/stones/sil/Player.sil
+build/stones/sil/StonesGame.sil
+build/stones/sil/StonesSettle.sil
+```
+
+Compiler features exercised today:
 
 - multi-file imports
 - shared state layouts
 - named actor templates
+- leader entries and delegate entries
+- `consumes` peer actor inputs
+- named `emits` output handles
 - owner and side-to-move signature checks
-- typed foreign covenant inputs
+- typed covenant peer reads through `readInputStateWithTemplate`
 - single-output `become`
 - multi-output atomic `become`
 - read-only output handles such as `next.value`
 - ordinary `require(...)` checks for output value policy
+- generated hidden template fields
+- generated successor validation through `validateOutputStateWithTemplate`
+
+Still intentionally missing:
+
+- generated transaction builder
+- launch proof artifact
+- route commitment tree
+- same-template `validateOutputState` shortcut
+- stable ABI
+- mature diagnostics
