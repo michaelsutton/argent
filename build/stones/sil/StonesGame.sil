@@ -45,18 +45,6 @@ contract StonesGame(
         int wins;
         int losses;
     }
-    struct GameState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        // ----------- template fields above; source state below
-        byte[32] player_a;
-        byte[32] player_b;
-        int pile;
-        int max_take;
-        int turn;
-    }
     struct SettleState {
         byte[32] template_league;
         byte[32] template_player;
@@ -73,28 +61,28 @@ contract StonesGame(
         return blake2b(owner + player_id);
     }
     function side_player(int side, byte[32] player_a, byte[32] player_b) : byte[32] {
+        require(side == SIDE_A || side == SIDE_B);
+        byte[32] result = player_b;
         if (side == SIDE_A) {
-            return player_a;
+            result = player_a;
         }
-
-        require(side == SIDE_B);
-        return player_b;
+        return result;
     }
     function other_side(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = SIDE_A;
         if (side == SIDE_A) {
-            return SIDE_B;
+            result = SIDE_B;
         }
-
-        require(side == SIDE_B);
-        return SIDE_A;
+        return result;
     }
     function win_status(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = B_WIN;
         if (side == SIDE_A) {
-            return A_WIN;
+            result = A_WIN;
         }
-
-        require(side == SIDE_B);
-        return B_WIN;
+        return result;
     }
 
     // Template capability table
@@ -120,16 +108,43 @@ contract StonesGame(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: StonesGame | StonesSettle
 
-        // Become routes extracted for the next lowering pass.
-        // become next <- StonesSettle(ticket);
-        // validateOutputStateWithTemplate(next_output_idx, <SettleState>, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
-        // become next <- StonesGame(next_game);
-        // validateOutputStateWithTemplate(next_output_idx, <GameState>, stones_game_prefix, stones_game_suffix, template_stones_game);
-        // Current actor `StonesGame` copies template_* fields into every generated successor state.
-
-        // TODO: lower source body.
-        // Raw source body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+        require(pile > 0);
+        require(amount >= 1);
+        require(amount <= max_take);
+        require(amount <= pile);
+        byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
+        byte[32] expected_ref = side_player(turn, player_a, player_b);
+        require(actor_ref == expected_ref);
+        require(checkSig(move_sig, move_pk));
+        int next_pile = pile - amount;
+        require(tx.outputs[next_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        if (next_pile == 0) {
+            SettleState ticket = {
+                template_league: template_league,
+                template_player: template_player,
+                template_stones_game: template_stones_game,
+                template_stones_settle: template_stones_settle,
+                // ----------- template fields above; source state below
+                player_a: player_a,
+                player_b: player_b,
+                status: win_status(turn),
+            };
+            validateOutputStateWithTemplate(next_output_idx, ticket, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
+        } else {
+            State next_game = {
+                template_league: template_league,
+                template_player: template_player,
+                template_stones_game: template_stones_game,
+                template_stones_settle: template_stones_settle,
+                // ----------- template fields above; source state below
+                player_a: player_a,
+                player_b: player_b,
+                pile: next_pile,
+                max_take: max_take,
+                turn: other_side(turn),
+            };
+            validateOutputStateWithTemplate(next_output_idx, next_game, stones_game_prefix, stones_game_suffix, template_stones_game);
+        }
     }
 
     entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] stones_settle_prefix, byte[] stones_settle_suffix) {
@@ -139,14 +154,23 @@ contract StonesGame(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output settle: StonesSettle
 
-        // Become routes extracted for the next lowering pass.
-        // become settle <- StonesSettle(ticket);
-        // validateOutputStateWithTemplate(settle_output_idx, <SettleState>, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
-        // Current actor `StonesGame` copies template_* fields into every generated successor state.
-
-        // TODO: lower source body.
-        // Raw source body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+        byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
+        byte[32] expected_ref = side_player(turn, player_a, player_b);
+        require(actor_ref == expected_ref);
+        require(checkSig(move_sig, move_pk));
+        require(tx.outputs[settle_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        int winner = other_side(turn);
+        SettleState ticket = {
+            template_league: template_league,
+            template_player: template_player,
+            template_stones_game: template_stones_game,
+            template_stones_settle: template_stones_settle,
+            // ----------- template fields above; source state below
+            player_a: player_a,
+            player_b: player_b,
+            status: win_status(winner),
+        };
+        validateOutputStateWithTemplate(settle_output_idx, ticket, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
     }
 
 }

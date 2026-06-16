@@ -55,44 +55,34 @@ contract StonesSettle(
         int max_take;
         int turn;
     }
-    struct SettleState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        // ----------- template fields above; source state below
-        byte[32] player_a;
-        byte[32] player_b;
-        int status;
-    }
 
     // Shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
     function side_player(int side, byte[32] player_a, byte[32] player_b) : byte[32] {
+        require(side == SIDE_A || side == SIDE_B);
+        byte[32] result = player_b;
         if (side == SIDE_A) {
-            return player_a;
+            result = player_a;
         }
-
-        require(side == SIDE_B);
-        return player_b;
+        return result;
     }
     function other_side(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = SIDE_A;
         if (side == SIDE_A) {
-            return SIDE_B;
+            result = SIDE_B;
         }
-
-        require(side == SIDE_B);
-        return SIDE_A;
+        return result;
     }
     function win_status(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = B_WIN;
         if (side == SIDE_A) {
-            return A_WIN;
+            result = A_WIN;
         }
-
-        require(side == SIDE_B);
-        return B_WIN;
+        return result;
     }
 
     // Template capability table
@@ -122,16 +112,56 @@ contract StonesSettle(
         int player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
         int player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
 
-        // Become routes extracted for the next lowering pass.
-        // become player_a_out <- Player(next_player_a);
-        // validateOutputStateWithTemplate(player_a_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
-        // become player_b_out <- Player(next_player_b);
-        // validateOutputStateWithTemplate(player_b_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
-        // Current actor `StonesSettle` copies template_* fields into every generated successor state.
-
-        // TODO: lower source body.
-        // Raw source body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+        require(status == A_WIN || status == B_WIN);
+        byte[32] player_a_ref = player_ref(player_a_in.owner, player_a_in.player_id);
+        byte[32] player_b_ref = player_ref(player_b_in.owner, player_b_in.player_id);
+        require(player_a_ref == player_a);
+        require(player_b_ref == player_b);
+        require(player_a_in.open_games > 0);
+        require(player_b_in.open_games > 0);
+        int player_a_wins = player_a_in.wins;
+        int player_a_losses = player_a_in.losses;
+        int player_b_wins = player_b_in.wins;
+        int player_b_losses = player_b_in.losses;
+        if (status == A_WIN) {
+            player_a_wins = player_a_wins + 1;
+            player_b_losses = player_b_losses + 1;
+            require(tx.outputs[player_a_out_output_idx].value == tx.inputs[player_a_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
+            require(tx.outputs[player_b_out_output_idx].value == tx.inputs[player_b_in_input_idx].value);
+        } else {
+            player_b_wins = player_b_wins + 1;
+            player_a_losses = player_a_losses + 1;
+            require(tx.outputs[player_a_out_output_idx].value == tx.inputs[player_a_in_input_idx].value);
+            require(tx.outputs[player_b_out_output_idx].value == tx.inputs[player_b_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
+        }
+        PlayerState next_player_a = {
+            template_league: template_league,
+            template_player: template_player,
+            template_stones_game: template_stones_game,
+            template_stones_settle: template_stones_settle,
+            // ----------- template fields above; source state below
+            owner: player_a_in.owner,
+            player_id: player_a_in.player_id,
+            open_games: player_a_in.open_games - 1,
+            games: player_a_in.games + 1,
+            wins: player_a_wins,
+            losses: player_a_losses,
+        };
+        PlayerState next_player_b = {
+            template_league: template_league,
+            template_player: template_player,
+            template_stones_game: template_stones_game,
+            template_stones_settle: template_stones_settle,
+            // ----------- template fields above; source state below
+            owner: player_b_in.owner,
+            player_id: player_b_in.player_id,
+            open_games: player_b_in.open_games - 1,
+            games: player_b_in.games + 1,
+            wins: player_b_wins,
+            losses: player_b_losses,
+        };
+        validateOutputStateWithTemplate(player_a_out_output_idx, next_player_a, player_prefix, player_suffix, template_player);
+        validateOutputStateWithTemplate(player_b_out_output_idx, next_player_b, player_prefix, player_suffix, template_player);
     }
 
 }

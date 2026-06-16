@@ -20,16 +20,6 @@ contract League(
     int constant B_WIN = 2;
 
     // State layouts
-    struct LeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        // ----------- template fields above; source state below
-        byte[32] admin;
-        int default_pile;
-        int default_max_take;
-    }
     struct PlayerState {
         byte[32] template_league;
         byte[32] template_player;
@@ -71,28 +61,28 @@ contract League(
         return blake2b(owner + player_id);
     }
     function side_player(int side, byte[32] player_a, byte[32] player_b) : byte[32] {
+        require(side == SIDE_A || side == SIDE_B);
+        byte[32] result = player_b;
         if (side == SIDE_A) {
-            return player_a;
+            result = player_a;
         }
-
-        require(side == SIDE_B);
-        return player_b;
+        return result;
     }
     function other_side(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = SIDE_A;
         if (side == SIDE_A) {
-            return SIDE_B;
+            result = SIDE_B;
         }
-
-        require(side == SIDE_B);
-        return SIDE_A;
+        return result;
     }
     function win_status(int side) : int {
+        require(side == SIDE_A || side == SIDE_B);
+        int result = B_WIN;
         if (side == SIDE_A) {
-            return A_WIN;
+            result = A_WIN;
         }
-
-        require(side == SIDE_B);
-        return B_WIN;
+        return result;
     }
 
     // Template capability table
@@ -117,16 +107,36 @@ contract League(
         int lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output lane: League
         int player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
 
-        // Become routes extracted for the next lowering pass.
-        // become lane <- League(self.state);
-        // validateOutputStateWithTemplate(lane_output_idx, <LeagueState>, league_prefix, league_suffix, template_league);
-        // become player <- Player(next_player);
-        // validateOutputStateWithTemplate(player_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
-        // Current actor `League` copies template_* fields into every generated successor state.
-
-        // TODO: lower source body.
-        // Raw source body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+        require(checkSig(owner_sig, owner_pk));
+        byte[32] owner = blake2b(owner_pk);
+        byte[32] player_id = blake2b(bytes("StonesPlayer") + OpOutpointTxId(this.activeInputIndex) + byte[4](OpOutpointIndex(this.activeInputIndex)));
+        PlayerState next_player = {
+            template_league: template_league,
+            template_player: template_player,
+            template_stones_game: template_stones_game,
+            template_stones_settle: template_stones_settle,
+            // ----------- template fields above; source state below
+            owner: owner,
+            player_id: player_id,
+            open_games: 0,
+            games: 0,
+            wins: 0,
+            losses: 0,
+        };
+        require(tx.outputs[lane_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[player_output_idx].value > 0);
+        State generated_lane_state = {
+            template_league: template_league,
+            template_player: template_player,
+            template_stones_game: template_stones_game,
+            template_stones_settle: template_stones_settle,
+            // ----------- template fields above; source state below
+            admin: admin,
+            default_pile: default_pile,
+            default_max_take: default_max_take,
+        };
+        validateOutputStateWithTemplate(lane_output_idx, generated_lane_state, league_prefix, league_suffix, template_league);
+        validateOutputStateWithTemplate(player_output_idx, next_player, player_prefix, player_suffix, template_player);
     }
 
 }

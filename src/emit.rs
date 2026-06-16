@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
+use crate::lexer::{lex, Token, TokenKind};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
@@ -332,7 +333,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str("\n) {\n");
 
     emit_shared_constants(&mut out, model);
-    emit_state_layouts(&mut out, model)?;
+    emit_state_layouts(&mut out, actor, model)?;
     emit_shared_functions(&mut out, model);
 
     emit_section_header(&mut out, "Template capability table");
@@ -384,10 +385,17 @@ fn emit_shared_constants(out: &mut String, model: &Model<'_>) {
     }
 }
 
-fn emit_state_layouts(out: &mut String, model: &Model<'_>) -> Result<()> {
+fn emit_state_layouts(
+    out: &mut String,
+    current_actor: &ActorDecl,
+    model: &Model<'_>,
+) -> Result<()> {
     emit_section_header(out, "State layouts");
     let mut emitted = BTreeSet::new();
     for actor in &model.actors {
+        if actor.state == current_actor.state {
+            continue;
+        }
         if !emitted.insert(actor.state.clone()) {
             continue;
         }
@@ -487,7 +495,7 @@ fn emit_entry(
         for (idx, consume) in entry.consumes.iter().enumerate() {
             let cov_index = slot_offset + idx;
             let ident = to_snake(&consume.actor);
-            let state_struct = state_struct_name_for_actor(&consume.actor, model)?;
+            let state_struct = contract_state_type_for_actor(&consume.actor, actor, model)?;
             let _state = model.actor_state(&consume.actor)?;
             out.push_str(&format!(
                 "        int {}_input_idx = OpCovInputIdx(cov_id, {}); // input {} at cov[{}]\n",
@@ -528,170 +536,664 @@ fn emit_entry(
         }
     }
 
-    if entry.routes.is_empty() {
-        out.push('\n');
-        out.push_str(&lower_plain_entry_body(actor, entry, model)?);
-    } else {
-        emit_route_notes(out, actor, entry, model)?;
-
-        out.push_str("\n        // TODO: lower source body.\n");
-        out.push_str(
-            "        // Raw source body is retained in the AST for the next compiler pass.\n",
-        );
-        out.push_str("        require(1 == 1);\n");
-    }
+    out.push('\n');
+    out.push_str(&lower_entry_body(actor, entry, model)?);
     out.push_str("    }\n");
     Ok(())
 }
 
-fn lower_plain_entry_body(
-    actor: &ActorDecl,
-    entry: &EntryDecl,
-    model: &Model<'_>,
-) -> Result<String> {
-    let mut types = BTreeMap::new();
-    for field in &model.state(&actor.state)?.fields {
-        types.insert(field.name.clone(), field.ty.to_sil());
-    }
-    for param in &entry.params {
-        types.insert(param.name.clone(), param.ty.to_sil());
-    }
-    for consume in &entry.consumes {
-        types.insert(
-            consume.name.clone(),
-            state_struct_name_for_actor(&consume.actor, model)?,
-        );
-    }
+fn lower_entry_body(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<String> {
+    BodyLowerer::new(actor, entry, model)?.lower()
+}
 
-    let mut out = String::new();
-    for line in entry.body.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            out.push('\n');
-            continue;
+struct BodyLowerer<'a, 'm> {
+    body: &'a str,
+    tokens: Vec<Token>,
+    pos: usize,
+    actor: &'a ActorDecl,
+    entry: &'a EntryDecl,
+    model: &'m Model<'a>,
+    types: BTreeMap<String, String>,
+    input_names: BTreeSet<String>,
+    output_names: BTreeSet<String>,
+}
+
+impl<'a, 'm> BodyLowerer<'a, 'm> {
+    fn new(actor: &'a ActorDecl, entry: &'a EntryDecl, model: &'m Model<'a>) -> Result<Self> {
+        let tokens = lex(&entry.body).map_err(|err| {
+            ArgentError::new(format!(
+                "failed to lex body for `{}::{}`: {}",
+                actor.name, entry.name, err.message
+            ))
+        })?;
+
+        let mut types = BTreeMap::new();
+        for field in &model.state(&actor.state)?.fields {
+            types.insert(field.name.clone(), field.ty.to_sil());
+        }
+        for param in &entry.params {
+            types.insert(param.name.clone(), param.ty.to_sil());
         }
 
-        let lowered = if let Some(rest) = trimmed.strip_prefix("let ") {
-            lower_local_definition(rest, &mut types, model)?
-        } else if let Some(rest) = trimmed.strip_prefix("var ") {
-            lower_local_definition(rest, &mut types, model)?
+        let mut input_names = BTreeSet::new();
+        for consume in &entry.consumes {
+            input_names.insert(consume.name.clone());
+            types.insert(
+                consume.name.clone(),
+                contract_state_type_for_actor(&consume.actor, actor, model)?,
+            );
+        }
+
+        let mut output_names = BTreeSet::new();
+        match &entry.emits {
+            EmitSpec::None => {}
+            EmitSpec::One { .. } => {
+                output_names.insert("next".to_string());
+            }
+            EmitSpec::Outputs(outputs) => {
+                output_names.extend(outputs.iter().map(|output| output.name.clone()));
+            }
+        }
+
+        Ok(Self {
+            body: &entry.body,
+            tokens,
+            pos: 0,
+            actor,
+            entry,
+            model,
+            types,
+            input_names,
+            output_names,
+        })
+    }
+
+    fn lower(mut self) -> Result<String> {
+        let mut out = String::new();
+        self.lower_statements(&mut out, 8, None)?;
+        if out.trim().is_empty() {
+            out.push_str("        require(1 == 1);\n");
+        }
+        Ok(out)
+    }
+
+    fn lower_statements(
+        &mut self,
+        out: &mut String,
+        indent: usize,
+        end: Option<char>,
+    ) -> Result<()> {
+        while !self.is_eof() && !end.is_some_and(|symbol| self.check_symbol(symbol)) {
+            if self.consume_ident("if") {
+                self.lower_if(out, indent)?;
+            } else if self.consume_ident("become") {
+                self.lower_become(out, indent)?;
+            } else if self.consume_ident("let") || self.consume_ident("var") {
+                self.lower_local_definition(out, indent)?;
+            } else if self.check_symbol(';') {
+                self.advance();
+            } else {
+                self.lower_plain_statement(out, indent)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_if(&mut self, out: &mut String, indent: usize) -> Result<()> {
+        self.expect_symbol('(')?;
+        let condition = self.take_balanced_expr('(', ')')?;
+        self.expect_symbol('{')?;
+
+        push_indent(out, indent);
+        out.push_str(&format!(
+            "if ({}) {{\n",
+            self.lower_expr(&condition, None, indent)?
+        ));
+        self.lower_statements(out, indent + 4, Some('}'))?;
+        self.expect_symbol('}')?;
+        push_indent(out, indent);
+        out.push('}');
+
+        if self.consume_ident("else") {
+            self.expect_symbol('{')?;
+            out.push_str(" else {\n");
+            self.lower_statements(out, indent + 4, Some('}'))?;
+            self.expect_symbol('}')?;
+            push_indent(out, indent);
+            out.push('}');
+        }
+        out.push('\n');
+        Ok(())
+    }
+
+    fn lower_local_definition(&mut self, out: &mut String, indent: usize) -> Result<()> {
+        let name = self.expect_any_ident()?;
+        self.expect_symbol('=')?;
+        let expr = self.take_until_semicolon()?;
+        let ty = self.infer_expr_type(&expr).ok_or_else(|| {
+            ArgentError::new(format!(
+                "cannot infer type for local `{name}` from expression `{}` in `{}::{}`",
+                compact_expr(&expr),
+                self.actor.name,
+                self.entry.name
+            ))
+        })?;
+        let lowered = self.lower_expr(&expr, Some(&ty), indent)?;
+        self.types.insert(name.clone(), ty.clone());
+
+        push_indent(out, indent);
+        out.push_str(&format!("{ty} {name} = {lowered};\n"));
+        Ok(())
+    }
+
+    fn lower_plain_statement(&mut self, out: &mut String, indent: usize) -> Result<()> {
+        let statement = self.take_until_semicolon()?;
+        push_indent(out, indent);
+        out.push_str(&self.lower_expr(&statement, None, indent)?);
+        out.push_str(";\n");
+        Ok(())
+    }
+
+    fn lower_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
+        if self.consume_symbol('{') {
+            while !self.check_symbol('}') && !self.is_eof() {
+                let route = self.parse_become_route()?;
+                self.lower_route(out, indent, route)?;
+                self.consume_symbol(';');
+            }
+            self.expect_symbol('}')?;
+            self.consume_symbol(';');
         } else {
-            lower_plain_statement(trimmed)
+            let route = self.parse_become_route()?;
+            self.lower_route(out, indent, route)?;
+            self.consume_symbol(';');
+        }
+        Ok(())
+    }
+
+    fn parse_become_route(&mut self) -> Result<RouteCall> {
+        let first = self.expect_any_ident()?;
+        let (output, actor) = if self.consume_left_arrow() {
+            (Some(first), self.expect_any_ident()?)
+        } else {
+            (None, first)
+        };
+        self.expect_symbol('(')?;
+        let state = self.take_balanced_expr('(', ')')?;
+        Ok(RouteCall {
+            output,
+            actor,
+            state,
+        })
+    }
+
+    fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
+        self.model.actor_state(&route.actor)?;
+        let target = to_snake(&route.actor);
+        let output_idx = route
+            .output
+            .as_ref()
+            .map(|output| format!("{output}_output_idx"))
+            .unwrap_or_else(|| "next_output_idx".to_string());
+        let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
+        let state_expr = route.state.trim();
+        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+            self.lower_expr(state_expr, Some(&state_ty), indent)?
+        } else {
+            let name = generated_state_name(&route, &state_ty);
+            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            push_indent(out, indent);
+            out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
+            name
         };
 
-        out.push_str("        ");
-        out.push_str(&lowered);
-        out.push('\n');
+        push_indent(out, indent);
+        out.push_str(&format!(
+            "validateOutputStateWithTemplate({output_idx}, {state_arg}, {target}_prefix, {target}_suffix, template_{target});\n"
+        ));
+        Ok(())
     }
 
-    if out.trim().is_empty() {
-        out.push_str("        require(1 == 1);\n");
+    fn lower_expr(&self, expr: &str, expected_ty: Option<&str>, indent: usize) -> Result<String> {
+        let expr = expr.trim();
+        if let Some(domain) = parse_unique_self_outpoint(expr) {
+            return Ok(format!(
+                "blake2b(bytes(\"{domain}\") + OpOutpointTxId(this.activeInputIndex) + byte[4](OpOutpointIndex(this.activeInputIndex)))"
+            ));
+        }
+        if expr == "self.state" {
+            let ty = expected_ty.ok_or_else(|| {
+                ArgentError::new("`self.state` requires a target state type during lowering")
+            })?;
+            return self.lower_self_state_expr(ty, indent);
+        }
+        if let Some((state_name, body)) = split_state_constructor(expr) {
+            return self.lower_state_constructor(state_name, body, indent);
+        }
+        Ok(self.lower_refs(expr))
     }
 
-    Ok(out)
-}
-
-fn lower_local_definition(
-    rest: &str,
-    types: &mut BTreeMap<String, String>,
-    model: &Model<'_>,
-) -> Result<String> {
-    let (name, expr) = rest
-        .split_once('=')
-        .ok_or_else(|| ArgentError::new(format!("expected initializer in `{rest}`")))?;
-    let name = name.trim();
-    let expr = expr.trim();
-    let expr = expr
-        .strip_suffix(';')
-        .ok_or_else(|| ArgentError::new(format!("expected `;` after local definition `{rest}`")))?
-        .trim();
-    if name.is_empty() || name.contains(char::is_whitespace) {
-        return Err(ArgentError::new(format!(
-            "unsupported local binding `{name}`"
-        )));
+    fn lower_self_state_expr(&self, ty: &str, indent: usize) -> Result<String> {
+        let state_name = if ty == "State" { &self.actor.state } else { ty };
+        let state = self.model.state(state_name)?;
+        let fields = state
+            .fields
+            .iter()
+            .map(|field| (field.name.clone(), field.name.clone()))
+            .collect::<Vec<_>>();
+        self.render_state_object(&fields, indent)
     }
 
-    let ty = infer_expr_type(expr, types, model).ok_or_else(|| {
+    fn lower_state_constructor(
+        &self,
+        state_name: &str,
+        body: &str,
+        indent: usize,
+    ) -> Result<String> {
+        self.model.state(state_name)?;
+        let fields = parse_state_fields(body)
+            .into_iter()
+            .map(|(name, expr)| {
+                self.lower_expr(&expr, None, indent + 4)
+                    .map(|lowered| (name, lowered))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.render_state_object(&fields, indent)
+    }
+
+    fn render_state_object(&self, fields: &[(String, String)], indent: usize) -> Result<String> {
+        let field_indent = " ".repeat(indent + 4);
+        let close_indent = " ".repeat(indent);
+        let mut out = String::new();
+        out.push_str("{\n");
+        for template_actor in &self.model.template_actors {
+            let ident = to_snake(template_actor);
+            out.push_str(&format!(
+                "{field_indent}template_{ident}: template_{ident},\n"
+            ));
+        }
+        out.push_str(&format!(
+            "{field_indent}// ----------- template fields above; source state below\n"
+        ));
+        for (name, expr) in fields {
+            out.push_str(&format!("{field_indent}{name}: {expr},\n"));
+        }
+        out.push_str(&close_indent);
+        out.push('}');
+        Ok(out)
+    }
+
+    fn lower_refs(&self, expr: &str) -> String {
+        let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
+        for name in &self.input_names {
+            out = out.replace(
+                &format!("{name}.value"),
+                &format!("tx.inputs[{name}_input_idx].value"),
+            );
+        }
+        for name in &self.output_names {
+            out = out.replace(
+                &format!("{name}.value"),
+                &format!("tx.outputs[{name}_output_idx].value"),
+            );
+        }
+        out
+    }
+
+    fn infer_expr_type(&self, expr: &str) -> Option<String> {
+        let expr = expr.trim();
+        if let Some(ty) = self.types.get(expr) {
+            return Some(ty.clone());
+        }
+        if expr.chars().all(|ch| ch.is_ascii_digit()) {
+            return Some("int".to_string());
+        }
+        if expr.starts_with("blake2b(") || parse_unique_self_outpoint(expr).is_some() {
+            return Some("byte[32]".to_string());
+        }
+        if expr.starts_with("checkSig(") {
+            return Some("bool".to_string());
+        }
+        for function in &self.model.functions {
+            if expr.starts_with(&format!("{}(", function.name)) {
+                return Some(function.return_ty.to_sil());
+            }
+        }
+        if let Some((state_name, _)) = split_state_constructor(expr) {
+            if state_name == self.actor.state {
+                return Some("State".to_string());
+            }
+            return Some(state_name.to_string());
+        }
+        if let Some(ty) = self.infer_binary_expr_type(expr) {
+            return Some(ty);
+        }
+        self.infer_field_access_type(expr)
+    }
+
+    fn infer_binary_expr_type(&self, expr: &str) -> Option<String> {
+        for operator in ['+', '-', '*', '/', '%'] {
+            if let Some((left, right)) = split_top_level_operator(expr, operator) {
+                let left_ty = self.infer_expr_type(left)?;
+                let right_ty = self.infer_expr_type(right)?;
+                if left_ty == "int" && right_ty == "int" {
+                    return Some("int".to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn infer_field_access_type(&self, expr: &str) -> Option<String> {
+        let (base, field) = expr.split_once('.')?;
+        if field.contains('.') || field.contains('(') || field.contains(' ') {
+            return None;
+        }
+        let base_type = self.types.get(base)?;
+        let state = if base_type == "State" {
+            self.model.state(&self.actor.state).ok()
+        } else {
+            self.model
+                .source_states
+                .iter()
+                .find(|state| state.name == *base_type)
+                .copied()
+                .or_else(|| {
+                    self.model.actors.iter().find_map(|actor| {
+                        if actor.state == *base_type {
+                            self.model.state(&actor.state).ok()
+                        } else {
+                            None
+                        }
+                    })
+                })
+        }?;
+        state
+            .fields
+            .iter()
+            .find(|candidate| candidate.name == field)
+            .map(|field| field.ty.to_sil())
+    }
+
+    fn take_until_semicolon(&mut self) -> Result<String> {
+        let start = self.current().span.start;
+        let mut depth = 0usize;
+        while !self.is_eof() {
+            let token = self.current().clone();
+            match token.kind {
+                TokenKind::Symbol('{') | TokenKind::Symbol('(') | TokenKind::Symbol('[') => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Symbol('}') | TokenKind::Symbol(')') | TokenKind::Symbol(']') => {
+                    depth = depth.saturating_sub(1);
+                    self.advance();
+                }
+                TokenKind::Symbol(';') if depth == 0 => {
+                    let text = self.body[start..token.span.start].trim().to_string();
+                    self.advance();
+                    return Ok(text);
+                }
+                _ => self.advance(),
+            }
+        }
+        Err(self.error("unterminated statement"))
+    }
+
+    fn take_balanced_expr(&mut self, open: char, close: char) -> Result<String> {
+        let start = self.current().span.start;
+        let mut depth = 1usize;
+        while !self.is_eof() {
+            let token = self.current().clone();
+            match token.kind {
+                TokenKind::Symbol(symbol) if symbol == open => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Symbol(symbol) if symbol == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let text = self.body[start..token.span.start].trim().to_string();
+                        self.advance();
+                        return Ok(text);
+                    }
+                    self.advance();
+                }
+                _ => self.advance(),
+            }
+        }
+        Err(self.error(format!("unterminated `{open}` group")))
+    }
+
+    fn expect_any_ident(&mut self) -> Result<String> {
+        match self.current().kind.clone() {
+            TokenKind::Ident(name) => {
+                self.advance();
+                Ok(name)
+            }
+            _ => Err(self.error("expected identifier")),
+        }
+    }
+
+    fn expect_symbol(&mut self, expected: char) -> Result<()> {
+        match self.current().kind {
+            TokenKind::Symbol(actual) if actual == expected => {
+                self.advance();
+                Ok(())
+            }
+            _ => Err(self.error(format!("expected `{expected}`"))),
+        }
+    }
+
+    fn consume_ident(&mut self, expected: &str) -> bool {
+        match &self.current().kind {
+            TokenKind::Ident(actual) if actual == expected => {
+                self.advance();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn consume_symbol(&mut self, expected: char) -> bool {
+        match self.current().kind {
+            TokenKind::Symbol(actual) if actual == expected => {
+                self.advance();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn consume_left_arrow(&mut self) -> bool {
+        match self.current().kind {
+            TokenKind::LeftArrow => {
+                self.advance();
+                true
+            }
+            TokenKind::Symbol('<') if matches!(self.peek_kind(1), Some(TokenKind::Symbol('-'))) => {
+                self.advance();
+                self.advance();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn check_symbol(&self, expected: char) -> bool {
+        matches!(self.current().kind, TokenKind::Symbol(actual) if actual == expected)
+    }
+
+    fn current(&self) -> &Token {
+        &self.tokens[self.pos]
+    }
+
+    fn peek_kind(&self, offset: usize) -> Option<&TokenKind> {
+        self.tokens.get(self.pos + offset).map(|token| &token.kind)
+    }
+
+    fn advance(&mut self) {
+        if !self.is_eof() {
+            self.pos += 1;
+        }
+    }
+
+    fn is_eof(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Eof)
+    }
+
+    fn error(&self, message: impl Into<String>) -> ArgentError {
         ArgentError::new(format!(
-            "cannot infer type for local `{name}` from expression `{expr}`"
+            "{} in `{}::{}` at body byte {}",
+            message.into(),
+            self.actor.name,
+            self.entry.name,
+            self.current().span.start
         ))
-    })?;
-    types.insert(name.to_string(), ty.clone());
-    Ok(format!("{ty} {name} = {};", lower_plain_expression(expr)))
+    }
 }
 
-fn lower_plain_statement(statement: &str) -> String {
-    lower_plain_expression(statement)
+fn push_indent(out: &mut String, indent: usize) {
+    out.push_str(&" ".repeat(indent));
 }
 
-fn lower_plain_expression(expr: &str) -> String {
-    expr.replace("self.value", "tx.inputs[this.activeInputIndex].value")
+fn generated_state_name(route: &RouteCall, state_ty: &str) -> String {
+    let base = route
+        .output
+        .as_deref()
+        .unwrap_or_else(|| route.actor.as_str());
+    format!("generated_{}_{}", to_snake(base), to_snake(state_ty))
 }
 
-fn infer_expr_type(
-    expr: &str,
-    types: &BTreeMap<String, String>,
-    model: &Model<'_>,
-) -> Option<String> {
+fn parse_unique_self_outpoint(expr: &str) -> Option<String> {
     let expr = expr.trim();
-    if let Some(ty) = types.get(expr) {
-        return Some(ty.clone());
-    }
-    if expr.chars().all(|ch| ch.is_ascii_digit()) {
-        return Some("int".to_string());
-    }
-    if expr.starts_with("blake2b(") {
-        return Some("byte[32]".to_string());
-    }
-    if expr.starts_with("checkSig(") {
-        return Some("bool".to_string());
-    }
-
-    for function in &model.functions {
-        if expr.starts_with(&format!("{}(", function.name)) {
-            return Some(function.return_ty.to_sil());
-        }
-    }
-    for state in &model.source_states {
-        if expr.starts_with(&format!("{} {{", state.name))
-            || expr.starts_with(&format!("{}{{", state.name))
-        {
-            return Some(state.name.clone());
-        }
-    }
-
-    infer_field_access_type(expr, types, model)
-}
-
-fn infer_field_access_type(
-    expr: &str,
-    types: &BTreeMap<String, String>,
-    model: &Model<'_>,
-) -> Option<String> {
-    let (base, field) = expr.split_once('.')?;
-    if field.contains('.') || field.contains('(') || field.contains(' ') {
+    let rest = expr.strip_prefix("unique(")?.strip_suffix(')')?;
+    let (domain, outpoint) = rest.split_once(',')?;
+    if outpoint.trim() != "self.outpoint" {
         return None;
     }
-    let base_type = types.get(base)?;
-    let state = model
-        .source_states
-        .iter()
-        .find(|state| state.name == *base_type)
-        .copied()
-        .or_else(|| {
-            model.actors.iter().find_map(|actor| {
-                if actor.state == *base_type {
-                    model.state(&actor.state).ok()
-                } else {
-                    None
+    let domain = domain.trim();
+    Some(domain.strip_prefix('"')?.strip_suffix('"')?.to_string())
+}
+
+fn split_state_constructor(expr: &str) -> Option<(&str, &str)> {
+    let expr = expr.trim();
+    let brace_idx = expr.find('{')?;
+    let state_name = expr[..brace_idx].trim();
+    if state_name.is_empty()
+        || !state_name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    {
+        return None;
+    }
+    let body = expr[brace_idx + 1..].trim();
+    let body = body.strip_suffix('}')?.trim();
+    Some((state_name, body))
+}
+
+fn parse_state_fields(body: &str) -> Vec<(String, String)> {
+    split_top_level_commas(body)
+        .into_iter()
+        .filter_map(|entry| {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                return None;
+            }
+            let (name, expr) = split_top_level_colon(entry)?;
+            Some((name.trim().to_string(), expr.trim().to_string()))
+        })
+        .collect()
+}
+
+fn split_top_level_colon(input: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => return Some((&input[..idx], &input[idx + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_top_level_operator(input: &str, operator: char) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            candidate if depth == 0 && candidate == operator => {
+                let left = input[..idx].trim();
+                let right = input[idx + candidate.len_utf8()..].trim();
+                if !left.is_empty() && !right.is_empty() {
+                    return Some((left, right));
                 }
-            })
-        })?;
-    state
-        .fields
-        .iter()
-        .find(|candidate| candidate.name == field)
-        .map(|field| field.ty.to_sil())
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn split_top_level_commas(input: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&input[start..idx]);
+                start = idx + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&input[start..]);
+    parts
 }
 
 fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<String> {
@@ -737,50 +1239,6 @@ fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
     }
     ordered.extend(required);
     ordered
-}
-
-fn emit_route_notes(
-    out: &mut String,
-    actor: &ActorDecl,
-    entry: &EntryDecl,
-    model: &Model<'_>,
-) -> Result<()> {
-    if entry.routes.is_empty() {
-        return Ok(());
-    }
-
-    out.push_str("\n        // Become routes extracted for the next lowering pass.\n");
-    for route in &entry.routes {
-        let target = to_snake(&route.actor);
-        let output_idx = route
-            .output
-            .as_ref()
-            .map(|output| format!("{output}_output_idx"))
-            .unwrap_or_else(|| "next_output_idx".to_string());
-        let route_head = route
-            .output
-            .as_ref()
-            .map(|output| format!("{output} <- {}", route.actor))
-            .unwrap_or_else(|| route.actor.clone());
-        out.push_str(&format!(
-            "        // become {}({});\n",
-            route_head,
-            compact_expr(&route.state)
-        ));
-        out.push_str(&format!(
-            "        // validateOutputStateWithTemplate({}, <{}>, {}_prefix, {}_suffix, template_{});\n",
-            output_idx,
-            state_struct_name_for_actor(&route.actor, model)?,
-            target,
-            target,
-            target
-        ));
-    }
-    out.push_str(&format!(
-        "        // Current actor `{}` copies template_* fields into every generated successor state.\n",
-        actor.name
-    ));
-    Ok(())
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -952,6 +1410,19 @@ fn to_snake(input: &str) -> String {
 
 fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String> {
     Ok(model.actor(actor)?.state.clone())
+}
+
+fn contract_state_type_for_actor(
+    actor: &str,
+    current_actor: &ActorDecl,
+    model: &Model<'_>,
+) -> Result<String> {
+    if actor == current_actor.name {
+        model.actor_state(actor)?;
+        Ok("State".to_string())
+    } else {
+        state_struct_name_for_actor(actor, model)
+    }
 }
 
 fn compact_expr(input: &str) -> String {

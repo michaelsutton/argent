@@ -42,29 +42,28 @@ fn player_ref(owner: byte[32], player_id: byte[32]) -> byte[32] {
 }
 
 fn side_player(side: int, player_a: byte[32], player_b: byte[32]) -> byte[32] {
+    require(side == SIDE_A || side == SIDE_B);
+    byte[32] result = player_b;
     if (side == SIDE_A) {
-        return player_a;
+        result = player_a;
     }
-
-    require(side == SIDE_B);
-    return player_b;
+    return result;
 }
 
 fn other_side(side: int) -> int {
+    require(side == SIDE_A || side == SIDE_B);
+    int result = SIDE_A;
     if (side == SIDE_A) {
-        return SIDE_B;
+        result = SIDE_B;
     }
-
-    require(side == SIDE_B);
-    return SIDE_A;
+    return result;
 }
 
 fn win_status(side: int) -> int {
+    require(side == SIDE_A || side == SIDE_B);
+    int result = B_WIN;
     if (side == SIDE_A) {
-        return A_WIN;
+        result = A_WIN;
     }
-
-    require(side == SIDE_B);
-    return B_WIN;
+    return result;
 }
-
