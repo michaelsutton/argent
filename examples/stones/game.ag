@@ -35,18 +35,18 @@ actor StonesGame owns GameState {
 
             // Single-output `become` lowers to one authorized successor output.
             become next <- StonesSettle(ticket);
+        } else {
+            let next_game = GameState {
+                player_a: player_a,
+                player_b: player_b,
+                pile: next_pile,
+                max_take: max_take,
+                turn: other_side(turn),
+            };
+
+            // Same entrypoint, different successor actor in the declared emits set.
+            become next <- StonesGame(next_game);
         }
-
-        let next_game = GameState {
-            player_a: player_a,
-            player_b: player_b,
-            pile: next_pile,
-            max_take: max_take,
-            turn: other_side(turn),
-        };
-
-        // Same entrypoint, different successor actor in the declared emits set.
-        become next <- StonesGame(next_game);
     }
 
     entry concede(

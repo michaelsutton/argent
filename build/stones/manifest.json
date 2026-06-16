@@ -24,6 +24,7 @@
         {
           "name": "register_player",
           "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "lane", "auth_index": 0, "actors": ["League"] }, { "name": "player", "auth_index": 1, "actors": ["Player"] }] },
           "consumes": [],
           "routes": [{ "output": "lane", "actor": "League", "state": "self.state" }, { "output": "player", "actor": "Player", "state": "next_player" }]
         }
@@ -37,24 +38,28 @@
         {
           "name": "start_game",
           "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "self_out", "auth_index": 0, "actors": ["Player"] }, { "name": "opponent_out", "auth_index": 1, "actors": ["Player"] }, { "name": "game", "auth_index": 2, "actors": ["StonesGame"] }] },
           "consumes": [{ "name": "opponent", "actor": "Player" }],
           "routes": [{ "output": "self_out", "actor": "Player", "state": "next_self" }, { "output": "opponent_out", "actor": "Player", "state": "next_opponent" }, { "output": "game", "actor": "StonesGame", "state": "next_game" }]
         },
         {
           "name": "accept_start",
           "kind": "delegate",
+          "emits": { "kind": "none" },
           "consumes": [{ "name": "starter", "actor": "Player" }],
           "routes": []
         },
         {
           "name": "settle",
           "kind": "delegate",
+          "emits": { "kind": "none" },
           "consumes": [{ "name": "settle", "actor": "StonesSettle" }],
           "routes": []
         },
         {
           "name": "retire",
           "kind": "leader",
+          "emits": { "kind": "none" },
           "consumes": [],
           "routes": []
         }
@@ -68,12 +73,14 @@
         {
           "name": "take",
           "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "next", "auth_index": 0, "actors": ["StonesGame", "StonesSettle"] }] },
           "consumes": [],
           "routes": [{ "output": "next", "actor": "StonesSettle", "state": "ticket" }, { "output": "next", "actor": "StonesGame", "state": "next_game" }]
         },
         {
           "name": "concede",
           "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "settle", "auth_index": 0, "actors": ["StonesSettle"] }] },
           "consumes": [],
           "routes": [{ "output": "settle", "actor": "StonesSettle", "state": "ticket" }]
         }
@@ -87,6 +94,7 @@
         {
           "name": "settle",
           "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "player_a_out", "auth_index": 0, "actors": ["Player"] }, { "name": "player_b_out", "auth_index": 1, "actors": ["Player"] }] },
           "consumes": [{ "name": "player_a_in", "actor": "Player" }, { "name": "player_b_in", "actor": "Player" }],
           "routes": [{ "output": "player_a_out", "actor": "Player", "state": "next_player_a" }, { "output": "player_b_out", "actor": "Player", "state": "next_player_b" }]
         }

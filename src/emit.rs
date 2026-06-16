@@ -26,6 +26,7 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
 struct Model<'a> {
     app_name: String,
     template_actors: Vec<String>,
@@ -69,13 +70,15 @@ impl<'a> Model<'a> {
             actors.push(actor);
         }
 
-        Ok(Self {
+        let model = Self {
             app_name,
             template_actors,
             states,
             actors_by_name: all_actors,
             actors,
-        })
+        };
+        model.validate()?;
+        Ok(model)
     }
 
     fn state(&self, name: &str) -> Result<&StateDecl> {
@@ -95,6 +98,194 @@ impl<'a> Model<'a> {
     fn actor_state(&self, name: &str) -> Result<&StateDecl> {
         let actor = self.actor(name)?;
         self.state(&actor.state)
+    }
+
+    fn validate(&self) -> Result<()> {
+        let template_actor_set = self
+            .template_actors
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        for actor in &self.actors {
+            for entry in &actor.entries {
+                self.validate_entry(actor, entry, &template_actor_set)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_entry(
+        &self,
+        actor: &ActorDecl,
+        entry: &EntryDecl,
+        template_actor_set: &BTreeSet<String>,
+    ) -> Result<()> {
+        for consume in &entry.consumes {
+            self.require_template_actor(
+                &consume.actor,
+                template_actor_set,
+                format!(
+                    "entry `{}::{}` consumes unknown actor `{}`",
+                    actor.name, entry.name, consume.actor
+                ),
+            )?;
+        }
+
+        match &entry.emits {
+            EmitSpec::None => {}
+            EmitSpec::One { actors } => {
+                for target in actors {
+                    self.require_template_actor(
+                        target,
+                        template_actor_set,
+                        format!(
+                            "entry `{}::{}` emits unknown actor `{target}`",
+                            actor.name, entry.name
+                        ),
+                    )?;
+                }
+            }
+            EmitSpec::Outputs(outputs) => {
+                let mut names = BTreeSet::new();
+                let mut auth_indices = BTreeSet::new();
+                for output in outputs {
+                    if !names.insert(output.name.clone()) {
+                        return Err(ArgentError::new(format!(
+                            "entry `{}::{}` declares output `{}` more than once",
+                            actor.name, entry.name, output.name
+                        )));
+                    }
+                    if output.auth_index >= outputs.len() {
+                        return Err(ArgentError::new(format!(
+                            "entry `{}::{}` output `{}` uses auth[{}], but only {} outputs are emitted",
+                            actor.name,
+                            entry.name,
+                            output.name,
+                            output.auth_index,
+                            outputs.len()
+                        )));
+                    }
+                    if !auth_indices.insert(output.auth_index) {
+                        return Err(ArgentError::new(format!(
+                            "entry `{}::{}` maps multiple outputs to auth[{}]",
+                            actor.name, entry.name, output.auth_index
+                        )));
+                    }
+                    for target in &output.actors {
+                        self.require_template_actor(
+                            target,
+                            template_actor_set,
+                            format!(
+                                "entry `{}::{}` output `{}` emits unknown actor `{target}`",
+                                actor.name, entry.name, output.name
+                            ),
+                        )?;
+                    }
+                }
+            }
+        }
+
+        if entry.kind == EntryKind::Delegate && !entry.routes.is_empty() {
+            return Err(ArgentError::new(format!(
+                "delegate `{}::{}` cannot use `become`; delegates verify coordinated transitions but emit no outputs",
+                actor.name, entry.name
+            )));
+        }
+
+        for route in &entry.routes {
+            if route.state.trim().is_empty() {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` has an empty `become` state for actor `{}`",
+                    actor.name, entry.name, route.actor
+                )));
+            }
+            self.require_template_actor(
+                &route.actor,
+                template_actor_set,
+                format!(
+                    "entry `{}::{}` routes to unknown actor `{}`",
+                    actor.name, entry.name, route.actor
+                ),
+            )?;
+            self.actor_state(&route.actor)?;
+            self.validate_route_allowed(actor, entry, route)?;
+        }
+        Ok(())
+    }
+
+    fn require_template_actor(
+        &self,
+        actor: &str,
+        template_actor_set: &BTreeSet<String>,
+        message: String,
+    ) -> Result<()> {
+        if !template_actor_set.contains(actor) {
+            return Err(ArgentError::new(message));
+        }
+        self.actor_state(actor)?;
+        Ok(())
+    }
+
+    fn validate_route_allowed(
+        &self,
+        actor: &ActorDecl,
+        entry: &EntryDecl,
+        route: &RouteCall,
+    ) -> Result<()> {
+        match &entry.emits {
+            EmitSpec::None => Err(ArgentError::new(format!(
+                "entry `{}::{}` has a `become` route to `{}`, but declares `emits none`",
+                actor.name, entry.name, route.actor
+            ))),
+            EmitSpec::One { actors } => {
+                if let Some(output) = &route.output {
+                    return Err(ArgentError::new(format!(
+                        "entry `{}::{}` names output `{output}`, but `emits one` uses an unnamed output",
+                        actor.name, entry.name
+                    )));
+                }
+                if actors.iter().any(|target| target == &route.actor) {
+                    Ok(())
+                } else {
+                    Err(ArgentError::new(format!(
+                        "entry `{}::{}` routes to `{}`, but `emits one` allows only {}",
+                        actor.name,
+                        entry.name,
+                        route.actor,
+                        actors.join(" | ")
+                    )))
+                }
+            }
+            EmitSpec::Outputs(outputs) => {
+                let output_name = route.output.as_ref().ok_or_else(|| {
+                    ArgentError::new(format!(
+                        "entry `{}::{}` routes to `{}` without an output handle, but declares named outputs",
+                        actor.name, entry.name, route.actor
+                    ))
+                })?;
+                let output = outputs
+                    .iter()
+                    .find(|output| &output.name == output_name)
+                    .ok_or_else(|| {
+                        ArgentError::new(format!(
+                            "entry `{}::{}` routes through unknown output `{output_name}`",
+                            actor.name, entry.name
+                        ))
+                    })?;
+                if output.actors.iter().any(|target| target == &route.actor) {
+                    Ok(())
+                } else {
+                    Err(ArgentError::new(format!(
+                        "entry `{}::{}` routes output `{}` to `{}`, but that output allows only {}",
+                        actor.name,
+                        entry.name,
+                        output.name,
+                        route.actor,
+                        output.actors.join(" | ")
+                    )))
+                }
+            }
+        }
     }
 }
 
@@ -438,6 +629,9 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
                     EntryKind::Delegate => "delegate",
                 }
             ));
+            out.push_str("          \"emits\": ");
+            emit_emit_spec_json(&mut out, &entry.emits);
+            out.push_str(",\n");
             out.push_str("          \"consumes\": [");
             for (consume_idx, consume) in entry.consumes.iter().enumerate() {
                 if consume_idx > 0 {
@@ -476,6 +670,43 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     out.push_str("\n  ]\n");
     out.push_str("}\n");
     out
+}
+
+fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
+    match emits {
+        EmitSpec::None => out.push_str("{ \"kind\": \"none\" }"),
+        EmitSpec::One { actors } => {
+            out.push_str("{ \"kind\": \"one\", \"actors\": [");
+            for (idx, actor) in actors.iter().enumerate() {
+                if idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!("\"{}\"", json_escape(actor)));
+            }
+            out.push_str("] }");
+        }
+        EmitSpec::Outputs(outputs) => {
+            out.push_str("{ \"kind\": \"outputs\", \"outputs\": [");
+            for (output_idx, output) in outputs.iter().enumerate() {
+                if output_idx > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&format!(
+                    "{{ \"name\": \"{}\", \"auth_index\": {}, \"actors\": [",
+                    json_escape(&output.name),
+                    output.auth_index
+                ));
+                for (actor_idx, actor) in output.actors.iter().enumerate() {
+                    if actor_idx > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&format!("\"{}\"", json_escape(actor)));
+                }
+                out.push_str("] }");
+            }
+            out.push_str("] }");
+        }
+    }
 }
 
 fn to_snake(input: &str) -> String {
@@ -523,4 +754,112 @@ fn json_escape(input: &str) -> String {
         .replace('\n', "\\n")
         .replace('\r', "\\r")
         .replace('\t', "\\t")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test]
+    fn rejects_route_outside_named_output_union() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
+            output: Some("next".to_string()),
+            actor: "Game".to_string(),
+            state: "next_game".to_string(),
+        }];
+
+        let err = Model::from_program(&program).expect_err("route must be rejected");
+        assert!(
+            err.to_string().contains("routes output `next` to `Game`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn accepts_route_inside_named_output_union() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0].emits = EmitSpec::Outputs(vec![EmitOutput {
+            name: "next".to_string(),
+            actors: vec!["Player".to_string(), "Game".to_string()],
+            auth_index: 0,
+        }]);
+        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
+            output: Some("next".to_string()),
+            actor: "Game".to_string(),
+            state: "next_game".to_string(),
+        }];
+
+        Model::from_program(&program).expect("route should be accepted");
+    }
+
+    #[test]
+    fn rejects_delegate_become() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0].kind = EntryKind::Delegate;
+        program.modules[0].actors[0].entries[0].emits = EmitSpec::None;
+        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
+            output: Some("next".to_string()),
+            actor: "Player".to_string(),
+            state: "next_player".to_string(),
+        }];
+
+        let err = Model::from_program(&program).expect_err("delegate become must be rejected");
+        assert!(
+            err.to_string().contains("cannot use `become`"),
+            "unexpected error: {err}"
+        );
+    }
+
+    fn test_program() -> Program {
+        Program {
+            root: PathBuf::from("test.ag"),
+            modules: vec![Module {
+                path: PathBuf::from("test.ag"),
+                imports: Vec::new(),
+                consts: Vec::new(),
+                states: vec![
+                    StateDecl {
+                        name: "PlayerState".to_string(),
+                        fields: Vec::new(),
+                    },
+                    StateDecl {
+                        name: "GameState".to_string(),
+                        fields: Vec::new(),
+                    },
+                ],
+                functions: Vec::new(),
+                actors: vec![
+                    ActorDecl {
+                        name: "Player".to_string(),
+                        state: "PlayerState".to_string(),
+                        entries: vec![EntryDecl {
+                            kind: EntryKind::Leader,
+                            name: "step".to_string(),
+                            params: Vec::new(),
+                            consumes: Vec::new(),
+                            emits: EmitSpec::Outputs(vec![EmitOutput {
+                                name: "next".to_string(),
+                                actors: vec!["Player".to_string()],
+                                auth_index: 0,
+                            }]),
+                            body: String::new(),
+                            routes: Vec::new(),
+                        }],
+                    },
+                    ActorDecl {
+                        name: "Game".to_string(),
+                        state: "GameState".to_string(),
+                        entries: Vec::new(),
+                    },
+                ],
+                apps: vec![AppDecl {
+                    name: "Test".to_string(),
+                    actors: vec!["Player".to_string(), "Game".to_string()],
+                }],
+            }],
+        }
+    }
 }
