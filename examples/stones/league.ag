@@ -5,9 +5,8 @@ import actor Player from "./player.ag";
 
 actor League owns LeagueState {
     entry register_player(owner_sig: signer) emits {
-        // Named auth outputs lower to `OpAuthOutputIdx(active, n)`.
-        lane: League at auth[0];
-        player: Player at auth[1];
+        lane: League;
+        player: Player;
     } {
         let owner = blake2b(owner_sig.pubkey);
         let player_id = unique("StonesPlayer", self.outpoint);

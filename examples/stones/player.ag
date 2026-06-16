@@ -7,24 +7,19 @@ import actor StonesSettle from "./settle.ag";
 actor Player owns PlayerState {
     entry start_game(
         owner_sig: signer,
-
-        // Foreign actor input at a fixed covenant input slot.
-        opponent: input Player at cov[1],
-
         first_turn: int,
         pile: int,
         max_take: int
-    ) emits {
-        // Named auth outputs define the transaction output shape.
-        self_out: Player at auth[0];
-        opponent_out: Player at auth[1];
-        game: StonesGame at auth[2];
+    ) consumes {
+        // Consumed actors join the same coordinated transition as `self`.
+        opponent: Player;
+    } emits {
+        self_out: Player;
+        opponent_out: Player;
+        game: StonesGame;
     } {
         require(blake2b(owner_sig.pubkey) == owner);
         require(owner_sig.valid);
-
-        // Exact covenant input shape lowers to count and index checks.
-        require cov.inputs == [self, opponent];
 
         require(opponent.player_id != player_id);
         require(first_turn == SIDE_A || first_turn == SIDE_B);
@@ -72,25 +67,19 @@ actor Player owns PlayerState {
         };
     }
 
-    entry accept_start(
-        owner_sig: signer,
-
-        // The delegate reads the leading Player input but emits nothing.
-        starter: input Player at cov[0]
-    ) emits none {
+    // Delegate entries are non-leader checks in a coordinated transition.
+    delegate accept_start(owner_sig: signer) consumes {
+        starter: Player;
+    } {
         require(blake2b(owner_sig.pubkey) == owner);
         require(owner_sig.valid);
-
-        // Delegate entries still declare the shared transaction shape.
-        require cov.inputs == [starter, self];
 
         require(starter.player_id != player_id);
     }
 
-    entry delegate_settle(
-        // Typed foreign input replaces manual prefix/suffix template reads.
-        settle: input StonesSettle at cov[0]
-    ) emits none {
+    delegate settle() consumes {
+        settle: StonesSettle;
+    } {
         let self_ref = player_ref(owner, player_id);
         require(self_ref == settle.player_a || self_ref == settle.player_b);
     }

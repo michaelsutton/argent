@@ -4,19 +4,14 @@ import "./types.ag";
 import actor Player from "./player.ag";
 
 actor StonesSettle owns SettleState {
-    entry settle(
-        // Typed foreign inputs lower to `readInputStateWithTemplate`.
-        player_a_in: input Player at cov[1],
-        player_b_in: input Player at cov[2]
-    ) emits {
-        // Named auth outputs lower to stable output indexes.
-        player_a_out: Player at auth[0];
-        player_b_out: Player at auth[1];
+    entry settle() consumes {
+        player_a_in: Player;
+        player_b_in: Player;
+    } emits {
+        player_a_out: Player;
+        player_b_out: Player;
     } {
         require(status == A_WIN || status == B_WIN);
-
-        // Exact covenant input shape lowers to count and index checks.
-        require cov.inputs == [self, player_a_in, player_b_in];
 
         let player_a_ref = player_ref(player_a_in.owner, player_a_in.player_id);
         let player_b_ref = player_ref(player_b_in.owner, player_b_in.player_id);

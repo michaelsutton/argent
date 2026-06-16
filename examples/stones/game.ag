@@ -9,8 +9,8 @@ actor StonesGame owns GameState {
         player_id: byte[32],
         move_sig: signer
     ) emits {
-        // Union-typed auth output: the entry chooses one successor actor at runtime.
-        next: StonesGame | StonesSettle at auth[0];
+        // Union-typed output: the entry chooses one successor actor at runtime.
+        next: StonesGame | StonesSettle;
     } {
         require(pile > 0);
         require(amount >= 1);
@@ -52,7 +52,7 @@ actor StonesGame owns GameState {
         player_id: byte[32],
         move_sig: signer
     ) emits {
-        settle: StonesSettle at auth[0];
+        settle: StonesSettle;
     } {
         let actor_ref = player_ref(blake2b(move_sig.pubkey), player_id);
         let expected_ref = side_player(turn, player_a, player_b);
