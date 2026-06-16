@@ -12,20 +12,30 @@ contract League(
     int init_default_pile,
     int init_default_max_take
 ) {
-    // Shared constants imported from Argent modules.
+    // Shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // User state structs imported from Argent modules.
+    // State layouts
     struct LeagueState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
         int open_games;
@@ -34,6 +44,11 @@ contract League(
         int losses;
     }
     struct GameState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int pile;
@@ -41,12 +56,17 @@ contract League(
         int turn;
     }
     struct SettleState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int status;
     }
 
-    // Shared helper functions imported from Argent modules.
+    // Shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -75,60 +95,18 @@ contract League(
         return B_WIN;
     }
 
-    // Hidden template capability table generated from the Argent app manifest.
+    // Template capability table
     byte[32] template_league = init_template_league;
     byte[32] template_player = init_template_player;
     byte[32] template_stones_game = init_template_stones_game;
     byte[32] template_stones_settle = init_template_stones_settle;
 
-    // User state owned by Argent actor `League`.
+    // League state fields
     byte[32] admin = init_admin;
     int default_pile = init_default_pile;
     int default_max_take = init_default_max_take;
 
-    // Full state layouts used for generated cross-template reads and writes.
-    struct ArgentLeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] admin;
-        int default_pile;
-        int default_max_take;
-    }
-    struct ArgentPlayerState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] owner;
-        byte[32] player_id;
-        int open_games;
-        int games;
-        int wins;
-        int losses;
-    }
-    struct ArgentStonesGameState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int pile;
-        int max_take;
-        int turn;
-    }
-    struct ArgentStonesSettleState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int status;
-    }
-
+    // Entrypoints
     entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] league_prefix, byte[] league_suffix, byte[] player_prefix, byte[] player_suffix) {
         int league_prefix_len = league_prefix.length;
         int league_suffix_len = league_suffix.length;
@@ -136,18 +114,18 @@ contract League(
         int player_suffix_len = player_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // Argent output lane: League
-        int player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // Argent output player: Player
+        int lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output lane: League
+        int player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
 
-        // Argent become routes extracted for the next lowering pass.
+        // Become routes extracted for the next lowering pass.
         // become lane <- League(self.state);
-        // validateOutputStateWithTemplate(lane_output_idx, <ArgentLeagueState>, league_prefix, league_suffix, template_league);
+        // validateOutputStateWithTemplate(lane_output_idx, <LeagueState>, league_prefix, league_suffix, template_league);
         // become player <- Player(next_player);
-        // validateOutputStateWithTemplate(player_output_idx, <ArgentPlayerState>, player_prefix, player_suffix, template_player);
+        // validateOutputStateWithTemplate(player_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
         // Current actor `League` copies template_* fields into every generated successor state.
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
+        // TODO: lower source body.
+        // Raw source body is retained in the AST for the next compiler pass.
         require(1 == 1);
     }
 

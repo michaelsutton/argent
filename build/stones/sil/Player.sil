@@ -15,20 +15,30 @@ contract Player(
     int init_wins,
     int init_losses
 ) {
-    // Shared constants imported from Argent modules.
+    // Shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // User state structs imported from Argent modules.
+    // State layouts
     struct LeagueState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
         int open_games;
@@ -37,6 +47,11 @@ contract Player(
         int losses;
     }
     struct GameState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int pile;
@@ -44,12 +59,17 @@ contract Player(
         int turn;
     }
     struct SettleState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int status;
     }
 
-    // Shared helper functions imported from Argent modules.
+    // Shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -78,13 +98,13 @@ contract Player(
         return B_WIN;
     }
 
-    // Hidden template capability table generated from the Argent app manifest.
+    // Template capability table
     byte[32] template_league = init_template_league;
     byte[32] template_player = init_template_player;
     byte[32] template_stones_game = init_template_stones_game;
     byte[32] template_stones_settle = init_template_stones_settle;
 
-    // User state owned by Argent actor `Player`.
+    // Player state fields
     byte[32] owner = init_owner;
     byte[32] player_id = init_player_id;
     int open_games = init_open_games;
@@ -92,49 +112,7 @@ contract Player(
     int wins = init_wins;
     int losses = init_losses;
 
-    // Full state layouts used for generated cross-template reads and writes.
-    struct ArgentLeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] admin;
-        int default_pile;
-        int default_max_take;
-    }
-    struct ArgentPlayerState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] owner;
-        byte[32] player_id;
-        int open_games;
-        int games;
-        int wins;
-        int losses;
-    }
-    struct ArgentStonesGameState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int pile;
-        int max_take;
-        int turn;
-    }
-    struct ArgentStonesSettleState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int status;
-    }
-
+    // Entrypoints
     entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, byte[] player_prefix, byte[] player_suffix, byte[] stones_game_prefix, byte[] stones_game_suffix) {
         int player_prefix_len = player_prefix.length;
         int player_suffix_len = player_suffix.length;
@@ -144,24 +122,24 @@ contract Player(
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 2);
         require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
-        int opponent_input_idx = OpCovInputIdx(cov_id, 1); // Argent input Player at cov[1]
-        ArgentPlayerState opponent = readInputStateWithTemplate(opponent_input_idx, player_prefix_len, player_suffix_len, template_player);
+        int opponent_input_idx = OpCovInputIdx(cov_id, 1); // input Player at cov[1]
+        PlayerState opponent = readInputStateWithTemplate(opponent_input_idx, player_prefix_len, player_suffix_len, template_player);
         require(OpAuthOutputCount(this.activeInputIndex) == 3);
-        int self_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // Argent output self_out: Player
-        int opponent_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // Argent output opponent_out: Player
-        int game_output_idx = OpAuthOutputIdx(this.activeInputIndex, 2); // Argent output game: StonesGame
+        int self_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output self_out: Player
+        int opponent_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output opponent_out: Player
+        int game_output_idx = OpAuthOutputIdx(this.activeInputIndex, 2); // output game: StonesGame
 
-        // Argent become routes extracted for the next lowering pass.
+        // Become routes extracted for the next lowering pass.
         // become self_out <- Player(next_self);
-        // validateOutputStateWithTemplate(self_out_output_idx, <ArgentPlayerState>, player_prefix, player_suffix, template_player);
+        // validateOutputStateWithTemplate(self_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
         // become opponent_out <- Player(next_opponent);
-        // validateOutputStateWithTemplate(opponent_out_output_idx, <ArgentPlayerState>, player_prefix, player_suffix, template_player);
+        // validateOutputStateWithTemplate(opponent_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
         // become game <- StonesGame(next_game);
-        // validateOutputStateWithTemplate(game_output_idx, <ArgentStonesGameState>, stones_game_prefix, stones_game_suffix, template_stones_game);
+        // validateOutputStateWithTemplate(game_output_idx, <GameState>, stones_game_prefix, stones_game_suffix, template_stones_game);
         // Current actor `Player` copies template_* fields into every generated successor state.
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
+        // TODO: lower source body.
+        // Raw source body is retained in the AST for the next compiler pass.
         require(1 == 1);
     }
 
@@ -172,13 +150,16 @@ contract Player(
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) >= 2);
         require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);
-        int starter_input_idx = OpCovInputIdx(cov_id, 0); // Argent input Player at cov[0]
-        ArgentPlayerState starter = readInputStateWithTemplate(starter_input_idx, player_prefix_len, player_suffix_len, template_player);
+        int starter_input_idx = OpCovInputIdx(cov_id, 0); // input Player at cov[0]
+        PlayerState starter = readInputStateWithTemplate(starter_input_idx, player_prefix_len, player_suffix_len, template_player);
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+
+        require(starter.player_id != player_id);
+
     }
 
     entrypoint function settle(byte[] stones_settle_prefix, byte[] stones_settle_suffix) {
@@ -188,21 +169,24 @@ contract Player(
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) >= 2);
         require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);
-        int settle_input_idx = OpCovInputIdx(cov_id, 0); // Argent input StonesSettle at cov[0]
-        ArgentStonesSettleState settle = readInputStateWithTemplate(settle_input_idx, stones_settle_prefix_len, stones_settle_suffix_len, template_stones_settle);
+        int settle_input_idx = OpCovInputIdx(cov_id, 0); // input StonesSettle at cov[0]
+        SettleState settle = readInputStateWithTemplate(settle_input_idx, stones_settle_prefix_len, stones_settle_suffix_len, template_stones_settle);
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+
+        byte[32] self_ref = player_ref(owner, player_id);
+        require(self_ref == settle.player_a || self_ref == settle.player_b);
+
     }
 
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
-        require(1 == 1);
+
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+        require(open_games == 0);
+
     }
 
 }

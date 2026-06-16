@@ -331,11 +331,11 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str(&args.join(",\n"));
     out.push_str("\n) {\n");
 
-    emit_shared_declarations(&mut out, model);
+    emit_shared_constants(&mut out, model);
+    emit_state_layouts(&mut out, model)?;
+    emit_shared_functions(&mut out, model);
 
-    out.push_str(
-        "    // Hidden template capability table generated from the Argent app manifest.\n",
-    );
+    emit_section_header(&mut out, "Template capability table");
     for template_actor in &model.template_actors {
         let ident = to_snake(template_actor);
         out.push_str(&format!(
@@ -344,10 +344,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     }
     out.push('\n');
 
-    out.push_str(&format!(
-        "    // User state owned by Argent actor `{}`.\n",
-        actor.name
-    ));
+    emit_section_header(&mut out, &format!("{} state fields", actor.name));
     for field in &state.fields {
         out.push_str(&format!(
             "    {} {} = init_{};\n",
@@ -358,8 +355,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     }
     out.push('\n');
 
-    emit_full_state_structs(&mut out, model)?;
-
+    emit_section_header(&mut out, "Entrypoints");
     for entry in &actor.entries {
         emit_entry(&mut out, actor, entry, model)?;
         out.push('\n');
@@ -369,9 +365,13 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     Ok(out)
 }
 
-fn emit_shared_declarations(out: &mut String, model: &Model<'_>) {
+fn emit_section_header(out: &mut String, title: &str) {
+    out.push_str(&format!("    // {title}\n"));
+}
+
+fn emit_shared_constants(out: &mut String, model: &Model<'_>) {
     if !model.consts.is_empty() {
-        out.push_str("    // Shared constants imported from Argent modules.\n");
+        emit_section_header(out, "Shared constants");
         for konst in &model.consts {
             out.push_str(&format!(
                 "    {} constant {} = {};\n",
@@ -382,21 +382,36 @@ fn emit_shared_declarations(out: &mut String, model: &Model<'_>) {
         }
         out.push('\n');
     }
+}
 
-    if !model.source_states.is_empty() {
-        out.push_str("    // User state structs imported from Argent modules.\n");
-        for state in &model.source_states {
-            out.push_str(&format!("    struct {} {{\n", state.name));
-            for field in &state.fields {
-                out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
-            }
-            out.push_str("    }\n");
+fn emit_state_layouts(out: &mut String, model: &Model<'_>) -> Result<()> {
+    emit_section_header(out, "State layouts");
+    let mut emitted = BTreeSet::new();
+    for actor in &model.actors {
+        if !emitted.insert(actor.state.clone()) {
+            continue;
         }
-        out.push('\n');
+        let state = model.state(&actor.state)?;
+        out.push_str(&format!("    struct {} {{\n", state.name));
+        for template_actor in &model.template_actors {
+            out.push_str(&format!(
+                "        byte[32] template_{};\n",
+                to_snake(template_actor)
+            ));
+        }
+        out.push_str("        // ----------- template fields above; source state below\n");
+        for field in &state.fields {
+            out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
+        }
+        out.push_str("    }\n");
     }
+    out.push('\n');
+    Ok(())
+}
 
+fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
     if !model.functions.is_empty() {
-        out.push_str("    // Shared helper functions imported from Argent modules.\n");
+        emit_section_header(out, "Shared helper functions");
         for function in &model.functions {
             let params = function
                 .params
@@ -415,29 +430,6 @@ fn emit_shared_declarations(out: &mut String, model: &Model<'_>) {
         }
         out.push('\n');
     }
-}
-
-fn emit_full_state_structs(out: &mut String, model: &Model<'_>) -> Result<()> {
-    out.push_str("    // Full state layouts used for generated cross-template reads and writes.\n");
-    for actor in &model.actors {
-        let state = model.state(&actor.state)?;
-        out.push_str(&format!(
-            "    struct {} {{\n",
-            full_state_struct_name(&actor.name)
-        ));
-        for template_actor in &model.template_actors {
-            out.push_str(&format!(
-                "        byte[32] template_{};\n",
-                to_snake(template_actor)
-            ));
-        }
-        for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
-        }
-        out.push_str("    }\n");
-    }
-    out.push('\n');
-    Ok(())
 }
 
 fn emit_entry(
@@ -495,10 +487,10 @@ fn emit_entry(
         for (idx, consume) in entry.consumes.iter().enumerate() {
             let cov_index = slot_offset + idx;
             let ident = to_snake(&consume.actor);
-            let state_struct = full_state_struct_name(&consume.actor);
+            let state_struct = state_struct_name_for_actor(&consume.actor, model)?;
             let _state = model.actor_state(&consume.actor)?;
             out.push_str(&format!(
-                "        int {}_input_idx = OpCovInputIdx(cov_id, {}); // Argent input {} at cov[{}]\n",
+                "        int {}_input_idx = OpCovInputIdx(cov_id, {}); // input {} at cov[{}]\n",
                 consume.name, cov_index, consume.actor, cov_index
             ));
             out.push_str(&format!(
@@ -515,7 +507,7 @@ fn emit_entry(
         EmitSpec::One { actors } => {
             out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 1);\n");
             out.push_str(&format!(
-                "        int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // Argent emits one {}\n",
+                "        int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one {}\n",
                 actors.join(" | ")
             ));
         }
@@ -526,7 +518,7 @@ fn emit_entry(
             ));
             for output in outputs {
                 out.push_str(&format!(
-                    "        int {}_output_idx = OpAuthOutputIdx(this.activeInputIndex, {}); // Argent output {}: {}\n",
+                    "        int {}_output_idx = OpAuthOutputIdx(this.activeInputIndex, {}); // output {}: {}\n",
                     output.name,
                     output.auth_index,
                     output.name,
@@ -536,13 +528,170 @@ fn emit_entry(
         }
     }
 
-    emit_route_notes(out, actor, entry);
+    if entry.routes.is_empty() {
+        out.push('\n');
+        out.push_str(&lower_plain_entry_body(actor, entry, model)?);
+    } else {
+        emit_route_notes(out, actor, entry, model)?;
 
-    out.push_str("\n        // TODO: lower Argent body.\n");
-    out.push_str("        // Raw Argent body is retained in the AST for the next compiler pass.\n");
-    out.push_str("        require(1 == 1);\n");
+        out.push_str("\n        // TODO: lower source body.\n");
+        out.push_str(
+            "        // Raw source body is retained in the AST for the next compiler pass.\n",
+        );
+        out.push_str("        require(1 == 1);\n");
+    }
     out.push_str("    }\n");
     Ok(())
+}
+
+fn lower_plain_entry_body(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+) -> Result<String> {
+    let mut types = BTreeMap::new();
+    for field in &model.state(&actor.state)?.fields {
+        types.insert(field.name.clone(), field.ty.to_sil());
+    }
+    for param in &entry.params {
+        types.insert(param.name.clone(), param.ty.to_sil());
+    }
+    for consume in &entry.consumes {
+        types.insert(
+            consume.name.clone(),
+            state_struct_name_for_actor(&consume.actor, model)?,
+        );
+    }
+
+    let mut out = String::new();
+    for line in entry.body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            out.push('\n');
+            continue;
+        }
+
+        let lowered = if let Some(rest) = trimmed.strip_prefix("let ") {
+            lower_local_definition(rest, &mut types, model)?
+        } else if let Some(rest) = trimmed.strip_prefix("var ") {
+            lower_local_definition(rest, &mut types, model)?
+        } else {
+            lower_plain_statement(trimmed)
+        };
+
+        out.push_str("        ");
+        out.push_str(&lowered);
+        out.push('\n');
+    }
+
+    if out.trim().is_empty() {
+        out.push_str("        require(1 == 1);\n");
+    }
+
+    Ok(out)
+}
+
+fn lower_local_definition(
+    rest: &str,
+    types: &mut BTreeMap<String, String>,
+    model: &Model<'_>,
+) -> Result<String> {
+    let (name, expr) = rest
+        .split_once('=')
+        .ok_or_else(|| ArgentError::new(format!("expected initializer in `{rest}`")))?;
+    let name = name.trim();
+    let expr = expr.trim();
+    let expr = expr
+        .strip_suffix(';')
+        .ok_or_else(|| ArgentError::new(format!("expected `;` after local definition `{rest}`")))?
+        .trim();
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return Err(ArgentError::new(format!(
+            "unsupported local binding `{name}`"
+        )));
+    }
+
+    let ty = infer_expr_type(expr, types, model).ok_or_else(|| {
+        ArgentError::new(format!(
+            "cannot infer type for local `{name}` from expression `{expr}`"
+        ))
+    })?;
+    types.insert(name.to_string(), ty.clone());
+    Ok(format!("{ty} {name} = {};", lower_plain_expression(expr)))
+}
+
+fn lower_plain_statement(statement: &str) -> String {
+    lower_plain_expression(statement)
+}
+
+fn lower_plain_expression(expr: &str) -> String {
+    expr.replace("self.value", "tx.inputs[this.activeInputIndex].value")
+}
+
+fn infer_expr_type(
+    expr: &str,
+    types: &BTreeMap<String, String>,
+    model: &Model<'_>,
+) -> Option<String> {
+    let expr = expr.trim();
+    if let Some(ty) = types.get(expr) {
+        return Some(ty.clone());
+    }
+    if expr.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some("int".to_string());
+    }
+    if expr.starts_with("blake2b(") {
+        return Some("byte[32]".to_string());
+    }
+    if expr.starts_with("checkSig(") {
+        return Some("bool".to_string());
+    }
+
+    for function in &model.functions {
+        if expr.starts_with(&format!("{}(", function.name)) {
+            return Some(function.return_ty.to_sil());
+        }
+    }
+    for state in &model.source_states {
+        if expr.starts_with(&format!("{} {{", state.name))
+            || expr.starts_with(&format!("{}{{", state.name))
+        {
+            return Some(state.name.clone());
+        }
+    }
+
+    infer_field_access_type(expr, types, model)
+}
+
+fn infer_field_access_type(
+    expr: &str,
+    types: &BTreeMap<String, String>,
+    model: &Model<'_>,
+) -> Option<String> {
+    let (base, field) = expr.split_once('.')?;
+    if field.contains('.') || field.contains('(') || field.contains(' ') {
+        return None;
+    }
+    let base_type = types.get(base)?;
+    let state = model
+        .source_states
+        .iter()
+        .find(|state| state.name == *base_type)
+        .copied()
+        .or_else(|| {
+            model.actors.iter().find_map(|actor| {
+                if actor.state == *base_type {
+                    model.state(&actor.state).ok()
+                } else {
+                    None
+                }
+            })
+        })?;
+    state
+        .fields
+        .iter()
+        .find(|candidate| candidate.name == field)
+        .map(|field| field.ty.to_sil())
 }
 
 fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<String> {
@@ -590,12 +739,17 @@ fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
     ordered
 }
 
-fn emit_route_notes(out: &mut String, actor: &ActorDecl, entry: &EntryDecl) {
+fn emit_route_notes(
+    out: &mut String,
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+) -> Result<()> {
     if entry.routes.is_empty() {
-        return;
+        return Ok(());
     }
 
-    out.push_str("\n        // Argent become routes extracted for the next lowering pass.\n");
+    out.push_str("\n        // Become routes extracted for the next lowering pass.\n");
     for route in &entry.routes {
         let target = to_snake(&route.actor);
         let output_idx = route
@@ -616,7 +770,7 @@ fn emit_route_notes(out: &mut String, actor: &ActorDecl, entry: &EntryDecl) {
         out.push_str(&format!(
             "        // validateOutputStateWithTemplate({}, <{}>, {}_prefix, {}_suffix, template_{});\n",
             output_idx,
-            full_state_struct_name(&route.actor),
+            state_struct_name_for_actor(&route.actor, model)?,
             target,
             target,
             target
@@ -626,6 +780,7 @@ fn emit_route_notes(out: &mut String, actor: &ActorDecl, entry: &EntryDecl) {
         "        // Current actor `{}` copies template_* fields into every generated successor state.\n",
         actor.name
     ));
+    Ok(())
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -795,8 +950,8 @@ fn to_snake(input: &str) -> String {
     out
 }
 
-fn full_state_struct_name(actor: &str) -> String {
-    format!("Argent{actor}State")
+fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String> {
+    Ok(model.actor(actor)?.state.clone())
 }
 
 fn compact_expr(input: &str) -> String {

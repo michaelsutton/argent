@@ -12,20 +12,30 @@ contract StonesSettle(
     byte[32] init_player_b,
     int init_status
 ) {
-    // Shared constants imported from Argent modules.
+    // Shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // User state structs imported from Argent modules.
+    // State layouts
     struct LeagueState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
         int open_games;
@@ -34,6 +44,11 @@ contract StonesSettle(
         int losses;
     }
     struct GameState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int pile;
@@ -41,12 +56,17 @@ contract StonesSettle(
         int turn;
     }
     struct SettleState {
+        byte[32] template_league;
+        byte[32] template_player;
+        byte[32] template_stones_game;
+        byte[32] template_stones_settle;
+        // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
         int status;
     }
 
-    // Shared helper functions imported from Argent modules.
+    // Shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -75,60 +95,18 @@ contract StonesSettle(
         return B_WIN;
     }
 
-    // Hidden template capability table generated from the Argent app manifest.
+    // Template capability table
     byte[32] template_league = init_template_league;
     byte[32] template_player = init_template_player;
     byte[32] template_stones_game = init_template_stones_game;
     byte[32] template_stones_settle = init_template_stones_settle;
 
-    // User state owned by Argent actor `StonesSettle`.
+    // StonesSettle state fields
     byte[32] player_a = init_player_a;
     byte[32] player_b = init_player_b;
     int status = init_status;
 
-    // Full state layouts used for generated cross-template reads and writes.
-    struct ArgentLeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] admin;
-        int default_pile;
-        int default_max_take;
-    }
-    struct ArgentPlayerState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] owner;
-        byte[32] player_id;
-        int open_games;
-        int games;
-        int wins;
-        int losses;
-    }
-    struct ArgentStonesGameState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int pile;
-        int max_take;
-        int turn;
-    }
-    struct ArgentStonesSettleState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
-        byte[32] player_a;
-        byte[32] player_b;
-        int status;
-    }
-
+    // Entrypoints
     entrypoint function settle(byte[] player_prefix, byte[] player_suffix) {
         int player_prefix_len = player_prefix.length;
         int player_suffix_len = player_suffix.length;
@@ -136,23 +114,23 @@ contract StonesSettle(
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 3);
         require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
-        int player_a_in_input_idx = OpCovInputIdx(cov_id, 1); // Argent input Player at cov[1]
-        ArgentPlayerState player_a_in = readInputStateWithTemplate(player_a_in_input_idx, player_prefix_len, player_suffix_len, template_player);
-        int player_b_in_input_idx = OpCovInputIdx(cov_id, 2); // Argent input Player at cov[2]
-        ArgentPlayerState player_b_in = readInputStateWithTemplate(player_b_in_input_idx, player_prefix_len, player_suffix_len, template_player);
+        int player_a_in_input_idx = OpCovInputIdx(cov_id, 1); // input Player at cov[1]
+        PlayerState player_a_in = readInputStateWithTemplate(player_a_in_input_idx, player_prefix_len, player_suffix_len, template_player);
+        int player_b_in_input_idx = OpCovInputIdx(cov_id, 2); // input Player at cov[2]
+        PlayerState player_b_in = readInputStateWithTemplate(player_b_in_input_idx, player_prefix_len, player_suffix_len, template_player);
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // Argent output player_a_out: Player
-        int player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // Argent output player_b_out: Player
+        int player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
+        int player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
 
-        // Argent become routes extracted for the next lowering pass.
+        // Become routes extracted for the next lowering pass.
         // become player_a_out <- Player(next_player_a);
-        // validateOutputStateWithTemplate(player_a_out_output_idx, <ArgentPlayerState>, player_prefix, player_suffix, template_player);
+        // validateOutputStateWithTemplate(player_a_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
         // become player_b_out <- Player(next_player_b);
-        // validateOutputStateWithTemplate(player_b_out_output_idx, <ArgentPlayerState>, player_prefix, player_suffix, template_player);
+        // validateOutputStateWithTemplate(player_b_out_output_idx, <PlayerState>, player_prefix, player_suffix, template_player);
         // Current actor `StonesSettle` copies template_* fields into every generated successor state.
 
-        // TODO: lower Argent body.
-        // Raw Argent body is retained in the AST for the next compiler pass.
+        // TODO: lower source body.
+        // Raw source body is retained in the AST for the next compiler pass.
         require(1 == 1);
     }
 
