@@ -24,12 +24,7 @@ pub struct Span {
 }
 
 pub fn lex(source: &str) -> Result<Vec<Token>> {
-    let mut lexer = Lexer {
-        source,
-        bytes: source.as_bytes(),
-        pos: 0,
-        tokens: Vec::new(),
-    };
+    let mut lexer = Lexer { source, bytes: source.as_bytes(), pos: 0, tokens: Vec::new() };
     lexer.run()?;
     Ok(lexer.tokens)
 }
@@ -61,17 +56,14 @@ impl Lexer<'_> {
                     self.pos += 2;
                     self.push(TokenKind::LeftArrow, start, self.pos);
                 }
-                b'{' | b'}' | b'(' | b')' | b'[' | b']' | b';' | b':' | b',' | b'|' | b'&'
-                | b'!' | b'=' | b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'.' => {
+                b'{' | b'}' | b'(' | b')' | b'[' | b']' | b';' | b':' | b',' | b'|' | b'&' | b'!' | b'=' | b'+' | b'-' | b'*'
+                | b'/' | b'%' | b'<' | b'>' | b'.' => {
                     let start = self.pos;
                     self.pos += 1;
                     self.push(TokenKind::Symbol(b as char), start, self.pos);
                 }
                 _ => {
-                    return Err(ArgentError::new(format!(
-                        "unexpected byte {:?} at offset {}",
-                        b as char, self.pos
-                    )));
+                    return Err(ArgentError::new(format!("unexpected byte {:?} at offset {}", b as char, self.pos)));
                 }
             }
         }
@@ -102,10 +94,7 @@ impl Lexer<'_> {
                 }
                 b'\\' => {
                     self.pos += 1;
-                    let escaped = *self
-                        .bytes
-                        .get(self.pos)
-                        .ok_or_else(|| ArgentError::new("unterminated string escape"))?;
+                    let escaped = *self.bytes.get(self.pos).ok_or_else(|| ArgentError::new("unterminated string escape"))?;
                     out.push(escaped as char);
                     self.pos += 1;
                 }
@@ -115,9 +104,7 @@ impl Lexer<'_> {
                 }
             }
         }
-        Err(ArgentError::new(format!(
-            "unterminated string at offset {start}"
-        )))
+        Err(ArgentError::new(format!("unterminated string at offset {start}")))
     }
 
     fn lex_number(&mut self) {
@@ -125,32 +112,18 @@ impl Lexer<'_> {
         while matches!(self.peek_byte(0), Some(b'0'..=b'9')) {
             self.pos += 1;
         }
-        self.push(
-            TokenKind::Number(self.source[start..self.pos].to_string()),
-            start,
-            self.pos,
-        );
+        self.push(TokenKind::Number(self.source[start..self.pos].to_string()), start, self.pos);
     }
 
     fn lex_ident(&mut self) {
         let start = self.pos;
-        while matches!(
-            self.peek_byte(0),
-            Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')
-        ) {
+        while matches!(self.peek_byte(0), Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) {
             self.pos += 1;
         }
-        self.push(
-            TokenKind::Ident(self.source[start..self.pos].to_string()),
-            start,
-            self.pos,
-        );
+        self.push(TokenKind::Ident(self.source[start..self.pos].to_string()), start, self.pos);
     }
 
     fn push(&mut self, kind: TokenKind, start: usize, end: usize) {
-        self.tokens.push(Token {
-            kind,
-            span: Span { start, end },
-        });
+        self.tokens.push(Token { kind, span: Span { start, end } });
     }
 }

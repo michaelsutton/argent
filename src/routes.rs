@@ -1,26 +1,17 @@
 use crate::ast::RouteCall;
 use crate::error::{ArgentError, Result};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind, lex};
 
 pub fn collect_routes(body: &str) -> Result<Vec<RouteCall>> {
     let tokens = lex(body)?;
     validate_terminal_becomes(body, &tokens)?;
-    let mut parser = RouteParser {
-        body,
-        tokens,
-        pos: 0,
-        routes: Vec::new(),
-    };
+    let mut parser = RouteParser { body, tokens, pos: 0, routes: Vec::new() };
     parser.parse()?;
     Ok(parser.routes)
 }
 
 fn validate_terminal_becomes(body: &str, tokens: &[Token]) -> Result<()> {
-    let mut parser = TerminalParser {
-        body,
-        tokens,
-        pos: 0,
-    };
+    let mut parser = TerminalParser { body, tokens, pos: 0 };
     parser.parse_sequence(None)?;
     Ok(())
 }
@@ -66,11 +57,7 @@ impl RouteParser<'_> {
 
     fn parse_route(&mut self) -> Result<RouteCall> {
         let first = self.expect_any_ident()?;
-        let (output, actor) = if self.consume_left_arrow() {
-            (Some(first), self.expect_any_ident()?)
-        } else {
-            (None, first)
-        };
+        let (output, actor) = if self.consume_left_arrow() { (Some(first), self.expect_any_ident()?) } else { (None, first) };
 
         self.expect_symbol('(')?;
         let start = self.current().span.start;
@@ -87,11 +74,7 @@ impl RouteParser<'_> {
                     if depth == 0 {
                         let state = self.body[start..token.span.start].trim().to_string();
                         self.advance();
-                        return Ok(RouteCall {
-                            output,
-                            actor,
-                            state,
-                        });
+                        return Ok(RouteCall { output, actor, state });
                     }
                     self.advance();
                 }
@@ -184,11 +167,7 @@ impl RouteParser<'_> {
     }
 
     fn error(&self, message: impl Into<String>) -> ArgentError {
-        ArgentError::new(format!(
-            "{} at body byte {}",
-            message.into(),
-            self.current().span.start
-        ))
+        ArgentError::new(format!("{} at body byte {}", message.into(), self.current().span.start))
     }
 }
 
@@ -205,9 +184,7 @@ struct TerminalInfo {
 
 impl TerminalInfo {
     fn empty() -> Self {
-        Self {
-            contains_become: false,
-        }
+        Self { contains_become: false }
     }
 }
 
@@ -222,9 +199,7 @@ impl TerminalParser<'_> {
                 if self.is_eof() || end.is_some_and(|symbol| self.check_symbol(symbol)) {
                     break;
                 }
-                return Err(self.error(
-                    "`become` must be terminal; move following code into an explicit `else` branch",
-                ));
+                return Err(self.error("`become` must be terminal; move following code into an explicit `else` branch"));
             }
         }
         Ok(info)
@@ -235,19 +210,11 @@ impl TerminalParser<'_> {
             self.expect_symbol('(')?;
             self.skip_balanced('(', ')')?;
             let then_info = self.parse_block_or_statement()?;
-            let else_info = if self.consume_ident("else") {
-                self.parse_block_or_statement()?
-            } else {
-                TerminalInfo::empty()
-            };
-            Ok(TerminalInfo {
-                contains_become: then_info.contains_become || else_info.contains_become,
-            })
+            let else_info = if self.consume_ident("else") { self.parse_block_or_statement()? } else { TerminalInfo::empty() };
+            Ok(TerminalInfo { contains_become: then_info.contains_become || else_info.contains_become })
         } else if self.consume_ident("become") {
             self.skip_become_tail()?;
-            Ok(TerminalInfo {
-                contains_become: true,
-            })
+            Ok(TerminalInfo { contains_become: true })
         } else if self.consume_symbol('{') {
             let info = self.parse_sequence(Some('}'))?;
             self.expect_symbol('}')?;
@@ -383,20 +350,8 @@ impl TerminalParser<'_> {
 
     fn error(&self, message: impl Into<String>) -> ArgentError {
         let snippet = self.body.get(self.current().span.start..).unwrap_or("");
-        let preview = snippet
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .chars()
-            .take(80)
-            .collect::<String>();
-        ArgentError::new(format!(
-            "{} at body byte {} near `{}`",
-            message.into(),
-            self.current().span.start,
-            preview
-        ))
+        let preview = snippet.lines().next().unwrap_or("").trim().chars().take(80).collect::<String>();
+        ArgentError::new(format!("{} at body byte {} near `{}`", message.into(), self.current().span.start, preview))
     }
 }
 
@@ -454,10 +409,7 @@ mod tests {
         )
         .expect_err("fallthrough after conditional become must be rejected");
 
-        assert!(
-            err.to_string().contains("must be terminal"),
-            "unexpected error: {err}"
-        );
+        assert!(err.to_string().contains("must be terminal"), "unexpected error: {err}");
     }
 
     #[test]

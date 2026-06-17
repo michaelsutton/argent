@@ -121,17 +121,11 @@ pub struct TypeRef {
 
 impl TypeRef {
     pub fn new(name: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            array: None,
-        }
+        Self { name: name.into(), array: None }
     }
 
     pub fn array(name: impl Into<String>, len: usize) -> Self {
-        Self {
-            name: name.into(),
-            array: Some(len),
-        }
+        Self { name: name.into(), array: Some(len) }
     }
 
     pub fn to_sil(&self) -> String {

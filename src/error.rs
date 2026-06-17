@@ -9,27 +9,17 @@ pub struct ArgentError {
 
 impl ArgentError {
     pub fn new(message: impl Into<String>) -> Self {
-        Self {
-            path: None,
-            message: message.into(),
-        }
+        Self { path: None, message: message.into() }
     }
 
     pub fn at(path: impl Into<PathBuf>, message: impl Into<String>) -> Self {
-        Self {
-            path: Some(path.into()),
-            message: message.into(),
-        }
+        Self { path: Some(path.into()), message: message.into() }
     }
 }
 
 impl fmt::Display for ArgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(path) = &self.path {
-            write!(f, "{}: {}", path.display(), self.message)
-        } else {
-            f.write_str(&self.message)
-        }
+        if let Some(path) = &self.path { write!(f, "{}: {}", path.display(), self.message) } else { f.write_str(&self.message) }
     }
 }
 

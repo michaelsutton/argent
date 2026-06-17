@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind, lex};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
@@ -14,16 +14,12 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let model = Model::from_program(program)?;
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
-        fs::write(sil_dir.join(format!("{}.sil", actor.name)), sil).map_err(|err| {
-            ArgentError::at(sil_dir.join(format!("{}.sil", actor.name)), err.to_string())
-        })?;
+        fs::write(sil_dir.join(format!("{}.sil", actor.name)), sil)
+            .map_err(|err| ArgentError::at(sil_dir.join(format!("{}.sil", actor.name)), err.to_string()))?;
     }
 
-    fs::write(
-        out_dir.join("manifest.json"),
-        emit_manifest(program, &model),
-    )
-    .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
+    fs::write(out_dir.join("manifest.json"), emit_manifest(program, &model))
+        .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
     Ok(())
 }
 
@@ -40,74 +36,39 @@ struct Model<'a> {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
-        let consts = program
-            .modules
-            .iter()
-            .flat_map(|module| module.consts.iter())
-            .collect::<Vec<_>>();
-        let functions = program
-            .modules
-            .iter()
-            .flat_map(|module| module.functions.iter())
-            .collect::<Vec<_>>();
-        let states = program
-            .states()
-            .map(|state| (state.name.clone(), state))
-            .collect::<BTreeMap<_, _>>();
-        let all_actors = program
-            .actors()
-            .map(|actor| (actor.name.clone(), actor))
-            .collect::<BTreeMap<_, _>>();
+        let consts = program.modules.iter().flat_map(|module| module.consts.iter()).collect::<Vec<_>>();
+        let functions = program.modules.iter().flat_map(|module| module.functions.iter()).collect::<Vec<_>>();
+        let states = program.states().map(|state| (state.name.clone(), state)).collect::<BTreeMap<_, _>>();
+        let all_actors = program.actors().map(|actor| (actor.name.clone(), actor)).collect::<BTreeMap<_, _>>();
 
         let app = program.apps().next();
         let (app_name, template_actors) = if let Some(app) = app {
             (app.name.clone(), app.actors.clone())
         } else {
-            (
-                "ArgentApp".to_string(),
-                all_actors.keys().cloned().collect(),
-            )
+            ("ArgentApp".to_string(), all_actors.keys().cloned().collect())
         };
 
         let mut actors = Vec::new();
         for name in &template_actors {
-            let actor = all_actors.get(name).copied().ok_or_else(|| {
-                ArgentError::new(format!("app references unknown actor `{name}`"))
-            })?;
+            let actor =
+                all_actors.get(name).copied().ok_or_else(|| ArgentError::new(format!("app references unknown actor `{name}`")))?;
             if !states.contains_key(&actor.state) {
-                return Err(ArgentError::new(format!(
-                    "actor `{}` owns unknown state `{}`",
-                    actor.name, actor.state
-                )));
+                return Err(ArgentError::new(format!("actor `{}` owns unknown state `{}`", actor.name, actor.state)));
             }
             actors.push(actor);
         }
 
-        let model = Self {
-            app_name,
-            template_actors,
-            consts,
-            functions,
-            states,
-            actors_by_name: all_actors,
-            actors,
-        };
+        let model = Self { app_name, template_actors, consts, functions, states, actors_by_name: all_actors, actors };
         model.validate()?;
         Ok(model)
     }
 
     fn state(&self, name: &str) -> Result<&StateDecl> {
-        self.states
-            .get(name)
-            .copied()
-            .ok_or_else(|| ArgentError::new(format!("unknown state `{name}`")))
+        self.states.get(name).copied().ok_or_else(|| ArgentError::new(format!("unknown state `{name}`")))
     }
 
     fn actor(&self, name: &str) -> Result<&ActorDecl> {
-        self.actors_by_name
-            .get(name)
-            .copied()
-            .ok_or_else(|| ArgentError::new(format!("unknown actor `{name}`")))
+        self.actors_by_name.get(name).copied().ok_or_else(|| ArgentError::new(format!("unknown actor `{name}`")))
     }
 
     fn actor_state(&self, name: &str) -> Result<&StateDecl> {
@@ -116,11 +77,7 @@ impl<'a> Model<'a> {
     }
 
     fn validate(&self) -> Result<()> {
-        let template_actor_set = self
-            .template_actors
-            .iter()
-            .cloned()
-            .collect::<BTreeSet<_>>();
+        let template_actor_set = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
         for actor in &self.actors {
             for entry in &actor.entries {
                 self.validate_entry(actor, entry, &template_actor_set)?;
@@ -129,20 +86,12 @@ impl<'a> Model<'a> {
         Ok(())
     }
 
-    fn validate_entry(
-        &self,
-        actor: &ActorDecl,
-        entry: &EntryDecl,
-        template_actor_set: &BTreeSet<String>,
-    ) -> Result<()> {
+    fn validate_entry(&self, actor: &ActorDecl, entry: &EntryDecl, template_actor_set: &BTreeSet<String>) -> Result<()> {
         for consume in &entry.consumes {
             self.require_template_actor(
                 &consume.actor,
                 template_actor_set,
-                format!(
-                    "entry `{}::{}` consumes unknown actor `{}`",
-                    actor.name, entry.name, consume.actor
-                ),
+                format!("entry `{}::{}` consumes unknown actor `{}`", actor.name, entry.name, consume.actor),
             )?;
         }
 
@@ -153,10 +102,7 @@ impl<'a> Model<'a> {
                     self.require_template_actor(
                         target,
                         template_actor_set,
-                        format!(
-                            "entry `{}::{}` emits unknown actor `{target}`",
-                            actor.name, entry.name
-                        ),
+                        format!("entry `{}::{}` emits unknown actor `{target}`", actor.name, entry.name),
                     )?;
                 }
             }
@@ -190,10 +136,7 @@ impl<'a> Model<'a> {
                         self.require_template_actor(
                             target,
                             template_actor_set,
-                            format!(
-                                "entry `{}::{}` output `{}` emits unknown actor `{target}`",
-                                actor.name, entry.name, output.name
-                            ),
+                            format!("entry `{}::{}` output `{}` emits unknown actor `{target}`", actor.name, entry.name, output.name),
                         )?;
                     }
                 }
@@ -217,10 +160,7 @@ impl<'a> Model<'a> {
             self.require_template_actor(
                 &route.actor,
                 template_actor_set,
-                format!(
-                    "entry `{}::{}` routes to unknown actor `{}`",
-                    actor.name, entry.name, route.actor
-                ),
+                format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor),
             )?;
             self.actor_state(&route.actor)?;
             self.validate_route_allowed(actor, entry, route)?;
@@ -228,12 +168,7 @@ impl<'a> Model<'a> {
         Ok(())
     }
 
-    fn require_template_actor(
-        &self,
-        actor: &str,
-        template_actor_set: &BTreeSet<String>,
-        message: String,
-    ) -> Result<()> {
+    fn require_template_actor(&self, actor: &str, template_actor_set: &BTreeSet<String>, message: String) -> Result<()> {
         if !template_actor_set.contains(actor) {
             return Err(ArgentError::new(message));
         }
@@ -241,12 +176,7 @@ impl<'a> Model<'a> {
         Ok(())
     }
 
-    fn validate_route_allowed(
-        &self,
-        actor: &ActorDecl,
-        entry: &EntryDecl,
-        route: &RouteCall,
-    ) -> Result<()> {
+    fn validate_route_allowed(&self, actor: &ActorDecl, entry: &EntryDecl, route: &RouteCall) -> Result<()> {
         match &entry.emits {
             EmitSpec::None => Err(ArgentError::new(format!(
                 "entry `{}::{}` has a `become` route to `{}`, but declares `emits none`",
@@ -278,15 +208,9 @@ impl<'a> Model<'a> {
                         actor.name, entry.name, route.actor
                     ))
                 })?;
-                let output = outputs
-                    .iter()
-                    .find(|output| &output.name == output_name)
-                    .ok_or_else(|| {
-                        ArgentError::new(format!(
-                            "entry `{}::{}` routes through unknown output `{output_name}`",
-                            actor.name, entry.name
-                        ))
-                    })?;
+                let output = outputs.iter().find(|output| &output.name == output_name).ok_or_else(|| {
+                    ArgentError::new(format!("entry `{}::{}` routes through unknown output `{output_name}`", actor.name, entry.name))
+                })?;
                 if output.actors.iter().any(|target| target == &route.actor) {
                     Ok(())
                 } else {
@@ -314,10 +238,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str(&format!("contract {}(\n", actor.name));
     let mut args = Vec::new();
     for template_actor in &model.template_actors {
-        args.push(format!(
-            "    byte[32] init_template_{}",
-            to_snake(template_actor)
-        ));
+        args.push(format!("    byte[32] init_template_{}", to_snake(template_actor)));
     }
     for field in &state.fields {
         args.push(format!("    {} init_{}", field.ty.to_sil(), field.name));
@@ -332,20 +253,13 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     emit_section_header(&mut out, "Template capability table");
     for template_actor in &model.template_actors {
         let ident = to_snake(template_actor);
-        out.push_str(&format!(
-            "    byte[32] template_{ident} = init_template_{ident};\n"
-        ));
+        out.push_str(&format!("    byte[32] template_{ident} = init_template_{ident};\n"));
     }
     out.push('\n');
 
     emit_section_header(&mut out, &format!("{} state fields", actor.name));
     for field in &state.fields {
-        out.push_str(&format!(
-            "    {} {} = init_{};\n",
-            field.ty.to_sil(),
-            field.name,
-            field.name
-        ));
+        out.push_str(&format!("    {} {} = init_{};\n", field.ty.to_sil(), field.name, field.name));
     }
     out.push('\n');
 
@@ -367,22 +281,13 @@ fn emit_shared_constants(out: &mut String, model: &Model<'_>) {
     if !model.consts.is_empty() {
         emit_section_header(out, "Shared constants");
         for konst in &model.consts {
-            out.push_str(&format!(
-                "    {} constant {} = {};\n",
-                konst.ty.to_sil(),
-                konst.name,
-                konst.value
-            ));
+            out.push_str(&format!("    {} constant {} = {};\n", konst.ty.to_sil(), konst.name, konst.value));
         }
         out.push('\n');
     }
 }
 
-fn emit_state_layouts(
-    out: &mut String,
-    current_actor: &ActorDecl,
-    model: &Model<'_>,
-) -> Result<()> {
+fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model<'_>) -> Result<()> {
     emit_section_header(out, "State layouts");
     let mut emitted = BTreeSet::new();
     for actor in &model.actors {
@@ -395,10 +300,7 @@ fn emit_state_layouts(
         let state = model.state(&actor.state)?;
         out.push_str(&format!("    struct {} {{\n", state.name));
         for template_actor in &model.template_actors {
-            out.push_str(&format!(
-                "        byte[32] template_{};\n",
-                to_snake(template_actor)
-            ));
+            out.push_str(&format!("        byte[32] template_{};\n", to_snake(template_actor)));
         }
         out.push_str("        // ----------- template fields above; source state below\n");
         for field in &state.fields {
@@ -414,18 +316,9 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
     if !model.functions.is_empty() {
         emit_section_header(out, "Shared helper functions");
         for function in &model.functions {
-            let params = function
-                .params
-                .iter()
-                .map(|param| format!("{} {}", param.ty.to_sil(), param.name))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&format!(
-                "    function {}({}) : {} {{\n",
-                function.name,
-                params,
-                function.return_ty.to_sil()
-            ));
+            let params =
+                function.params.iter().map(|param| format!("{} {}", param.ty.to_sil(), param.name)).collect::<Vec<_>>().join(", ");
+            out.push_str(&format!("    function {}({}) : {} {{\n", function.name, params, function.return_ty.to_sil()));
             out.push_str(&indent_block_body(&function.body, 8));
             out.push_str("    }\n");
         }
@@ -433,12 +326,7 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
     }
 }
 
-fn emit_entry(
-    out: &mut String,
-    actor: &ActorDecl,
-    entry: &EntryDecl,
-    model: &Model<'_>,
-) -> Result<()> {
+fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     out.push_str(&format!("    entrypoint function {}(", entry.name));
     let witness_actors = entry_witness_actors(entry, model);
     let sil_params = lower_entry_params(&entry.params, &witness_actors);
@@ -447,12 +335,8 @@ fn emit_entry(
 
     for actor_name in &witness_actors {
         let ident = to_snake(actor_name);
-        out.push_str(&format!(
-            "        int {ident}_prefix_len = {ident}_prefix.length;\n"
-        ));
-        out.push_str(&format!(
-            "        int {ident}_suffix_len = {ident}_suffix.length;\n"
-        ));
+        out.push_str(&format!("        int {ident}_prefix_len = {ident}_prefix.length;\n"));
+        out.push_str(&format!("        int {ident}_suffix_len = {ident}_suffix.length;\n"));
     }
     if !witness_actors.is_empty() {
         out.push('\n');
@@ -463,21 +347,13 @@ fn emit_entry(
         match entry.kind {
             EntryKind::Leader => {
                 let count = entry.consumes.len() + 1;
-                out.push_str(&format!(
-                    "        require(OpCovInputCount(cov_id) == {count});\n"
-                ));
-                out.push_str(
-                    "        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);\n",
-                );
+                out.push_str(&format!("        require(OpCovInputCount(cov_id) == {count});\n"));
+                out.push_str("        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);\n");
             }
             EntryKind::Delegate => {
                 let min_count = entry.consumes.len() + 1;
-                out.push_str(&format!(
-                    "        require(OpCovInputCount(cov_id) >= {min_count});\n"
-                ));
-                out.push_str(
-                    "        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);\n",
-                );
+                out.push_str(&format!("        require(OpCovInputCount(cov_id) >= {min_count});\n"));
+                out.push_str("        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);\n");
             }
         }
 
@@ -513,10 +389,7 @@ fn emit_entry(
             ));
         }
         EmitSpec::Outputs(outputs) => {
-            out.push_str(&format!(
-                "        require(OpAuthOutputCount(this.activeInputIndex) == {});\n",
-                outputs.len()
-            ));
+            out.push_str(&format!("        require(OpAuthOutputCount(this.activeInputIndex) == {});\n", outputs.len()));
             for output in outputs {
                 out.push_str(&format!(
                     "        int {}_output_idx = OpAuthOutputIdx(this.activeInputIndex, {}); // output {}: {}\n",
@@ -553,12 +426,8 @@ struct BodyLowerer<'a, 'm> {
 
 impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn new(actor: &'a ActorDecl, entry: &'a EntryDecl, model: &'m Model<'a>) -> Result<Self> {
-        let tokens = lex(&entry.body).map_err(|err| {
-            ArgentError::new(format!(
-                "failed to lex body for `{}::{}`: {}",
-                actor.name, entry.name, err.message
-            ))
-        })?;
+        let tokens = lex(&entry.body)
+            .map_err(|err| ArgentError::new(format!("failed to lex body for `{}::{}`: {}", actor.name, entry.name, err.message)))?;
 
         let mut types = BTreeMap::new();
         for field in &model.state(&actor.state)?.fields {
@@ -571,10 +440,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let mut input_names = BTreeSet::new();
         for consume in &entry.consumes {
             input_names.insert(consume.name.clone());
-            types.insert(
-                consume.name.clone(),
-                contract_state_type_for_actor(&consume.actor, actor, model)?,
-            );
+            types.insert(consume.name.clone(), contract_state_type_for_actor(&consume.actor, actor, model)?);
         }
 
         let mut output_names = BTreeSet::new();
@@ -588,17 +454,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
         }
 
-        Ok(Self {
-            body: &entry.body,
-            tokens,
-            pos: 0,
-            actor,
-            entry,
-            model,
-            types,
-            input_names,
-            output_names,
-        })
+        Ok(Self { body: &entry.body, tokens, pos: 0, actor, entry, model, types, input_names, output_names })
     }
 
     fn lower(mut self) -> Result<String> {
@@ -610,12 +466,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(out)
     }
 
-    fn lower_statements(
-        &mut self,
-        out: &mut String,
-        indent: usize,
-        end: Option<char>,
-    ) -> Result<()> {
+    fn lower_statements(&mut self, out: &mut String, indent: usize, end: Option<char>) -> Result<()> {
         while !self.is_eof() && !end.is_some_and(|symbol| self.check_symbol(symbol)) {
             if self.consume_ident("if") {
                 self.lower_if(out, indent)?;
@@ -636,10 +487,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         self.expect_symbol('{')?;
 
         push_indent(out, indent);
-        out.push_str(&format!(
-            "if ({}) {{\n",
-            self.lower_expr(&condition, None, indent)?
-        ));
+        out.push_str(&format!("if ({}) {{\n", self.lower_expr(&condition, None, indent)?));
         self.lower_statements(out, indent + 4, Some('}'))?;
         self.expect_symbol('}')?;
         push_indent(out, indent);
@@ -694,28 +542,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn parse_become_route(&mut self) -> Result<RouteCall> {
         let first = self.expect_any_ident()?;
-        let (output, actor) = if self.consume_left_arrow() {
-            (Some(first), self.expect_any_ident()?)
-        } else {
-            (None, first)
-        };
+        let (output, actor) = if self.consume_left_arrow() { (Some(first), self.expect_any_ident()?) } else { (None, first) };
         self.expect_symbol('(')?;
         let state = self.take_balanced_expr('(', ')')?;
-        Ok(RouteCall {
-            output,
-            actor,
-            state,
-        })
+        Ok(RouteCall { output, actor, state })
     }
 
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
         self.model.actor_state(&route.actor)?;
         let target = to_snake(&route.actor);
-        let output_idx = route
-            .output
-            .as_ref()
-            .map(|output| format!("{output}_output_idx"))
-            .unwrap_or_else(|| "next_output_idx".to_string());
+        let output_idx =
+            route.output.as_ref().map(|output| format!("{output}_output_idx")).unwrap_or_else(|| "next_output_idx".to_string());
         let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
@@ -743,9 +580,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             ));
         }
         if expr == "self.state" {
-            let ty = expected_ty.ok_or_else(|| {
-                ArgentError::new("`self.state` requires a target state type during lowering")
-            })?;
+            let ty = expected_ty.ok_or_else(|| ArgentError::new("`self.state` requires a target state type during lowering"))?;
             return self.lower_self_state_expr(ty, indent);
         }
         if let Some((state_name, body)) = split_state_constructor(expr) {
@@ -757,62 +592,35 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_self_state_expr(&self, ty: &str, indent: usize) -> Result<String> {
         let state_name = if ty == "State" { &self.actor.state } else { ty };
         let state = self.model.state(state_name)?;
-        let fields = state
-            .fields
-            .iter()
-            .map(|field| (field.name.clone(), field.name.clone()))
-            .collect::<Vec<_>>();
+        let fields = state.fields.iter().map(|field| (field.name.clone(), field.name.clone())).collect::<Vec<_>>();
         self.render_state_object(&fields, indent)
     }
 
-    fn lower_state_constructor(
-        &self,
-        state_name: &str,
-        body: &str,
-        indent: usize,
-    ) -> Result<String> {
+    fn lower_state_constructor(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
         self.model.state(state_name)?;
         self.lower_state_object_for_state(state_name, body, indent)
     }
 
-    fn lower_typed_local_initializer(
-        &self,
-        source_ty: &str,
-        lowered_ty: &str,
-        expr: &str,
-        indent: usize,
-    ) -> Result<String> {
-        if let Some(state_name) = self.source_state_for_local_type(source_ty) {
-            if let Some(body) = split_state_object_literal(expr) {
-                return self.lower_state_object_for_state(&state_name, body, indent);
-            }
+    fn lower_typed_local_initializer(&self, source_ty: &str, lowered_ty: &str, expr: &str, indent: usize) -> Result<String> {
+        if let Some(state_name) = self.source_state_for_local_type(source_ty)
+            && let Some(body) = split_state_object_literal(expr)
+        {
+            return self.lower_state_object_for_state(&state_name, body, indent);
         }
         self.lower_expr(expr, Some(lowered_ty), indent)
     }
 
-    fn lower_state_object_for_state(
-        &self,
-        state_name: &str,
-        body: &str,
-        indent: usize,
-    ) -> Result<String> {
+    fn lower_state_object_for_state(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
         self.model.state(state_name)?;
         let fields = parse_state_fields(body)
             .into_iter()
-            .map(|(name, expr)| {
-                self.lower_expr(&expr, None, indent + 4)
-                    .map(|lowered| (name, lowered))
-            })
+            .map(|(name, expr)| self.lower_expr(&expr, None, indent + 4).map(|lowered| (name, lowered)))
             .collect::<Result<Vec<_>>>()?;
         self.render_state_object(&fields, indent)
     }
 
     fn lower_local_type(&self, source_ty: &str) -> String {
-        if source_ty == self.actor.state {
-            "State".to_string()
-        } else {
-            source_ty.to_string()
-        }
+        if source_ty == self.actor.state { "State".to_string() } else { source_ty.to_string() }
     }
 
     fn source_state_for_local_type(&self, source_ty: &str) -> Option<String> {
@@ -832,13 +640,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         out.push_str("{\n");
         for template_actor in &self.model.template_actors {
             let ident = to_snake(template_actor);
-            out.push_str(&format!(
-                "{field_indent}template_{ident}: template_{ident},\n"
-            ));
+            out.push_str(&format!("{field_indent}template_{ident}: template_{ident},\n"));
         }
-        out.push_str(&format!(
-            "{field_indent}// ----------- template fields above; source state below\n"
-        ));
+        out.push_str(&format!("{field_indent}// ----------- template fields above; source state below\n"));
         for (name, expr) in fields {
             out.push_str(&format!("{field_indent}{name}: {expr},\n"));
         }
@@ -850,16 +654,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_refs(&self, expr: &str) -> String {
         let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
         for name in &self.input_names {
-            out = out.replace(
-                &format!("{name}.value"),
-                &format!("tx.inputs[{name}_input_idx].value"),
-            );
+            out = out.replace(&format!("{name}.value"), &format!("tx.inputs[{name}_input_idx].value"));
         }
         for name in &self.output_names {
-            out = out.replace(
-                &format!("{name}.value"),
-                &format!("tx.outputs[{name}_output_idx].value"),
-            );
+            out = out.replace(&format!("{name}.value"), &format!("tx.outputs[{name}_output_idx].value"));
         }
         out
     }
@@ -1007,10 +805,7 @@ fn push_indent(out: &mut String, indent: usize) {
 }
 
 fn generated_state_name(route: &RouteCall, state_ty: &str) -> String {
-    let base = route
-        .output
-        .as_deref()
-        .unwrap_or_else(|| route.actor.as_str());
+    let base = route.output.as_deref().unwrap_or(route.actor.as_str());
     format!("generated_{}_{}", to_snake(base), to_snake(state_ty))
 }
 
@@ -1029,11 +824,7 @@ fn split_state_constructor(expr: &str) -> Option<(&str, &str)> {
     let expr = expr.trim();
     let brace_idx = expr.find('{')?;
     let state_name = expr[..brace_idx].trim();
-    if state_name.is_empty()
-        || !state_name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
+    if state_name.is_empty() || !state_name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
         return None;
     }
     let body = expr[brace_idx + 1..].trim();
@@ -1052,10 +843,7 @@ fn split_state_object_literal(expr: &str) -> Option<&str> {
 fn parse_typed_local_statement(statement: &str) -> Option<(&str, &str, &str)> {
     let (left, expr) = split_top_level_assignment(statement)?;
     let left = left.trim();
-    let split_idx = left
-        .char_indices()
-        .rev()
-        .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))?;
+    let split_idx = left.char_indices().rev().find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))?;
     let source_ty = left[..split_idx].trim();
     let name = left[split_idx..].trim();
     if source_ty.is_empty() || !is_identifier(name) {
@@ -1106,8 +894,7 @@ fn is_identifier(input: &str) -> bool {
     let Some(first) = chars.next() else {
         return false;
     };
-    (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+    (first.is_ascii_alphabetic() || first == '_') && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn parse_state_fields(body: &str) -> Vec<(String, String)> {
@@ -1230,24 +1017,15 @@ fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     let mut out = String::new();
     out.push_str("{\n");
-    out.push_str(&format!(
-        "  \"app\": \"{}\",\n",
-        json_escape(&model.app_name)
-    ));
-    out.push_str(&format!(
-        "  \"root\": \"{}\",\n",
-        json_escape(&program.root.display().to_string())
-    ));
+    out.push_str(&format!("  \"app\": \"{}\",\n", json_escape(&model.app_name)));
+    out.push_str(&format!("  \"root\": \"{}\",\n", json_escape(&program.root.display().to_string())));
 
     out.push_str("  \"modules\": [\n");
     for (idx, module) in program.modules.iter().enumerate() {
         if idx > 0 {
             out.push_str(",\n");
         }
-        out.push_str(&format!(
-            "    \"{}\"",
-            json_escape(&module.path.display().to_string())
-        ));
+        out.push_str(&format!("    \"{}\"", json_escape(&module.path.display().to_string())));
     }
     out.push_str("\n  ],\n");
 
@@ -1270,28 +1048,16 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
             out.push_str(",\n");
         }
         out.push_str("    {\n");
-        out.push_str(&format!(
-            "      \"name\": \"{}\",\n",
-            json_escape(&actor.name)
-        ));
-        out.push_str(&format!(
-            "      \"state\": \"{}\",\n",
-            json_escape(&actor.state)
-        ));
-        out.push_str(&format!(
-            "      \"sil\": \"sil/{}.sil\",\n",
-            json_escape(&actor.name)
-        ));
+        out.push_str(&format!("      \"name\": \"{}\",\n", json_escape(&actor.name)));
+        out.push_str(&format!("      \"state\": \"{}\",\n", json_escape(&actor.state)));
+        out.push_str(&format!("      \"sil\": \"sil/{}.sil\",\n", json_escape(&actor.name)));
         out.push_str("      \"entries\": [\n");
         for (entry_idx, entry) in actor.entries.iter().enumerate() {
             if entry_idx > 0 {
                 out.push_str(",\n");
             }
             out.push_str("        {\n");
-            out.push_str(&format!(
-                "          \"name\": \"{}\",\n",
-                json_escape(&entry.name)
-            ));
+            out.push_str(&format!("          \"name\": \"{}\",\n", json_escape(&entry.name)));
             out.push_str(&format!(
                 "          \"kind\": \"{}\",\n",
                 match entry.kind {
@@ -1319,11 +1085,8 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
                 if route_idx > 0 {
                     out.push_str(", ");
                 }
-                let output = route
-                    .output
-                    .as_ref()
-                    .map(|output| format!("\"{}\"", json_escape(output)))
-                    .unwrap_or_else(|| "null".to_string());
+                let output =
+                    route.output.as_ref().map(|output| format!("\"{}\"", json_escape(output))).unwrap_or_else(|| "null".to_string());
                 out.push_str(&format!(
                     "{{ \"output\": {}, \"actor\": \"{}\", \"state\": \"{}\" }}",
                     output,
@@ -1398,11 +1161,7 @@ fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String>
     Ok(model.actor(actor)?.state.clone())
 }
 
-fn contract_state_type_for_actor(
-    actor: &str,
-    current_actor: &ActorDecl,
-    model: &Model<'_>,
-) -> Result<String> {
+fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     if actor == current_actor.name {
         model.actor_state(actor)?;
         Ok("State".to_string())
@@ -1412,22 +1171,12 @@ fn contract_state_type_for_actor(
 }
 
 fn compact_expr(input: &str) -> String {
-    let without_comments = input
-        .lines()
-        .map(|line| line.split_once("//").map(|(code, _)| code).unwrap_or(line))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let compact = without_comments
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    let without_comments =
+        input.lines().map(|line| line.split_once("//").map(|(code, _)| code).unwrap_or(line)).collect::<Vec<_>>().join(" ");
+    let compact = without_comments.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut chars = compact.chars();
     let prefix = chars.by_ref().take(96).collect::<String>();
-    if chars.next().is_some() {
-        format!("{prefix}...")
-    } else {
-        compact
-    }
+    if chars.next().is_some() { format!("{prefix}...") } else { compact }
 }
 
 fn indent_block_body(body: &str, spaces: usize) -> String {
@@ -1440,11 +1189,7 @@ fn indent_block_body(body: &str, spaces: usize) -> String {
     let common_indent = trimmed
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            line.chars()
-                .take_while(|ch| *ch == ' ' || *ch == '\t')
-                .count()
-        })
+        .map(|line| line.chars().take_while(|ch| *ch == ' ' || *ch == '\t').count())
         .min()
         .unwrap_or(0);
 
@@ -1454,10 +1199,7 @@ fn indent_block_body(body: &str, spaces: usize) -> String {
             out.push('\n');
         } else {
             out.push_str(&indent);
-            out.push_str(
-                line.get(common_indent..)
-                    .unwrap_or_else(|| line.trim_start()),
-            );
+            out.push_str(line.get(common_indent..).unwrap_or_else(|| line.trim_start()));
             out.push('\n');
         }
     }
@@ -1465,12 +1207,7 @@ fn indent_block_body(body: &str, spaces: usize) -> String {
 }
 
 fn json_escape(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    input.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r").replace('\t', "\\t")
 }
 
 #[cfg(test)]
@@ -1482,17 +1219,11 @@ mod tests {
     #[test]
     fn rejects_route_outside_named_output_union() {
         let mut program = test_program();
-        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
-            output: Some("next".to_string()),
-            actor: "Game".to_string(),
-            state: "next_game".to_string(),
-        }];
+        program.modules[0].actors[0].entries[0].routes =
+            vec![RouteCall { output: Some("next".to_string()), actor: "Game".to_string(), state: "next_game".to_string() }];
 
         let err = Model::from_program(&program).expect_err("route must be rejected");
-        assert!(
-            err.to_string().contains("routes output `next` to `Game`"),
-            "unexpected error: {err}"
-        );
+        assert!(err.to_string().contains("routes output `next` to `Game`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -1503,11 +1234,8 @@ mod tests {
             actors: vec!["Player".to_string(), "Game".to_string()],
             auth_index: 0,
         }]);
-        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
-            output: Some("next".to_string()),
-            actor: "Game".to_string(),
-            state: "next_game".to_string(),
-        }];
+        program.modules[0].actors[0].entries[0].routes =
+            vec![RouteCall { output: Some("next".to_string()), actor: "Game".to_string(), state: "next_game".to_string() }];
 
         Model::from_program(&program).expect("route should be accepted");
     }
@@ -1517,17 +1245,11 @@ mod tests {
         let mut program = test_program();
         program.modules[0].actors[0].entries[0].kind = EntryKind::Delegate;
         program.modules[0].actors[0].entries[0].emits = EmitSpec::None;
-        program.modules[0].actors[0].entries[0].routes = vec![RouteCall {
-            output: Some("next".to_string()),
-            actor: "Player".to_string(),
-            state: "next_player".to_string(),
-        }];
+        program.modules[0].actors[0].entries[0].routes =
+            vec![RouteCall { output: Some("next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() }];
 
         let err = Model::from_program(&program).expect_err("delegate become must be rejected");
-        assert!(
-            err.to_string().contains("cannot use `become`"),
-            "unexpected error: {err}"
-        );
+        assert!(err.to_string().contains("cannot use `become`"), "unexpected error: {err}");
     }
 
     fn test_program() -> Program {
@@ -1538,14 +1260,8 @@ mod tests {
                 imports: Vec::new(),
                 consts: Vec::new(),
                 states: vec![
-                    StateDecl {
-                        name: "PlayerState".to_string(),
-                        fields: Vec::new(),
-                    },
-                    StateDecl {
-                        name: "GameState".to_string(),
-                        fields: Vec::new(),
-                    },
+                    StateDecl { name: "PlayerState".to_string(), fields: Vec::new() },
+                    StateDecl { name: "GameState".to_string(), fields: Vec::new() },
                 ],
                 functions: Vec::new(),
                 actors: vec![
@@ -1566,16 +1282,9 @@ mod tests {
                             routes: Vec::new(),
                         }],
                     },
-                    ActorDecl {
-                        name: "Game".to_string(),
-                        state: "GameState".to_string(),
-                        entries: Vec::new(),
-                    },
+                    ActorDecl { name: "Game".to_string(), state: "GameState".to_string(), entries: Vec::new() },
                 ],
-                apps: vec![AppDecl {
-                    name: "Test".to_string(),
-                    actors: vec!["Player".to_string(), "Game".to_string()],
-                }],
+                apps: vec![AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string(), "Game".to_string()] }],
             }],
         }
     }

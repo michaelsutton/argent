@@ -2,21 +2,12 @@ use std::path::PathBuf;
 
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
-use crate::lexer::{lex, Token, TokenKind};
+use crate::lexer::{Token, TokenKind, lex};
 use crate::routes::collect_routes;
 
 pub fn parse_module(path: PathBuf, source: String) -> Result<Module> {
-    let tokens = lex(&source).map_err(|err| ArgentError {
-        path: Some(path.clone()),
-        message: err.message,
-    })?;
-    Parser {
-        path,
-        source,
-        tokens,
-        pos: 0,
-    }
-    .parse_module()
+    let tokens = lex(&source).map_err(|err| ArgentError { path: Some(path.clone()), message: err.message })?;
+    Parser { path, source, tokens, pos: 0 }.parse_module()
 }
 
 struct Parser {
@@ -52,10 +43,7 @@ impl Parser {
             } else if self.check_ident("app") {
                 module.apps.push(self.parse_app()?);
             } else {
-                return Err(self.error(format!(
-                    "expected top-level declaration, found {}",
-                    self.describe_current()
-                )));
+                return Err(self.error(format!("expected top-level declaration, found {}", self.describe_current())));
             }
         }
 
@@ -88,11 +76,7 @@ impl Parser {
         }
         let value_end = self.current().span.start;
         self.expect_symbol(';')?;
-        Ok(ConstDecl {
-            ty,
-            name,
-            value: self.source[value_start..value_end].trim().to_string(),
-        })
+        Ok(ConstDecl { ty, name, value: self.source[value_start..value_end].trim().to_string() })
     }
 
     fn parse_state(&mut self) -> Result<StateDecl> {
@@ -117,12 +101,7 @@ impl Parser {
         self.expect_arrow()?;
         let return_ty = self.parse_type()?;
         let body = self.consume_block_text()?;
-        Ok(FunctionDecl {
-            name,
-            params,
-            return_ty,
-            body,
-        })
+        Ok(FunctionDecl { name, params, return_ty, body })
     }
 
     fn parse_actor(&mut self) -> Result<ActorDecl> {
@@ -136,11 +115,7 @@ impl Parser {
             entries.push(self.parse_actor_item()?);
         }
         self.expect_symbol('}')?;
-        Ok(ActorDecl {
-            name,
-            state,
-            entries,
-        })
+        Ok(ActorDecl { name, state, entries })
     }
 
     fn parse_actor_item(&mut self) -> Result<EntryDecl> {
@@ -149,10 +124,7 @@ impl Parser {
         } else if self.check_ident("delegate") {
             self.parse_delegate()
         } else {
-            Err(self.error(format!(
-                "expected `entry` or `delegate`, found {}",
-                self.describe_current()
-            )))
+            Err(self.error(format!("expected `entry` or `delegate`, found {}", self.describe_current())))
         }
     }
 
@@ -160,48 +132,22 @@ impl Parser {
         self.expect_ident("entry")?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let consumes = if self.check_ident("consumes") {
-            self.parse_consumes()?
-        } else {
-            Vec::new()
-        };
+        let consumes = if self.check_ident("consumes") { self.parse_consumes()? } else { Vec::new() };
         self.expect_ident("emits")?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
-        let routes =
-            collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
-        Ok(EntryDecl {
-            kind: EntryKind::Leader,
-            name,
-            params,
-            consumes,
-            emits,
-            body,
-            routes,
-        })
+        let routes = collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
+        Ok(EntryDecl { kind: EntryKind::Leader, name, params, consumes, emits, body, routes })
     }
 
     fn parse_delegate(&mut self) -> Result<EntryDecl> {
         self.expect_ident("delegate")?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let consumes = if self.check_ident("consumes") {
-            self.parse_consumes()?
-        } else {
-            Vec::new()
-        };
+        let consumes = if self.check_ident("consumes") { self.parse_consumes()? } else { Vec::new() };
         let body = self.consume_block_text()?;
-        let routes =
-            collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
-        Ok(EntryDecl {
-            kind: EntryKind::Delegate,
-            name,
-            params,
-            consumes,
-            emits: EmitSpec::None,
-            body,
-            routes,
-        })
+        let routes = collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
+        Ok(EntryDecl { kind: EntryKind::Delegate, name, params, consumes, emits: EmitSpec::None, body, routes })
     }
 
     fn parse_app(&mut self) -> Result<AppDecl> {
@@ -261,10 +207,7 @@ impl Parser {
 
     fn parse_type_tail(&mut self, name: String) -> Result<TypeRef> {
         if self.consume_symbol('[') {
-            let len = self
-                .expect_number()?
-                .parse::<usize>()
-                .map_err(|_| self.error("invalid array length"))?;
+            let len = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid array length"))?;
             self.expect_symbol(']')?;
             Ok(TypeRef::array(name, len))
         } else {
@@ -288,29 +231,19 @@ impl Parser {
                 let auth_index = if self.consume_ident("at") {
                     self.expect_ident("auth")?;
                     self.expect_symbol('[')?;
-                    let auth_index = self
-                        .expect_number()?
-                        .parse::<usize>()
-                        .map_err(|_| self.error("invalid auth index"))?;
+                    let auth_index = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid auth index"))?;
                     self.expect_symbol(']')?;
                     auth_index
                 } else {
                     outputs.len()
                 };
                 self.expect_symbol(';')?;
-                outputs.push(EmitOutput {
-                    name,
-                    actors,
-                    auth_index,
-                });
+                outputs.push(EmitOutput { name, actors, auth_index });
             }
             self.expect_symbol('}')?;
             Ok(EmitSpec::Outputs(outputs))
         } else {
-            Err(self.error(format!(
-                "expected emits spec, found {}",
-                self.describe_current()
-            )))
+            Err(self.error(format!("expected emits spec, found {}", self.describe_current())))
         }
     }
 
@@ -364,10 +297,7 @@ impl Parser {
                 self.advance();
                 Ok(())
             }
-            _ => Err(self.error(format!(
-                "expected `{expected}`, found {}",
-                self.describe_current()
-            ))),
+            _ => Err(self.error(format!("expected `{expected}`, found {}", self.describe_current()))),
         }
     }
 
@@ -387,10 +317,7 @@ impl Parser {
                 self.advance();
                 Ok(name)
             }
-            _ => Err(self.error(format!(
-                "expected identifier, found {}",
-                self.describe_current()
-            ))),
+            _ => Err(self.error(format!("expected identifier, found {}", self.describe_current()))),
         }
     }
 
@@ -404,10 +331,7 @@ impl Parser {
                 self.advance();
                 Ok(value)
             }
-            _ => Err(self.error(format!(
-                "expected number, found {}",
-                self.describe_current()
-            ))),
+            _ => Err(self.error(format!("expected number, found {}", self.describe_current()))),
         }
     }
 
@@ -417,10 +341,7 @@ impl Parser {
                 self.advance();
                 Ok(value)
             }
-            _ => Err(self.error(format!(
-                "expected string, found {}",
-                self.describe_current()
-            ))),
+            _ => Err(self.error(format!("expected string, found {}", self.describe_current()))),
         }
     }
 
@@ -430,10 +351,7 @@ impl Parser {
                 self.advance();
                 Ok(())
             }
-            _ => Err(self.error(format!(
-                "expected `{expected}`, found {}",
-                self.describe_current()
-            ))),
+            _ => Err(self.error(format!("expected `{expected}`, found {}", self.describe_current()))),
         }
     }
 
@@ -492,9 +410,6 @@ impl Parser {
     }
 
     fn error(&self, message: impl Into<String>) -> ArgentError {
-        ArgentError::at(
-            &self.path,
-            format!("{} at byte {}", message.into(), self.current().span.start),
-        )
+        ArgentError::at(&self.path, format!("{} at byte {}", message.into(), self.current().span.start))
     }
 }

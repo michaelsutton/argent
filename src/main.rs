@@ -34,9 +34,7 @@ fn build(args: Vec<String>) -> Result<()> {
         match args[idx].as_str() {
             "--out" => {
                 idx += 1;
-                let value = args
-                    .get(idx)
-                    .ok_or_else(|| ArgentError::new("missing value after --out"))?;
+                let value = args.get(idx).ok_or_else(|| ArgentError::new("missing value after --out"))?;
                 out_dir = PathBuf::from(value);
             }
             value if input.is_none() => input = Some(PathBuf::from(value)),
