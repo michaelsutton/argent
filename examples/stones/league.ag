@@ -9,10 +9,10 @@ actor League owns LeagueState {
         player: Player;
     } {
         require(checkSig(owner_sig, owner_pk));
-        let owner = blake2b(owner_pk);
-        let player_id = unique("StonesPlayer", self.outpoint);
+        byte[32] owner = blake2b(owner_pk);
+        byte[32] player_id = unique("StonesPlayer", self.outpoint);
 
-        let next_player = PlayerState {
+        PlayerState next_player = {
             owner: owner,
             player_id: player_id,
             open_games: 0,

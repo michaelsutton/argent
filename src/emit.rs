@@ -32,7 +32,6 @@ struct Model<'a> {
     app_name: String,
     template_actors: Vec<String>,
     consts: Vec<&'a ConstDecl>,
-    source_states: Vec<&'a StateDecl>,
     functions: Vec<&'a FunctionDecl>,
     states: BTreeMap<String, &'a StateDecl>,
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
@@ -45,11 +44,6 @@ impl<'a> Model<'a> {
             .modules
             .iter()
             .flat_map(|module| module.consts.iter())
-            .collect::<Vec<_>>();
-        let source_states = program
-            .modules
-            .iter()
-            .flat_map(|module| module.states.iter())
             .collect::<Vec<_>>();
         let functions = program
             .modules
@@ -93,7 +87,6 @@ impl<'a> Model<'a> {
             app_name,
             template_actors,
             consts,
-            source_states,
             functions,
             states,
             actors_by_name: all_actors,
@@ -628,8 +621,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 self.lower_if(out, indent)?;
             } else if self.consume_ident("become") {
                 self.lower_become(out, indent)?;
-            } else if self.consume_ident("let") || self.consume_ident("var") {
-                self.lower_local_definition(out, indent)?;
             } else if self.check_symbol(';') {
                 self.advance();
             } else {
@@ -666,28 +657,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(())
     }
 
-    fn lower_local_definition(&mut self, out: &mut String, indent: usize) -> Result<()> {
-        let name = self.expect_any_ident()?;
-        self.expect_symbol('=')?;
-        let expr = self.take_until_semicolon()?;
-        let ty = self.infer_expr_type(&expr).ok_or_else(|| {
-            ArgentError::new(format!(
-                "cannot infer type for local `{name}` from expression `{}` in `{}::{}`",
-                compact_expr(&expr),
-                self.actor.name,
-                self.entry.name
-            ))
-        })?;
-        let lowered = self.lower_expr(&expr, Some(&ty), indent)?;
-        self.types.insert(name.clone(), ty.clone());
-
-        push_indent(out, indent);
-        out.push_str(&format!("{ty} {name} = {lowered};\n"));
-        Ok(())
-    }
-
     fn lower_plain_statement(&mut self, out: &mut String, indent: usize) -> Result<()> {
         let statement = self.take_until_semicolon()?;
+        if let Some((source_ty, name, expr)) = parse_typed_local_statement(&statement) {
+            let ty = self.lower_local_type(source_ty);
+            let lowered = self.lower_typed_local_initializer(source_ty, &ty, expr, indent)?;
+            self.types.insert(name.to_string(), ty.clone());
+
+            push_indent(out, indent);
+            out.push_str(&format!("{ty} {name} = {lowered};\n"));
+            return Ok(());
+        }
+
         push_indent(out, indent);
         out.push_str(&self.lower_expr(&statement, None, indent)?);
         out.push_str(";\n");
@@ -791,6 +772,31 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         indent: usize,
     ) -> Result<String> {
         self.model.state(state_name)?;
+        self.lower_state_object_for_state(state_name, body, indent)
+    }
+
+    fn lower_typed_local_initializer(
+        &self,
+        source_ty: &str,
+        lowered_ty: &str,
+        expr: &str,
+        indent: usize,
+    ) -> Result<String> {
+        if let Some(state_name) = self.source_state_for_local_type(source_ty) {
+            if let Some(body) = split_state_object_literal(expr) {
+                return self.lower_state_object_for_state(&state_name, body, indent);
+            }
+        }
+        self.lower_expr(expr, Some(lowered_ty), indent)
+    }
+
+    fn lower_state_object_for_state(
+        &self,
+        state_name: &str,
+        body: &str,
+        indent: usize,
+    ) -> Result<String> {
+        self.model.state(state_name)?;
         let fields = parse_state_fields(body)
             .into_iter()
             .map(|(name, expr)| {
@@ -799,6 +805,24 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             })
             .collect::<Result<Vec<_>>>()?;
         self.render_state_object(&fields, indent)
+    }
+
+    fn lower_local_type(&self, source_ty: &str) -> String {
+        if source_ty == self.actor.state {
+            "State".to_string()
+        } else {
+            source_ty.to_string()
+        }
+    }
+
+    fn source_state_for_local_type(&self, source_ty: &str) -> Option<String> {
+        if source_ty == "State" {
+            Some(self.actor.state.clone())
+        } else if self.model.states.contains_key(source_ty) {
+            Some(source_ty.to_string())
+        } else {
+            None
+        }
     }
 
     fn render_state_object(&self, fields: &[(String, String)], indent: usize) -> Result<String> {
@@ -838,81 +862,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             );
         }
         out
-    }
-
-    fn infer_expr_type(&self, expr: &str) -> Option<String> {
-        let expr = expr.trim();
-        if let Some(ty) = self.types.get(expr) {
-            return Some(ty.clone());
-        }
-        if expr.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some("int".to_string());
-        }
-        if expr.starts_with("blake2b(") || parse_unique_self_outpoint(expr).is_some() {
-            return Some("byte[32]".to_string());
-        }
-        if expr.starts_with("checkSig(") {
-            return Some("bool".to_string());
-        }
-        for function in &self.model.functions {
-            if expr.starts_with(&format!("{}(", function.name)) {
-                return Some(function.return_ty.to_sil());
-            }
-        }
-        if let Some((state_name, _)) = split_state_constructor(expr) {
-            if state_name == self.actor.state {
-                return Some("State".to_string());
-            }
-            return Some(state_name.to_string());
-        }
-        if let Some(ty) = self.infer_binary_expr_type(expr) {
-            return Some(ty);
-        }
-        self.infer_field_access_type(expr)
-    }
-
-    fn infer_binary_expr_type(&self, expr: &str) -> Option<String> {
-        for operator in ['+', '-', '*', '/', '%'] {
-            if let Some((left, right)) = split_top_level_operator(expr, operator) {
-                let left_ty = self.infer_expr_type(left)?;
-                let right_ty = self.infer_expr_type(right)?;
-                if left_ty == "int" && right_ty == "int" {
-                    return Some("int".to_string());
-                }
-            }
-        }
-        None
-    }
-
-    fn infer_field_access_type(&self, expr: &str) -> Option<String> {
-        let (base, field) = expr.split_once('.')?;
-        if field.contains('.') || field.contains('(') || field.contains(' ') {
-            return None;
-        }
-        let base_type = self.types.get(base)?;
-        let state = if base_type == "State" {
-            self.model.state(&self.actor.state).ok()
-        } else {
-            self.model
-                .source_states
-                .iter()
-                .find(|state| state.name == *base_type)
-                .copied()
-                .or_else(|| {
-                    self.model.actors.iter().find_map(|actor| {
-                        if actor.state == *base_type {
-                            self.model.state(&actor.state).ok()
-                        } else {
-                            None
-                        }
-                    })
-                })
-        }?;
-        state
-            .fields
-            .iter()
-            .find(|candidate| candidate.name == field)
-            .map(|field| field.ty.to_sil())
     }
 
     fn take_until_semicolon(&mut self) -> Result<String> {
@@ -1092,6 +1041,75 @@ fn split_state_constructor(expr: &str) -> Option<(&str, &str)> {
     Some((state_name, body))
 }
 
+fn split_state_object_literal(expr: &str) -> Option<&str> {
+    let expr = expr.trim();
+    if !expr.starts_with('{') {
+        return None;
+    }
+    expr.strip_prefix('{')?.strip_suffix('}').map(str::trim)
+}
+
+fn parse_typed_local_statement(statement: &str) -> Option<(&str, &str, &str)> {
+    let (left, expr) = split_top_level_assignment(statement)?;
+    let left = left.trim();
+    let split_idx = left
+        .char_indices()
+        .rev()
+        .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx))?;
+    let source_ty = left[..split_idx].trim();
+    let name = left[split_idx..].trim();
+    if source_ty.is_empty() || !is_identifier(name) {
+        return None;
+    }
+    Some((source_ty, name, expr.trim()))
+}
+
+fn split_top_level_assignment(input: &str) -> Option<(&str, &str)> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            '=' if depth == 0 => {
+                let prev = input[..idx].chars().next_back();
+                let next = input[idx + ch.len_utf8()..].chars().next();
+                if matches!(prev, Some('=' | '!' | '<' | '>')) || matches!(next, Some('=')) {
+                    continue;
+                }
+                let left = input[..idx].trim();
+                let right = input[idx + ch.len_utf8()..].trim();
+                if !left.is_empty() && !right.is_empty() {
+                    return Some((left, right));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_identifier(input: &str) -> bool {
+    let mut chars = input.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
 fn parse_state_fields(body: &str) -> Vec<(String, String)> {
     split_top_level_commas(body)
         .into_iter()
@@ -1126,38 +1144,6 @@ fn split_top_level_colon(input: &str) -> Option<(&str, &str)> {
             '{' | '(' | '[' => depth += 1,
             '}' | ')' | ']' => depth = depth.saturating_sub(1),
             ':' if depth == 0 => return Some((&input[..idx], &input[idx + 1..])),
-            _ => {}
-        }
-    }
-    None
-}
-
-fn split_top_level_operator(input: &str, operator: char) -> Option<(&str, &str)> {
-    let mut depth = 0usize;
-    let mut in_string = false;
-    let mut escaped = false;
-    for (idx, ch) in input.char_indices() {
-        if in_string {
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-        match ch {
-            '"' => in_string = true,
-            '{' | '(' | '[' => depth += 1,
-            '}' | ')' | ']' => depth = depth.saturating_sub(1),
-            candidate if depth == 0 && candidate == operator => {
-                let left = input[..idx].trim();
-                let right = input[idx + candidate.len_utf8()..].trim();
-                if !left.is_empty() && !right.is_empty() {
-                    return Some((left, right));
-                }
-            }
             _ => {}
         }
     }

@@ -28,11 +28,11 @@ actor Issuer owns IssuerState {
         require(blake2b(admin_pk) == admin);
         require(checkSig(admin_sig, admin_pk));
 
-        let serial = next_serial;
-        let owner = blake2b(owner_pk);
+        int serial = next_serial;
+        byte[32] owner = blake2b(owner_pk);
 
-        let next_issuer = IssuerState { admin: admin, next_serial: next_serial + 1, };
-        let new_ticket = TicketState { owner: owner, serial: serial, redeemed: 0, };
+        IssuerState next_issuer = { admin: admin, next_serial: next_serial + 1, };
+        TicketState new_ticket = { owner: owner, serial: serial, redeemed: 0, };
 
         require(issuer.value == self.value);
         require(ticket.value > 0);
@@ -57,7 +57,7 @@ actor Ticket owns TicketState {
         require(redeemed == 0);
         require(next.value == self.value);
 
-        let redeemed_ticket = TicketState {
+        TicketState redeemed_ticket = {
             owner: owner,
             serial: serial,
             redeemed: 1,

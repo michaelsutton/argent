@@ -27,10 +27,10 @@ actor Player owns PlayerState {
         require(pile > 0);
         require(max_take > 0);
 
-        let self_ref = player_ref(owner, player_id);
-        let opponent_ref = player_ref(opponent.owner, opponent.player_id);
+        byte[32] self_ref = player_ref(owner, player_id);
+        byte[32] opponent_ref = player_ref(opponent.owner, opponent.player_id);
 
-        let next_self = PlayerState {
+        PlayerState next_self = {
             owner: owner,
             player_id: player_id,
             open_games: open_games + 1,
@@ -39,7 +39,7 @@ actor Player owns PlayerState {
             losses: losses,
         };
 
-        let next_opponent = PlayerState {
+        PlayerState next_opponent = {
             owner: opponent.owner,
             player_id: opponent.player_id,
             open_games: opponent.open_games + 1,
@@ -48,7 +48,7 @@ actor Player owns PlayerState {
             losses: opponent.losses,
         };
 
-        let next_game = GameState {
+        GameState next_game = {
             player_a: self_ref,
             player_b: opponent_ref,
             pile: pile,
@@ -81,7 +81,7 @@ actor Player owns PlayerState {
     delegate settle() consumes {
         settle: StonesSettle;
     } {
-        let self_ref = player_ref(owner, player_id);
+        byte[32] self_ref = player_ref(owner, player_id);
         require(self_ref == settle.player_a || self_ref == settle.player_b);
     }
 

@@ -18,16 +18,16 @@ actor StonesGame owns GameState {
         require(amount <= max_take);
         require(amount <= pile);
 
-        let actor_ref = player_ref(blake2b(move_pk), player_id);
-        let expected_ref = side_player(turn, player_a, player_b);
+        byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
+        byte[32] expected_ref = side_player(turn, player_a, player_b);
         require(actor_ref == expected_ref);
         require(checkSig(move_sig, move_pk));
 
-        let next_pile = pile - amount;
+        int next_pile = pile - amount;
         require(next.value == self.value);
 
         if (next_pile == 0) {
-            let ticket = SettleState {
+            SettleState ticket = {
                 player_a: player_a,
                 player_b: player_b,
                 status: win_status(turn),
@@ -36,7 +36,7 @@ actor StonesGame owns GameState {
             // Single-output `become` lowers to one authorized successor output.
             become next <- StonesSettle(ticket);
         } else {
-            let next_game = GameState {
+            GameState next_game = {
                 player_a: player_a,
                 player_b: player_b,
                 pile: next_pile,
@@ -56,14 +56,14 @@ actor StonesGame owns GameState {
     ) emits {
         settle: StonesSettle;
     } {
-        let actor_ref = player_ref(blake2b(move_pk), player_id);
-        let expected_ref = side_player(turn, player_a, player_b);
+        byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
+        byte[32] expected_ref = side_player(turn, player_a, player_b);
         require(actor_ref == expected_ref);
         require(checkSig(move_sig, move_pk));
         require(settle.value == self.value);
 
-        let winner = other_side(turn);
-        let ticket = SettleState {
+        int winner = other_side(turn);
+        SettleState ticket = {
             player_a: player_a,
             player_b: player_b,
             status: win_status(winner),
