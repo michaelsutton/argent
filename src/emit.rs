@@ -165,6 +165,7 @@ impl<'a> Model<'a> {
             self.actor_state(&route.actor)?;
             self.validate_route_allowed(actor, entry, route)?;
         }
+        self.validate_route_coverage(actor, entry)?;
         Ok(())
     }
 
@@ -225,6 +226,79 @@ impl<'a> Model<'a> {
                 }
             }
         }
+    }
+
+    fn validate_route_coverage(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<()> {
+        match &entry.emits {
+            EmitSpec::None => Ok(()),
+            EmitSpec::One { .. } => self.validate_single_output_coverage(actor, entry),
+            EmitSpec::Outputs(outputs) => self.validate_named_output_coverage(actor, entry, outputs),
+        }
+    }
+
+    fn validate_single_output_coverage(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<()> {
+        if entry.terminal_route_sets.is_empty() {
+            return Err(ArgentError::new(format!(
+                "entry `{}::{}` declares `emits one` but has no terminal `become` route",
+                actor.name, entry.name
+            )));
+        }
+
+        for (path_idx, routes) in entry.terminal_route_sets.iter().enumerate() {
+            if routes.len() != 1 || routes[0].output.is_some() {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` terminal path {} must validate exactly one unnamed output for `emits one`",
+                    actor.name, entry.name, path_idx
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_named_output_coverage(&self, actor: &ActorDecl, entry: &EntryDecl, outputs: &[EmitOutput]) -> Result<()> {
+        if outputs.is_empty() {
+            return Ok(());
+        }
+        if entry.terminal_route_sets.is_empty() {
+            return Err(ArgentError::new(format!(
+                "entry `{}::{}` declares {} outputs but has no terminal `become` route",
+                actor.name,
+                entry.name,
+                outputs.len()
+            )));
+        }
+
+        let declared = outputs.iter().map(|output| output.name.as_str()).collect::<BTreeSet<_>>();
+        for (path_idx, routes) in entry.terminal_route_sets.iter().enumerate() {
+            let mut seen = BTreeSet::new();
+            for route in routes {
+                let output = route.output.as_deref().ok_or_else(|| {
+                    ArgentError::new(format!(
+                        "entry `{}::{}` terminal path {} has an unnamed route but declares named outputs",
+                        actor.name, entry.name, path_idx
+                    ))
+                })?;
+                if !declared.contains(output) {
+                    continue;
+                }
+                if !seen.insert(output) {
+                    return Err(ArgentError::new(format!(
+                        "entry `{}::{}` terminal path {} validates output `{}` more than once",
+                        actor.name, entry.name, path_idx, output
+                    )));
+                }
+            }
+
+            for output in outputs {
+                if !seen.contains(output.name.as_str()) {
+                    return Err(ArgentError::new(format!(
+                        "entry `{}::{}` terminal path {} does not validate output `{}`",
+                        actor.name, entry.name, path_idx, output.name
+                    )));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1234,10 +1308,67 @@ mod tests {
             actors: vec!["Player".to_string(), "Game".to_string()],
             auth_index: 0,
         }]);
-        program.modules[0].actors[0].entries[0].routes =
-            vec![RouteCall { output: Some("next".to_string()), actor: "Game".to_string(), state: "next_game".to_string() }];
+        let route = RouteCall { output: Some("next".to_string()), actor: "Game".to_string(), state: "next_game".to_string() };
+        program.modules[0].actors[0].entries[0].routes = vec![route.clone()];
+        program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![route]];
 
         Model::from_program(&program).expect("route should be accepted");
+    }
+
+    #[test]
+    fn rejects_missing_named_output_coverage() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0].emits = EmitSpec::Outputs(vec![
+            EmitOutput { name: "a".to_string(), actors: vec!["Player".to_string()], auth_index: 0 },
+            EmitOutput { name: "b".to_string(), actors: vec!["Player".to_string()], auth_index: 1 },
+        ]);
+        let route = RouteCall { output: Some("a".to_string()), actor: "Player".to_string(), state: "next_a".to_string() };
+        program.modules[0].actors[0].entries[0].routes = vec![route.clone()];
+        program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![route]];
+
+        let err = Model::from_program(&program).expect_err("missing output coverage must be rejected");
+        assert!(err.to_string().contains("does not validate output `b`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_source_with_missing_named_output_coverage() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {}
+
+            actor Foo owns FooState {
+                entry step() emits {
+                    a: Foo;
+                    b: Foo;
+                } {
+                    become a <- Foo(next_a);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+
+        let err = Model::from_program(&program).expect_err("missing output coverage must be rejected");
+        assert!(err.to_string().contains("does not validate output `b`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_duplicate_named_output_coverage() {
+        let mut program = test_program();
+        let first = RouteCall { output: Some("next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() };
+        let second = RouteCall { output: Some("next".to_string()), actor: "Player".to_string(), state: "other_player".to_string() };
+        program.modules[0].actors[0].entries[0].routes = vec![first.clone(), second.clone()];
+        program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![first, second]];
+
+        let err = Model::from_program(&program).expect_err("duplicate output coverage must be rejected");
+        assert!(err.to_string().contains("validates output `next` more than once"), "unexpected error: {err}");
     }
 
     #[test]
@@ -1280,6 +1411,7 @@ mod tests {
                             }]),
                             body: String::new(),
                             routes: Vec::new(),
+                            terminal_route_sets: Vec::new(),
                         }],
                     },
                     ActorDecl { name: "Game".to_string(), state: "GameState".to_string(), entries: Vec::new() },

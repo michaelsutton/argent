@@ -66,6 +66,7 @@ pub struct EntryDecl {
     pub emits: EmitSpec,
     pub body: String,
     pub routes: Vec<RouteCall>,
+    pub terminal_route_sets: Vec<Vec<RouteCall>>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

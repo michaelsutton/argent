@@ -2,57 +2,134 @@ use crate::ast::RouteCall;
 use crate::error::{ArgentError, Result};
 use crate::lexer::{Token, TokenKind, lex};
 
+#[derive(Debug, Clone)]
+pub struct RouteAnalysis {
+    pub routes: Vec<RouteCall>,
+    pub terminal_route_sets: Vec<Vec<RouteCall>>,
+}
+
 pub fn collect_routes(body: &str) -> Result<Vec<RouteCall>> {
+    analyze_routes(body).map(|analysis| analysis.routes)
+}
+
+pub fn analyze_routes(body: &str) -> Result<RouteAnalysis> {
     let tokens = lex(body)?;
-    validate_terminal_becomes(body, &tokens)?;
-    let mut parser = RouteParser { body, tokens, pos: 0, routes: Vec::new() };
-    parser.parse()?;
-    Ok(parser.routes)
+    let mut parser = TerminalParser { body, tokens: &tokens, pos: 0 };
+    let info = parser.parse_sequence(None)?;
+    let routes = info.terminal_route_sets.iter().flatten().cloned().collect();
+    Ok(RouteAnalysis { routes, terminal_route_sets: info.terminal_route_sets })
 }
 
-fn validate_terminal_becomes(body: &str, tokens: &[Token]) -> Result<()> {
-    let mut parser = TerminalParser { body, tokens, pos: 0 };
-    parser.parse_sequence(None)?;
-    Ok(())
-}
-
-struct RouteParser<'a> {
+struct TerminalParser<'a> {
     body: &'a str,
-    tokens: Vec<Token>,
+    tokens: &'a [Token],
     pos: usize,
-    routes: Vec<RouteCall>,
 }
 
-impl RouteParser<'_> {
-    fn parse(&mut self) -> Result<()> {
-        while !self.is_eof() {
-            if self.consume_ident("become") {
-                self.parse_become()?;
-            } else {
-                self.advance();
-            }
-        }
-        Ok(())
+#[derive(Debug, Clone, Copy)]
+struct TerminalInfo {
+    contains_become: bool,
+    all_paths_terminal: bool,
+}
+
+impl TerminalInfo {
+    fn empty() -> Self {
+        Self { contains_become: false, all_paths_terminal: false }
     }
 
-    fn parse_become(&mut self) -> Result<()> {
+    fn terminal(routes: Vec<RouteCall>) -> TerminalResult {
+        TerminalResult { info: Self { contains_become: true, all_paths_terminal: true }, terminal_route_sets: vec![routes] }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TerminalResult {
+    info: TerminalInfo,
+    terminal_route_sets: Vec<Vec<RouteCall>>,
+}
+
+impl TerminalResult {
+    fn empty() -> Self {
+        Self { info: TerminalInfo::empty(), terminal_route_sets: Vec::new() }
+    }
+}
+
+impl TerminalParser<'_> {
+    fn parse_sequence(&mut self, end: Option<char>) -> Result<TerminalResult> {
+        let mut result = TerminalResult::empty();
+        while !self.is_eof() && !end.is_some_and(|symbol| self.check_symbol(symbol)) {
+            let stmt = self.parse_statement()?;
+            result.info.contains_become |= stmt.info.contains_become;
+            result.terminal_route_sets.extend(stmt.terminal_route_sets);
+
+            if stmt.info.all_paths_terminal {
+                while self.consume_symbol(';') {}
+                if self.is_eof() || end.is_some_and(|symbol| self.check_symbol(symbol)) {
+                    result.info.all_paths_terminal = true;
+                    break;
+                }
+                return Err(self.error("`become` must be terminal; move following code into an explicit `else` branch"));
+            }
+            if stmt.info.contains_become {
+                return Err(self.error("conditional `become` must be terminal on every branch; add an explicit `else` branch"));
+            }
+        }
+        Ok(result)
+    }
+
+    fn parse_statement(&mut self) -> Result<TerminalResult> {
+        if self.consume_ident("if") {
+            self.expect_symbol('(')?;
+            self.skip_balanced('(', ')')?;
+            let then_info = self.parse_block_or_statement()?;
+            let else_info = if self.consume_ident("else") { self.parse_block_or_statement()? } else { TerminalResult::empty() };
+            let contains_become = then_info.info.contains_become || else_info.info.contains_become;
+            let all_paths_terminal = then_info.info.all_paths_terminal && else_info.info.all_paths_terminal;
+            let mut terminal_route_sets = then_info.terminal_route_sets;
+            terminal_route_sets.extend(else_info.terminal_route_sets);
+
+            Ok(TerminalResult { info: TerminalInfo { contains_become, all_paths_terminal }, terminal_route_sets })
+        } else if self.consume_ident("become") {
+            let routes = self.parse_become_tail()?;
+            Ok(TerminalInfo::terminal(routes))
+        } else if self.consume_symbol('{') {
+            let result = self.parse_sequence(Some('}'))?;
+            self.expect_symbol('}')?;
+            Ok(result)
+        } else {
+            self.skip_statement()?;
+            Ok(TerminalResult::empty())
+        }
+    }
+
+    fn parse_block_or_statement(&mut self) -> Result<TerminalResult> {
         if self.consume_symbol('{') {
+            let result = self.parse_sequence(Some('}'))?;
+            self.expect_symbol('}')?;
+            Ok(result)
+        } else {
+            self.parse_statement()
+        }
+    }
+
+    fn parse_become_tail(&mut self) -> Result<Vec<RouteCall>> {
+        if self.consume_symbol('{') {
+            let mut routes = Vec::new();
             while !self.check_symbol('}') && !self.is_eof() {
                 if self.check_ident("become") {
                     return Err(self.error("nested `become` blocks are not supported yet"));
                 }
-                let route = self.parse_route()?;
-                self.routes.push(route);
+                routes.push(self.parse_route()?);
                 self.consume_symbol(';');
             }
             self.expect_symbol('}')?;
             self.consume_symbol(';');
-        } else {
-            let route = self.parse_route()?;
-            self.routes.push(route);
-            self.consume_symbol(';');
+            return Ok(routes);
         }
-        Ok(())
+
+        let route = self.parse_route()?;
+        self.consume_symbol(';');
+        Ok(vec![route])
     }
 
     fn parse_route(&mut self) -> Result<RouteCall> {
@@ -108,141 +185,6 @@ impl RouteParser<'_> {
             }
             _ => Err(self.error("expected identifier in `become` route")),
         }
-    }
-
-    fn expect_symbol(&mut self, expected: char) -> Result<()> {
-        match self.current().kind {
-            TokenKind::Symbol(actual) if actual == expected => {
-                self.advance();
-                Ok(())
-            }
-            _ => Err(self.error(format!("expected `{expected}` in `become` route"))),
-        }
-    }
-
-    fn consume_ident(&mut self, expected: &str) -> bool {
-        match &self.current().kind {
-            TokenKind::Ident(actual) if actual == expected => {
-                self.advance();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn check_ident(&self, expected: &str) -> bool {
-        matches!(&self.current().kind, TokenKind::Ident(actual) if actual == expected)
-    }
-
-    fn consume_symbol(&mut self, expected: char) -> bool {
-        match self.current().kind {
-            TokenKind::Symbol(actual) if actual == expected => {
-                self.advance();
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn check_symbol(&self, expected: char) -> bool {
-        matches!(self.current().kind, TokenKind::Symbol(actual) if actual == expected)
-    }
-
-    fn current(&self) -> &Token {
-        &self.tokens[self.pos]
-    }
-
-    fn peek_kind(&self, offset: usize) -> Option<&TokenKind> {
-        self.tokens.get(self.pos + offset).map(|token| &token.kind)
-    }
-
-    fn advance(&mut self) {
-        if !self.is_eof() {
-            self.pos += 1;
-        }
-    }
-
-    fn is_eof(&self) -> bool {
-        matches!(self.current().kind, TokenKind::Eof)
-    }
-
-    fn error(&self, message: impl Into<String>) -> ArgentError {
-        ArgentError::new(format!("{} at body byte {}", message.into(), self.current().span.start))
-    }
-}
-
-struct TerminalParser<'a> {
-    body: &'a str,
-    tokens: &'a [Token],
-    pos: usize,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct TerminalInfo {
-    contains_become: bool,
-}
-
-impl TerminalInfo {
-    fn empty() -> Self {
-        Self { contains_become: false }
-    }
-}
-
-impl TerminalParser<'_> {
-    fn parse_sequence(&mut self, end: Option<char>) -> Result<TerminalInfo> {
-        let mut info = TerminalInfo::empty();
-        while !self.is_eof() && !end.is_some_and(|symbol| self.check_symbol(symbol)) {
-            let stmt = self.parse_statement()?;
-            info.contains_become |= stmt.contains_become;
-            if stmt.contains_become {
-                while self.consume_symbol(';') {}
-                if self.is_eof() || end.is_some_and(|symbol| self.check_symbol(symbol)) {
-                    break;
-                }
-                return Err(self.error("`become` must be terminal; move following code into an explicit `else` branch"));
-            }
-        }
-        Ok(info)
-    }
-
-    fn parse_statement(&mut self) -> Result<TerminalInfo> {
-        if self.consume_ident("if") {
-            self.expect_symbol('(')?;
-            self.skip_balanced('(', ')')?;
-            let then_info = self.parse_block_or_statement()?;
-            let else_info = if self.consume_ident("else") { self.parse_block_or_statement()? } else { TerminalInfo::empty() };
-            Ok(TerminalInfo { contains_become: then_info.contains_become || else_info.contains_become })
-        } else if self.consume_ident("become") {
-            self.skip_become_tail()?;
-            Ok(TerminalInfo { contains_become: true })
-        } else if self.consume_symbol('{') {
-            let info = self.parse_sequence(Some('}'))?;
-            self.expect_symbol('}')?;
-            Ok(info)
-        } else {
-            self.skip_statement()?;
-            Ok(TerminalInfo::empty())
-        }
-    }
-
-    fn parse_block_or_statement(&mut self) -> Result<TerminalInfo> {
-        if self.consume_symbol('{') {
-            let info = self.parse_sequence(Some('}'))?;
-            self.expect_symbol('}')?;
-            Ok(info)
-        } else {
-            self.parse_statement()
-        }
-    }
-
-    fn skip_become_tail(&mut self) -> Result<()> {
-        if self.consume_symbol('{') {
-            self.skip_balanced_after_open('{', '}')?;
-            self.consume_symbol(';');
-            return Ok(());
-        }
-
-        self.skip_until_statement_end()
     }
 
     fn skip_statement(&mut self) -> Result<()> {
@@ -320,6 +262,10 @@ impl TerminalParser<'_> {
         }
     }
 
+    fn check_ident(&self, expected: &str) -> bool {
+        matches!(&self.current().kind, TokenKind::Ident(actual) if actual == expected)
+    }
+
     fn consume_symbol(&mut self, expected: char) -> bool {
         match self.current().kind {
             TokenKind::Symbol(actual) if actual == expected => {
@@ -336,6 +282,10 @@ impl TerminalParser<'_> {
 
     fn current(&self) -> &Token {
         &self.tokens[self.pos]
+    }
+
+    fn peek_kind(&self, offset: usize) -> Option<&TokenKind> {
+        self.tokens.get(self.pos + offset).map(|token| &token.kind)
     }
 
     fn advance(&mut self) {
@@ -410,6 +360,20 @@ mod tests {
         .expect_err("fallthrough after conditional become must be rejected");
 
         assert!(err.to_string().contains("must be terminal"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_one_sided_conditional_become() {
+        let err = collect_routes(
+            r#"
+            if (done) {
+                become next <- Done(ticket);
+            }
+            "#,
+        )
+        .expect_err("one-sided conditional become must be rejected");
+
+        assert!(err.to_string().contains("explicit `else`"), "unexpected error: {err}");
     }
 
     #[test]
