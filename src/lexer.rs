@@ -1,5 +1,7 @@
 use crate::error::{ArgentError, Result};
 
+pub const RESERVED_GENERATED_PREFIX: &str = "__argent_";
+
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
@@ -45,7 +47,7 @@ impl Lexer<'_> {
                 b'/' if self.peek_byte(1) == Some(b'/') => self.skip_line_comment(),
                 b'"' => self.lex_string()?,
                 b'0'..=b'9' => self.lex_number(),
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.lex_ident(),
+                b'a'..=b'z' | b'A'..=b'Z' | b'_' => self.lex_ident()?,
                 b'-' if self.peek_byte(1) == Some(b'>') => {
                     let start = self.pos;
                     self.pos += 2;
@@ -115,15 +117,33 @@ impl Lexer<'_> {
         self.push(TokenKind::Number(self.source[start..self.pos].to_string()), start, self.pos);
     }
 
-    fn lex_ident(&mut self) {
+    fn lex_ident(&mut self) -> Result<()> {
         let start = self.pos;
         while matches!(self.peek_byte(0), Some(b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_')) {
             self.pos += 1;
         }
-        self.push(TokenKind::Ident(self.source[start..self.pos].to_string()), start, self.pos);
+        let ident = self.source[start..self.pos].to_string();
+        if ident.starts_with(RESERVED_GENERATED_PREFIX) {
+            return Err(ArgentError::new(format!(
+                "identifier `{ident}` uses reserved generated namespace `{RESERVED_GENERATED_PREFIX}` at offset {start}"
+            )));
+        }
+        self.push(TokenKind::Ident(ident), start, self.pos);
+        Ok(())
     }
 
     fn push(&mut self, kind: TokenKind, start: usize, end: usize) {
         self.tokens.push(Token { kind, span: Span { start, end } });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_reserved_generated_namespace_identifier() {
+        let err = lex("state __argent_state {}").expect_err("reserved generated namespace must be rejected");
+        assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
     }
 }

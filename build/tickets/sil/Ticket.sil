@@ -4,24 +4,24 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Ticket(
-    byte[32] init_template_issuer,
-    byte[32] init_template_ticket,
+    byte[32] __argent_init_template_issuer,
+    byte[32] __argent_init_template_ticket,
     byte[32] init_owner,
     int init_serial,
     int init_redeemed
 ) {
     // State layouts
     struct IssuerState {
-        byte[32] template_issuer;
-        byte[32] template_ticket;
+        byte[32] __argent_template_issuer;
+        byte[32] __argent_template_ticket;
         // ----------- template fields above; source state below
         byte[32] admin;
         int next_serial;
     }
 
     // Template capability table
-    byte[32] template_issuer = init_template_issuer;
-    byte[32] template_ticket = init_template_ticket;
+    byte[32] __argent_template_issuer = __argent_init_template_issuer;
+    byte[32] __argent_template_ticket = __argent_init_template_ticket;
 
     // Ticket state fields
     byte[32] owner = init_owner;
@@ -29,26 +29,26 @@ contract Ticket(
     int redeemed = init_redeemed;
 
     // Entrypoints
-    entrypoint function redeem(sig owner_sig, pubkey owner_pk, byte[] ticket_prefix, byte[] ticket_suffix) {
-        int ticket_prefix_len = ticket_prefix.length;
-        int ticket_suffix_len = ticket_suffix.length;
+    entrypoint function redeem(sig owner_sig, pubkey owner_pk, byte[] __argent_ticket_prefix, byte[] __argent_ticket_suffix) {
+        int __argent_ticket_prefix_len = __argent_ticket_prefix.length;
+        int __argent_ticket_suffix_len = __argent_ticket_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: Ticket
+        int __argent_next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: Ticket
 
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
         require(redeemed == 0);
-        require(tx.outputs[next_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[__argent_next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         State redeemed_ticket = {
-            template_issuer: template_issuer,
-            template_ticket: template_ticket,
+            __argent_template_issuer: __argent_template_issuer,
+            __argent_template_ticket: __argent_template_ticket,
             // ----------- template fields above; source state below
             owner: owner,
             serial: serial,
             redeemed: 1,
         };
-        validateOutputStateWithTemplate(next_output_idx, redeemed_ticket, ticket_prefix, ticket_suffix, template_ticket);
+        validateOutputStateWithTemplate(__argent_next_output_idx, redeemed_ticket, __argent_ticket_prefix, __argent_ticket_suffix, __argent_template_ticket);
     }
 
 }

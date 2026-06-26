@@ -4,10 +4,10 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesSettle(
-    byte[32] init_template_league,
-    byte[32] init_template_player,
-    byte[32] init_template_stones_game,
-    byte[32] init_template_stones_settle,
+    byte[32] __argent_init_template_league,
+    byte[32] __argent_init_template_player,
+    byte[32] __argent_init_template_stones_game,
+    byte[32] __argent_init_template_stones_settle,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_status
@@ -21,20 +21,20 @@ contract StonesSettle(
 
     // State layouts
     struct LeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] __argent_template_league;
+        byte[32] __argent_template_player;
+        byte[32] __argent_template_stones_game;
+        byte[32] __argent_template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] __argent_template_league;
+        byte[32] __argent_template_player;
+        byte[32] __argent_template_stones_game;
+        byte[32] __argent_template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
@@ -44,10 +44,10 @@ contract StonesSettle(
         int losses;
     }
     struct GameState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] __argent_template_league;
+        byte[32] __argent_template_player;
+        byte[32] __argent_template_stones_game;
+        byte[32] __argent_template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
@@ -86,10 +86,10 @@ contract StonesSettle(
     }
 
     // Template capability table
-    byte[32] template_league = init_template_league;
-    byte[32] template_player = init_template_player;
-    byte[32] template_stones_game = init_template_stones_game;
-    byte[32] template_stones_settle = init_template_stones_settle;
+    byte[32] __argent_template_league = __argent_init_template_league;
+    byte[32] __argent_template_player = __argent_init_template_player;
+    byte[32] __argent_template_stones_game = __argent_init_template_stones_game;
+    byte[32] __argent_template_stones_settle = __argent_init_template_stones_settle;
 
     // StonesSettle state fields
     byte[32] player_a = init_player_a;
@@ -97,20 +97,20 @@ contract StonesSettle(
     int status = init_status;
 
     // Entrypoints
-    entrypoint function settle(byte[] player_prefix, byte[] player_suffix) {
-        int player_prefix_len = player_prefix.length;
-        int player_suffix_len = player_suffix.length;
+    entrypoint function settle(byte[] __argent_player_prefix, byte[] __argent_player_suffix) {
+        int __argent_player_prefix_len = __argent_player_prefix.length;
+        int __argent_player_suffix_len = __argent_player_suffix.length;
 
-        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
-        require(OpCovInputCount(cov_id) == 3);
-        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
-        int player_a_in_input_idx = OpCovInputIdx(cov_id, 1); // input Player at cov[1]
-        PlayerState player_a_in = readInputStateWithTemplate(player_a_in_input_idx, player_prefix_len, player_suffix_len, template_player);
-        int player_b_in_input_idx = OpCovInputIdx(cov_id, 2); // input Player at cov[2]
-        PlayerState player_b_in = readInputStateWithTemplate(player_b_in_input_idx, player_prefix_len, player_suffix_len, template_player);
+        byte[32] __argent_cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(__argent_cov_id) == 3);
+        require(OpCovInputIdx(__argent_cov_id, 0) == this.activeInputIndex);
+        int __argent_player_a_in_input_idx = OpCovInputIdx(__argent_cov_id, 1); // input Player at cov[1]
+        PlayerState player_a_in = readInputStateWithTemplate(__argent_player_a_in_input_idx, __argent_player_prefix_len, __argent_player_suffix_len, __argent_template_player);
+        int __argent_player_b_in_input_idx = OpCovInputIdx(__argent_cov_id, 2); // input Player at cov[2]
+        PlayerState player_b_in = readInputStateWithTemplate(__argent_player_b_in_input_idx, __argent_player_prefix_len, __argent_player_suffix_len, __argent_template_player);
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
-        int player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
+        int __argent_player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
+        int __argent_player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
 
         require(status == A_WIN || status == B_WIN);
         byte[32] player_a_ref = player_ref(player_a_in.owner, player_a_in.player_id);
@@ -126,19 +126,19 @@ contract StonesSettle(
         if (status == A_WIN) {
             player_a_wins = player_a_wins + 1;
             player_b_losses = player_b_losses + 1;
-            require(tx.outputs[player_a_out_output_idx].value == tx.inputs[player_a_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
-            require(tx.outputs[player_b_out_output_idx].value == tx.inputs[player_b_in_input_idx].value);
+            require(tx.outputs[__argent_player_a_out_output_idx].value == tx.inputs[__argent_player_a_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
+            require(tx.outputs[__argent_player_b_out_output_idx].value == tx.inputs[__argent_player_b_in_input_idx].value);
         } else {
             player_b_wins = player_b_wins + 1;
             player_a_losses = player_a_losses + 1;
-            require(tx.outputs[player_a_out_output_idx].value == tx.inputs[player_a_in_input_idx].value);
-            require(tx.outputs[player_b_out_output_idx].value == tx.inputs[player_b_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
+            require(tx.outputs[__argent_player_a_out_output_idx].value == tx.inputs[__argent_player_a_in_input_idx].value);
+            require(tx.outputs[__argent_player_b_out_output_idx].value == tx.inputs[__argent_player_b_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
         }
         PlayerState next_player_a = {
-            template_league: template_league,
-            template_player: template_player,
-            template_stones_game: template_stones_game,
-            template_stones_settle: template_stones_settle,
+            __argent_template_league: __argent_template_league,
+            __argent_template_player: __argent_template_player,
+            __argent_template_stones_game: __argent_template_stones_game,
+            __argent_template_stones_settle: __argent_template_stones_settle,
             // ----------- template fields above; source state below
             owner: player_a_in.owner,
             player_id: player_a_in.player_id,
@@ -148,10 +148,10 @@ contract StonesSettle(
             losses: player_a_losses,
         };
         PlayerState next_player_b = {
-            template_league: template_league,
-            template_player: template_player,
-            template_stones_game: template_stones_game,
-            template_stones_settle: template_stones_settle,
+            __argent_template_league: __argent_template_league,
+            __argent_template_player: __argent_template_player,
+            __argent_template_stones_game: __argent_template_stones_game,
+            __argent_template_stones_settle: __argent_template_stones_settle,
             // ----------- template fields above; source state below
             owner: player_b_in.owner,
             player_id: player_b_in.player_id,
@@ -160,8 +160,8 @@ contract StonesSettle(
             wins: player_b_wins,
             losses: player_b_losses,
         };
-        validateOutputStateWithTemplate(player_a_out_output_idx, next_player_a, player_prefix, player_suffix, template_player);
-        validateOutputStateWithTemplate(player_b_out_output_idx, next_player_b, player_prefix, player_suffix, template_player);
+        validateOutputStateWithTemplate(__argent_player_a_out_output_idx, next_player_a, __argent_player_prefix, __argent_player_suffix, __argent_template_player);
+        validateOutputStateWithTemplate(__argent_player_b_out_output_idx, next_player_b, __argent_player_prefix, __argent_player_suffix, __argent_template_player);
     }
 
 }
