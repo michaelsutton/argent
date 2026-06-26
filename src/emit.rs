@@ -36,10 +36,11 @@ struct Model<'a> {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
-        let consts = program.modules.iter().flat_map(|module| module.consts.iter()).collect::<Vec<_>>();
-        let functions = program.modules.iter().flat_map(|module| module.functions.iter()).collect::<Vec<_>>();
-        let states = program.states().map(|state| (state.name.clone(), state)).collect::<BTreeMap<_, _>>();
-        let all_actors = program.actors().map(|actor| (actor.name.clone(), actor)).collect::<BTreeMap<_, _>>();
+        validate_unique_apps(program)?;
+        let consts = collect_consts(program)?;
+        let functions = collect_functions(program)?;
+        let states = collect_states(program)?;
+        let all_actors = collect_actors(program)?;
 
         let app = program.apps().next();
         let (app_name, template_actors) = if let Some(app) = app {
@@ -358,6 +359,75 @@ impl<'a> Model<'a> {
         }
         Ok(())
     }
+}
+
+fn collect_consts(program: &Program) -> Result<Vec<&ConstDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut consts = Vec::new();
+    for module in &program.modules {
+        for konst in &module.consts {
+            reject_duplicate_top_level("const", &konst.name, &module.path, &mut seen)?;
+            consts.push(konst);
+        }
+    }
+    Ok(consts)
+}
+
+fn collect_functions(program: &Program) -> Result<Vec<&FunctionDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut functions = Vec::new();
+    for module in &program.modules {
+        for function in &module.functions {
+            reject_duplicate_top_level("fn", &function.name, &module.path, &mut seen)?;
+            functions.push(function);
+        }
+    }
+    Ok(functions)
+}
+
+fn collect_states(program: &Program) -> Result<BTreeMap<String, &StateDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut states = BTreeMap::new();
+    for module in &program.modules {
+        for state in &module.states {
+            reject_duplicate_top_level("state", &state.name, &module.path, &mut seen)?;
+            states.insert(state.name.clone(), state);
+        }
+    }
+    Ok(states)
+}
+
+fn collect_actors(program: &Program) -> Result<BTreeMap<String, &ActorDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut actors = BTreeMap::new();
+    for module in &program.modules {
+        for actor in &module.actors {
+            reject_duplicate_top_level("actor", &actor.name, &module.path, &mut seen)?;
+            actors.insert(actor.name.clone(), actor);
+        }
+    }
+    Ok(actors)
+}
+
+fn validate_unique_apps(program: &Program) -> Result<()> {
+    let mut seen = BTreeMap::new();
+    for module in &program.modules {
+        for app in &module.apps {
+            reject_duplicate_top_level("app", &app.name, &module.path, &mut seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
+    if let Some(first_path) = seen.insert(name.to_string(), path) {
+        return Err(ArgentError::new(format!(
+            "duplicate top-level {kind} `{name}` in `{}`; first declared in `{}`",
+            path.display(),
+            first_path.display()
+        )));
+    }
+    Ok(())
 }
 
 fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
@@ -1502,6 +1572,73 @@ mod tests {
     }
 
     #[test]
+    fn rejects_duplicate_state_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.states.push(StateDecl { name: "PlayerState".to_string(), fields: Vec::new() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate state declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "state", "PlayerState");
+    }
+
+    #[test]
+    fn rejects_duplicate_actor_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.actors.push(ActorDecl { name: "Player".to_string(), state: "PlayerState".to_string(), entries: Vec::new() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate actor declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "actor", "Player");
+    }
+
+    #[test]
+    fn rejects_duplicate_const_declarations() {
+        let mut program = test_program();
+        program.modules[0].consts.push(ConstDecl { ty: TypeRef::new("int"), name: "Limit".to_string(), value: "1".to_string() });
+        let mut duplicate = empty_module("second.ag");
+        duplicate.consts.push(ConstDecl { ty: TypeRef::new("int"), name: "Limit".to_string(), value: "2".to_string() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate const declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "const", "Limit");
+    }
+
+    #[test]
+    fn rejects_duplicate_function_declarations() {
+        let mut program = test_program();
+        program.modules[0].functions.push(FunctionDecl {
+            name: "helper".to_string(),
+            params: Vec::new(),
+            return_ty: TypeRef::new("int"),
+            body: "1".to_string(),
+        });
+        let mut duplicate = empty_module("second.ag");
+        duplicate.functions.push(FunctionDecl {
+            name: "helper".to_string(),
+            params: Vec::new(),
+            return_ty: TypeRef::new("int"),
+            body: "2".to_string(),
+        });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate function declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "fn", "helper");
+    }
+
+    #[test]
+    fn rejects_duplicate_app_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()] });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate app declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "app", "Test");
+    }
+
+    #[test]
     fn rejects_reserved_state_field_from_model() {
         let mut program = test_program();
         program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "__argent_template_player".to_string() });
@@ -1612,6 +1749,25 @@ mod tests {
         assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
         assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
+    }
+
+    fn assert_duplicate_top_level_error(err: &ArgentError, kind: &str, name: &str) {
+        let message = err.to_string();
+        assert!(message.contains(&format!("duplicate top-level {kind} `{name}`")), "unexpected error: {err}");
+        assert!(message.contains("second.ag"), "expected duplicate path in error: {err}");
+        assert!(message.contains("test.ag"), "expected first declaration path in error: {err}");
+    }
+
+    fn empty_module(path: &str) -> Module {
+        Module {
+            path: PathBuf::from(path),
+            imports: Vec::new(),
+            consts: Vec::new(),
+            states: Vec::new(),
+            functions: Vec::new(),
+            actors: Vec::new(),
+            apps: Vec::new(),
+        }
     }
 
     fn test_program() -> Program {
