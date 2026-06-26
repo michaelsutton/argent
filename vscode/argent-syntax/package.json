@@ -1,0 +1,38 @@
+{
+  "name": "argent-syntax",
+  "displayName": "Argent Syntax",
+  "description": "Lightweight syntax highlighting for Argent .ag files.",
+  "version": "0.0.1",
+  "publisher": "kaspanet",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "argent",
+        "aliases": [
+          "Argent",
+          "argent"
+        ],
+        "extensions": [
+          ".ag"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "argent",
+        "scopeName": "source.argent",
+        "path": "./syntaxes/argent.tmLanguage.json",
+        "embeddedLanguages": {
+          "source.rust": "rust"
+        }
+      }
+    ]
+  }
+}
