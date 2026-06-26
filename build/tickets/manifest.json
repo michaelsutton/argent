@@ -1,12 +1,12 @@
 {
   "app": "Tickets",
-  "root": "/home/michael/kaspanet/argent/examples/tickets.ag",
+  "root": "/Users/arthur/RustroverProjects/argent/examples/tickets.ag",
   "modules": [
-    "/home/michael/kaspanet/argent/examples/tickets.ag"
+    "/Users/arthur/RustroverProjects/argent/examples/tickets.ag"
   ],
   "templates": [
-    { "actor": "Issuer", "symbol": "template_issuer", "hash": null },
-    { "actor": "Ticket", "symbol": "template_ticket", "hash": null }
+    { "actor": "Issuer", "symbol": "__argent_template_issuer", "hash": null },
+    { "actor": "Ticket", "symbol": "__argent_template_ticket", "hash": null }
   ],
   "actors": [
     {

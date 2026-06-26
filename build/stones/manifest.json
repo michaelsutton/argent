@@ -1,19 +1,19 @@
 {
   "app": "Stones",
-  "root": "/home/michael/kaspanet/argent/examples/stones/app.ag",
+  "root": "/Users/arthur/RustroverProjects/argent/examples/stones/app.ag",
   "modules": [
-    "/home/michael/kaspanet/argent/examples/stones/app.ag",
-    "/home/michael/kaspanet/argent/examples/stones/types.ag",
-    "/home/michael/kaspanet/argent/examples/stones/league.ag",
-    "/home/michael/kaspanet/argent/examples/stones/player.ag",
-    "/home/michael/kaspanet/argent/examples/stones/game.ag",
-    "/home/michael/kaspanet/argent/examples/stones/settle.ag"
+    "/Users/arthur/RustroverProjects/argent/examples/stones/app.ag",
+    "/Users/arthur/RustroverProjects/argent/examples/stones/types.ag",
+    "/Users/arthur/RustroverProjects/argent/examples/stones/league.ag",
+    "/Users/arthur/RustroverProjects/argent/examples/stones/player.ag",
+    "/Users/arthur/RustroverProjects/argent/examples/stones/game.ag",
+    "/Users/arthur/RustroverProjects/argent/examples/stones/settle.ag"
   ],
   "templates": [
-    { "actor": "League", "symbol": "template_league", "hash": null },
-    { "actor": "Player", "symbol": "template_player", "hash": null },
-    { "actor": "StonesGame", "symbol": "template_stones_game", "hash": null },
-    { "actor": "StonesSettle", "symbol": "template_stones_settle", "hash": null }
+    { "actor": "League", "symbol": "__argent_template_league", "hash": null },
+    { "actor": "Player", "symbol": "__argent_template_player", "hash": null },
+    { "actor": "StonesGame", "symbol": "__argent_template_stones_game", "hash": null },
+    { "actor": "StonesSettle", "symbol": "__argent_template_stones_settle", "hash": null }
   ],
   "actors": [
     {

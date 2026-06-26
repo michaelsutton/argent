@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
-use crate::lexer::{Token, TokenKind, lex};
+use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
@@ -36,10 +36,11 @@ struct Model<'a> {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
-        let consts = program.modules.iter().flat_map(|module| module.consts.iter()).collect::<Vec<_>>();
-        let functions = program.modules.iter().flat_map(|module| module.functions.iter()).collect::<Vec<_>>();
-        let states = program.states().map(|state| (state.name.clone(), state)).collect::<BTreeMap<_, _>>();
-        let all_actors = program.actors().map(|actor| (actor.name.clone(), actor)).collect::<BTreeMap<_, _>>();
+        validate_unique_apps(program)?;
+        let consts = collect_consts(program)?;
+        let functions = collect_functions(program)?;
+        let states = collect_states(program)?;
+        let all_actors = collect_actors(program)?;
 
         let app = program.apps().next();
         let (app_name, template_actors) = if let Some(app) = app {
@@ -77,10 +78,68 @@ impl<'a> Model<'a> {
     }
 
     fn validate(&self) -> Result<()> {
+        self.validate_reserved_identifiers()?;
+        self.validate_generated_actor_suffixes()?;
+
         let template_actor_set = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
         for actor in &self.actors {
             for entry in &actor.entries {
                 self.validate_entry(actor, entry, &template_actor_set)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_reserved_identifiers(&self) -> Result<()> {
+        reject_reserved_identifier("app", &self.app_name)?;
+        for konst in &self.consts {
+            reject_reserved_identifier("constant", &konst.name)?;
+        }
+        for function in &self.functions {
+            reject_reserved_identifier("function", &function.name)?;
+            for param in &function.params {
+                reject_reserved_identifier(&format!("function `{}` parameter", function.name), &param.name)?;
+            }
+        }
+        for state in self.states.values() {
+            reject_reserved_identifier("state", &state.name)?;
+            for field in &state.fields {
+                reject_reserved_identifier(&format!("state `{}` field", state.name), &field.name)?;
+            }
+        }
+        for actor in self.actors_by_name.values() {
+            reject_reserved_identifier("actor", &actor.name)?;
+            for entry in &actor.entries {
+                reject_reserved_identifier(&format!("entry `{}::{}`", actor.name, entry.name), &entry.name)?;
+                for param in &entry.params {
+                    reject_reserved_identifier(&format!("entry `{}::{}` parameter", actor.name, entry.name), &param.name)?;
+                }
+                for consume in &entry.consumes {
+                    reject_reserved_identifier(&format!("entry `{}::{}` consume handle", actor.name, entry.name), &consume.name)?;
+                }
+                if let EmitSpec::Outputs(outputs) = &entry.emits {
+                    for output in outputs {
+                        reject_reserved_identifier(&format!("entry `{}::{}` output handle", actor.name, entry.name), &output.name)?;
+                    }
+                }
+                for route in &entry.routes {
+                    if let Some(output) = &route.output {
+                        reject_reserved_identifier(&format!("entry `{}::{}` route output handle", actor.name, entry.name), output)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_generated_actor_suffixes(&self) -> Result<()> {
+        let mut seen = BTreeMap::new();
+        for actor in &self.template_actors {
+            let suffix = to_snake(actor);
+            if let Some(previous) = seen.insert(suffix.clone(), actor.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "template actors `{previous}` and `{actor}` both map to generated suffix `{suffix}`"
+                )));
             }
         }
         Ok(())
@@ -302,6 +361,75 @@ impl<'a> Model<'a> {
     }
 }
 
+fn collect_consts(program: &Program) -> Result<Vec<&ConstDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut consts = Vec::new();
+    for module in &program.modules {
+        for konst in &module.consts {
+            reject_duplicate_top_level("const", &konst.name, &module.path, &mut seen)?;
+            consts.push(konst);
+        }
+    }
+    Ok(consts)
+}
+
+fn collect_functions(program: &Program) -> Result<Vec<&FunctionDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut functions = Vec::new();
+    for module in &program.modules {
+        for function in &module.functions {
+            reject_duplicate_top_level("fn", &function.name, &module.path, &mut seen)?;
+            functions.push(function);
+        }
+    }
+    Ok(functions)
+}
+
+fn collect_states(program: &Program) -> Result<BTreeMap<String, &StateDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut states = BTreeMap::new();
+    for module in &program.modules {
+        for state in &module.states {
+            reject_duplicate_top_level("state", &state.name, &module.path, &mut seen)?;
+            states.insert(state.name.clone(), state);
+        }
+    }
+    Ok(states)
+}
+
+fn collect_actors(program: &Program) -> Result<BTreeMap<String, &ActorDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut actors = BTreeMap::new();
+    for module in &program.modules {
+        for actor in &module.actors {
+            reject_duplicate_top_level("actor", &actor.name, &module.path, &mut seen)?;
+            actors.insert(actor.name.clone(), actor);
+        }
+    }
+    Ok(actors)
+}
+
+fn validate_unique_apps(program: &Program) -> Result<()> {
+    let mut seen = BTreeMap::new();
+    for module in &program.modules {
+        for app in &module.apps {
+            reject_duplicate_top_level("app", &app.name, &module.path, &mut seen)?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
+    if let Some(first_path) = seen.insert(name.to_string(), path) {
+        return Err(ArgentError::new(format!(
+            "duplicate top-level {kind} `{name}` in `{}`; first declared in `{}`",
+            path.display(),
+            first_path.display()
+        )));
+    }
+    Ok(())
+}
+
 fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let state = model.state(&actor.state)?;
     let mut out = String::new();
@@ -312,7 +440,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str(&format!("contract {}(\n", actor.name));
     let mut args = Vec::new();
     for template_actor in &model.template_actors {
-        args.push(format!("    byte[32] init_template_{}", to_snake(template_actor)));
+        args.push(format!("    byte[32] {}", hidden_template_init_name(template_actor)));
     }
     for field in &state.fields {
         args.push(format!("    {} init_{}", field.ty.to_sil(), field.name));
@@ -326,8 +454,9 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 
     emit_section_header(&mut out, "Template capability table");
     for template_actor in &model.template_actors {
-        let ident = to_snake(template_actor);
-        out.push_str(&format!("    byte[32] template_{ident} = init_template_{ident};\n"));
+        let template = hidden_template_name(template_actor);
+        let init_template = hidden_template_init_name(template_actor);
+        out.push_str(&format!("    byte[32] {template} = {init_template};\n"));
     }
     out.push('\n');
 
@@ -374,7 +503,7 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
         let state = model.state(&actor.state)?;
         out.push_str(&format!("    struct {} {{\n", state.name));
         for template_actor in &model.template_actors {
-            out.push_str(&format!("        byte[32] template_{};\n", to_snake(template_actor)));
+            out.push_str(&format!("        byte[32] {};\n", hidden_template_name(template_actor)));
         }
         out.push_str("        // ----------- template fields above; source state below\n");
         for field in &state.fields {
@@ -408,26 +537,30 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     out.push_str(") {\n");
 
     for actor_name in &witness_actors {
-        let ident = to_snake(actor_name);
-        out.push_str(&format!("        int {ident}_prefix_len = {ident}_prefix.length;\n"));
-        out.push_str(&format!("        int {ident}_suffix_len = {ident}_suffix.length;\n"));
+        let prefix = hidden_witness_prefix_name(actor_name);
+        let suffix = hidden_witness_suffix_name(actor_name);
+        let prefix_len = hidden_witness_prefix_len_name(actor_name);
+        let suffix_len = hidden_witness_suffix_len_name(actor_name);
+        out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
+        out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
     }
     if !witness_actors.is_empty() {
         out.push('\n');
     }
 
     if !entry.consumes.is_empty() {
-        out.push_str("        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);\n");
+        let cov_id = hidden_cov_id_name();
+        out.push_str(&format!("        byte[32] {cov_id} = OpInputCovenantId(this.activeInputIndex);\n"));
         match entry.kind {
             EntryKind::Leader => {
                 let count = entry.consumes.len() + 1;
-                out.push_str(&format!("        require(OpCovInputCount(cov_id) == {count});\n"));
-                out.push_str("        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);\n");
+                out.push_str(&format!("        require(OpCovInputCount({cov_id}) == {count});\n"));
+                out.push_str(&format!("        require(OpCovInputIdx({cov_id}, 0) == this.activeInputIndex);\n"));
             }
             EntryKind::Delegate => {
                 let min_count = entry.consumes.len() + 1;
-                out.push_str(&format!("        require(OpCovInputCount(cov_id) >= {min_count});\n"));
-                out.push_str("        require(OpCovInputIdx(cov_id, 0) != this.activeInputIndex);\n");
+                out.push_str(&format!("        require(OpCovInputCount({cov_id}) >= {min_count});\n"));
+                out.push_str(&format!("        require(OpCovInputIdx({cov_id}, 0) != this.activeInputIndex);\n"));
             }
         }
 
@@ -437,16 +570,19 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         };
         for (idx, consume) in entry.consumes.iter().enumerate() {
             let cov_index = slot_offset + idx;
-            let ident = to_snake(&consume.actor);
+            let input_idx = hidden_input_idx_name(&consume.name);
+            let prefix_len = hidden_witness_prefix_len_name(&consume.actor);
+            let suffix_len = hidden_witness_suffix_len_name(&consume.actor);
+            let template = hidden_template_name(&consume.actor);
             let state_struct = contract_state_type_for_actor(&consume.actor, actor, model)?;
             let _state = model.actor_state(&consume.actor)?;
             out.push_str(&format!(
-                "        int {}_input_idx = OpCovInputIdx(cov_id, {}); // input {} at cov[{}]\n",
-                consume.name, cov_index, consume.actor, cov_index
+                "        int {input_idx} = OpCovInputIdx({cov_id}, {cov_index}); // input {} at cov[{}]\n",
+                consume.actor, cov_index
             ));
             out.push_str(&format!(
-                "        {state_struct} {} = readInputStateWithTemplate({}_input_idx, {ident}_prefix_len, {ident}_suffix_len, template_{ident});\n",
-                consume.name, consume.name
+                "        {state_struct} {} = readInputStateWithTemplate({input_idx}, {prefix_len}, {suffix_len}, {template});\n",
+                consume.name
             ));
         }
     }
@@ -457,17 +593,18 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         }
         EmitSpec::One { actors } => {
             out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 1);\n");
+            let output_idx = hidden_next_output_idx_name();
             out.push_str(&format!(
-                "        int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one {}\n",
+                "        int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one {}\n",
                 actors.join(" | ")
             ));
         }
         EmitSpec::Outputs(outputs) => {
             out.push_str(&format!("        require(OpAuthOutputCount(this.activeInputIndex) == {});\n", outputs.len()));
             for output in outputs {
+                let output_idx = hidden_output_idx_name(&output.name);
                 out.push_str(&format!(
-                    "        int {}_output_idx = OpAuthOutputIdx(this.activeInputIndex, {}); // output {}: {}\n",
-                    output.name,
+                    "        int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, {}); // output {}: {}\n",
                     output.auth_index,
                     output.name,
                     output.actors.join(" | ")
@@ -624,9 +761,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
         self.model.actor_state(&route.actor)?;
-        let target = to_snake(&route.actor);
-        let output_idx =
-            route.output.as_ref().map(|output| format!("{output}_output_idx")).unwrap_or_else(|| "next_output_idx".to_string());
+        let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
         let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
@@ -639,10 +774,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             name
         };
 
+        let prefix = hidden_witness_prefix_name(&route.actor);
+        let suffix = hidden_witness_suffix_name(&route.actor);
+        let template = hidden_template_name(&route.actor);
         push_indent(out, indent);
-        out.push_str(&format!(
-            "validateOutputStateWithTemplate({output_idx}, {state_arg}, {target}_prefix, {target}_suffix, template_{target});\n"
-        ));
+        out.push_str(&format!("validateOutputStateWithTemplate({output_idx}, {state_arg}, {prefix}, {suffix}, {template});\n"));
         Ok(())
     }
 
@@ -713,8 +849,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let mut out = String::new();
         out.push_str("{\n");
         for template_actor in &self.model.template_actors {
-            let ident = to_snake(template_actor);
-            out.push_str(&format!("{field_indent}template_{ident}: template_{ident},\n"));
+            let template = hidden_template_name(template_actor);
+            out.push_str(&format!("{field_indent}{template}: {template},\n"));
         }
         out.push_str(&format!("{field_indent}// ----------- template fields above; source state below\n"));
         for (name, expr) in fields {
@@ -728,10 +864,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_refs(&self, expr: &str) -> String {
         let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
         for name in &self.input_names {
-            out = out.replace(&format!("{name}.value"), &format!("tx.inputs[{name}_input_idx].value"));
+            out = out.replace(&format!("{name}.value"), &format!("tx.inputs[{}].value", hidden_input_idx_name(name)));
         }
         for name in &self.output_names {
-            out = out.replace(&format!("{name}.value"), &format!("tx.outputs[{name}_output_idx].value"));
+            out = out.replace(&format!("{name}.value"), &format!("tx.outputs[{}].value", hidden_output_idx_name(name)));
         }
         out
     }
@@ -880,7 +1016,7 @@ fn push_indent(out: &mut String, indent: usize) {
 
 fn generated_state_name(route: &RouteCall, state_ty: &str) -> String {
     let base = route.output.as_deref().unwrap_or(route.actor.as_str());
-    format!("generated_{}_{}", to_snake(base), to_snake(state_ty))
+    format!("{RESERVED_GENERATED_PREFIX}generated_{}_{}", to_snake(base), to_snake(state_ty))
 }
 
 fn parse_unique_self_outpoint(expr: &str) -> Option<String> {
@@ -1049,9 +1185,8 @@ fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<St
         out.push(format!("{} {}", param.ty.to_sil(), param.name));
     }
     for actor_name in witness_actors {
-        let ident = to_snake(actor_name);
-        out.push(format!("byte[] {ident}_prefix"));
-        out.push(format!("byte[] {ident}_suffix"));
+        out.push(format!("byte[] {}", hidden_witness_prefix_name(actor_name)));
+        out.push(format!("byte[] {}", hidden_witness_suffix_name(actor_name)));
     }
     out
 }
@@ -1109,9 +1244,9 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
             out.push_str(",\n");
         }
         out.push_str(&format!(
-            "    {{ \"actor\": \"{}\", \"symbol\": \"template_{}\", \"hash\": null }}",
+            "    {{ \"actor\": \"{}\", \"symbol\": \"{}\", \"hash\": null }}",
             json_escape(actor),
-            to_snake(actor)
+            json_escape(&hidden_template_name(actor))
         ));
     }
     out.push_str("\n  ],\n");
@@ -1218,9 +1353,9 @@ fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
 
 fn to_snake(input: &str) -> String {
     let mut out = String::new();
-    for (idx, ch) in input.chars().enumerate() {
+    for ch in input.chars() {
         if ch.is_ascii_uppercase() {
-            if idx > 0 {
+            if !out.is_empty() && !out.ends_with('_') {
                 out.push('_');
             }
             out.push(ch.to_ascii_lowercase());
@@ -1229,6 +1364,59 @@ fn to_snake(input: &str) -> String {
         }
     }
     out
+}
+
+fn reject_reserved_identifier(context: &str, name: &str) -> Result<()> {
+    if name.starts_with(RESERVED_GENERATED_PREFIX) {
+        return Err(ArgentError::new(format!(
+            "{context} identifier `{name}` uses reserved generated namespace `{RESERVED_GENERATED_PREFIX}`"
+        )));
+    }
+    Ok(())
+}
+
+fn hidden_actor_suffix(actor: &str) -> String {
+    to_snake(actor)
+}
+
+fn hidden_template_init_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}init_template_{}", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
+}
+
+fn hidden_witness_prefix_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_prefix", hidden_actor_suffix(actor))
+}
+
+fn hidden_witness_suffix_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_suffix", hidden_actor_suffix(actor))
+}
+
+fn hidden_witness_prefix_len_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_prefix_len", hidden_actor_suffix(actor))
+}
+
+fn hidden_witness_suffix_len_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_suffix_len", hidden_actor_suffix(actor))
+}
+
+fn hidden_cov_id_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}cov_id")
+}
+
+fn hidden_input_idx_name(input: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{input}_input_idx")
+}
+
+fn hidden_next_output_idx_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}next_output_idx")
+}
+
+fn hidden_output_idx_name(output: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{output}_output_idx")
 }
 
 fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String> {
@@ -1381,6 +1569,205 @@ mod tests {
 
         let err = Model::from_program(&program).expect_err("delegate become must be rejected");
         assert!(err.to_string().contains("cannot use `become`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_duplicate_state_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.states.push(StateDecl { name: "PlayerState".to_string(), fields: Vec::new() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate state declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "state", "PlayerState");
+    }
+
+    #[test]
+    fn rejects_duplicate_actor_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.actors.push(ActorDecl { name: "Player".to_string(), state: "PlayerState".to_string(), entries: Vec::new() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate actor declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "actor", "Player");
+    }
+
+    #[test]
+    fn rejects_duplicate_const_declarations() {
+        let mut program = test_program();
+        program.modules[0].consts.push(ConstDecl { ty: TypeRef::new("int"), name: "Limit".to_string(), value: "1".to_string() });
+        let mut duplicate = empty_module("second.ag");
+        duplicate.consts.push(ConstDecl { ty: TypeRef::new("int"), name: "Limit".to_string(), value: "2".to_string() });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate const declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "const", "Limit");
+    }
+
+    #[test]
+    fn rejects_duplicate_function_declarations() {
+        let mut program = test_program();
+        program.modules[0].functions.push(FunctionDecl {
+            name: "helper".to_string(),
+            params: Vec::new(),
+            return_ty: TypeRef::new("int"),
+            body: "1".to_string(),
+        });
+        let mut duplicate = empty_module("second.ag");
+        duplicate.functions.push(FunctionDecl {
+            name: "helper".to_string(),
+            params: Vec::new(),
+            return_ty: TypeRef::new("int"),
+            body: "2".to_string(),
+        });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate function declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "fn", "helper");
+    }
+
+    #[test]
+    fn rejects_duplicate_app_declarations() {
+        let mut program = test_program();
+        let mut duplicate = empty_module("second.ag");
+        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()] });
+        program.modules.push(duplicate);
+
+        let err = Model::from_program(&program).expect_err("duplicate app declaration must be rejected");
+        assert_duplicate_top_level_error(&err, "app", "Test");
+    }
+
+    #[test]
+    fn rejects_reserved_state_field_from_model() {
+        let mut program = test_program();
+        program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "__argent_template_player".to_string() });
+
+        let err = Model::from_program(&program).expect_err("reserved state field must be rejected");
+        assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_reserved_entry_parameter_from_model() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0]
+            .params
+            .push(ParamDecl { name: "__argent_next_output_idx".to_string(), ty: TypeRef::new("int") });
+
+        let err = Model::from_program(&program).expect_err("reserved entry parameter must be rejected");
+        assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_reserved_output_handle_from_model() {
+        let mut program = test_program();
+        program.modules[0].actors[0].entries[0].emits = EmitSpec::Outputs(vec![EmitOutput {
+            name: "__argent_next".to_string(),
+            actors: vec!["Player".to_string()],
+            auth_index: 0,
+        }]);
+        let route =
+            RouteCall { output: Some("__argent_next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() };
+        program.modules[0].actors[0].entries[0].routes = vec![route.clone()];
+        program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![route]];
+
+        let err = Model::from_program(&program).expect_err("reserved output handle must be rejected");
+        assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_template_actor_snake_case_collision() {
+        let mut program = test_program();
+        program.modules[0].actors[0].name = "FooBar".to_string();
+        program.modules[0].actors[1].name = "Foo_Bar".to_string();
+        program.modules[0].actors[0].entries.clear();
+        program.modules[0].apps[0].actors = vec!["FooBar".to_string(), "Foo_Bar".to_string()];
+
+        let err = Model::from_program(&program).expect_err("snake-case generated names must not collide");
+        assert!(err.to_string().contains("both map to generated suffix `foo_bar`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn allows_legacy_template_like_user_field_after_namespace_move() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                int template_foo;
+            }
+
+            actor Foo owns FooState {}
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+
+        Model::from_program(&program).expect("ordinary template-like names should be legal");
+    }
+
+    #[test]
+    fn emits_reserved_generated_namespace_names() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {}
+
+            actor Foo owns FooState {
+                entry step() emits one Foo {
+                    require(next.value == self.value);
+                    become Foo(self.state);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor = model.actor("Foo").expect("actor exists");
+        let sil = emit_actor(actor, &model).expect("actor emits");
+        let manifest = emit_manifest(&program, &model);
+
+        assert!(sil.contains("byte[32] __argent_init_template_foo"), "{sil}");
+        assert!(sil.contains("byte[32] __argent_template_foo = __argent_init_template_foo;"), "{sil}");
+        assert!(sil.contains("byte[] __argent_foo_prefix"), "{sil}");
+        assert!(sil.contains("int __argent_foo_prefix_len = __argent_foo_prefix.length;"), "{sil}");
+        assert!(sil.contains("int __argent_next_output_idx = OpAuthOutputIdx"), "{sil}");
+        assert!(sil.contains("tx.outputs[__argent_next_output_idx].value"), "{sil}");
+        assert!(sil.contains("validateOutputStateWithTemplate(__argent_next_output_idx,"), "{sil}");
+        assert!(sil.contains("__argent_generated_foo_state"), "{sil}");
+        assert!(manifest.contains(r#""symbol": "__argent_template_foo""#), "{manifest}");
+        assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
+        assert!(!sil.contains("int next_output_idx ="), "{sil}");
+        assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
+    }
+
+    fn assert_duplicate_top_level_error(err: &ArgentError, kind: &str, name: &str) {
+        let message = err.to_string();
+        assert!(message.contains(&format!("duplicate top-level {kind} `{name}`")), "unexpected error: {err}");
+        assert!(message.contains("second.ag"), "expected duplicate path in error: {err}");
+        assert!(message.contains("test.ag"), "expected first declaration path in error: {err}");
+    }
+
+    fn empty_module(path: &str) -> Module {
+        Module {
+            path: PathBuf::from(path),
+            imports: Vec::new(),
+            consts: Vec::new(),
+            states: Vec::new(),
+            functions: Vec::new(),
+            actors: Vec::new(),
+            apps: Vec::new(),
+        }
     }
 
     fn test_program() -> Program {
