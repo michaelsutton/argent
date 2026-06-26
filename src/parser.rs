@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
 use crate::lexer::{Token, TokenKind, lex};
-use crate::routes::collect_routes;
+use crate::routes::analyze_routes;
 
 pub fn parse_module(path: PathBuf, source: String) -> Result<Module> {
     let tokens = lex(&source).map_err(|err| ArgentError { path: Some(path.clone()), message: err.message })?;
@@ -136,8 +136,17 @@ impl Parser {
         self.expect_ident("emits")?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
-        let routes = collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
-        Ok(EntryDecl { kind: EntryKind::Leader, name, params, consumes, emits, body, routes })
+        let route_analysis = analyze_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
+        Ok(EntryDecl {
+            kind: EntryKind::Leader,
+            name,
+            params,
+            consumes,
+            emits,
+            body,
+            routes: route_analysis.routes,
+            terminal_route_sets: route_analysis.terminal_route_sets,
+        })
     }
 
     fn parse_delegate(&mut self) -> Result<EntryDecl> {
@@ -146,8 +155,17 @@ impl Parser {
         let params = self.parse_param_list()?;
         let consumes = if self.check_ident("consumes") { self.parse_consumes()? } else { Vec::new() };
         let body = self.consume_block_text()?;
-        let routes = collect_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
-        Ok(EntryDecl { kind: EntryKind::Delegate, name, params, consumes, emits: EmitSpec::None, body, routes })
+        let route_analysis = analyze_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
+        Ok(EntryDecl {
+            kind: EntryKind::Delegate,
+            name,
+            params,
+            consumes,
+            emits: EmitSpec::None,
+            body,
+            routes: route_analysis.routes,
+            terminal_route_sets: route_analysis.terminal_route_sets,
+        })
     }
 
     fn parse_app(&mut self) -> Result<AppDecl> {
