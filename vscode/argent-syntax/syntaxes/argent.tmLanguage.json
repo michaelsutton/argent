@@ -1,0 +1,68 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Argent",
+  "scopeName": "source.argent",
+  "patterns": [
+    {
+      "include": "#argent-keywords"
+    },
+    {
+      "include": "#argent-builtins"
+    },
+    {
+      "include": "#argent-assertions"
+    },
+    {
+      "include": "#argent-actors"
+    },
+    {
+      "include": "source.rust"
+    }
+  ],
+  "repository": {
+    "argent-keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.argent",
+          "match": "\\b(become|consumes|emits|observes|validate)\\b"
+        },
+        {
+          "name": "keyword.declaration.argent",
+          "match": "\\b(by|else|if|while)\\b"
+        },
+        {
+          "name": "keyword.declaration.argent",
+          "match": "\\b(actor|app|entry|import|owns|state)\\b"
+        }
+      ]
+    },
+    "argent-builtins": {
+      "patterns": [
+        {
+          "name": "support.function.argent",
+          "match": "\\b(op_[A-Za-z0-9_]+|sig_verify)\\b"
+        },
+        {
+          "name": "storage.type.argent",
+          "match": "\\b(pubkey|sig|witness)\\b"
+        }
+      ]
+    },
+    "argent-assertions": {
+      "patterns": [
+        {
+          "name": "keyword.other.assertion.argent",
+          "match": "\\brequire\\b"
+        }
+      ]
+    },
+    "argent-actors": {
+      "patterns": [
+        {
+          "name": "entity.name.type.argent",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}
