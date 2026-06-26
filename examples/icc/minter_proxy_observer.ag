@@ -14,12 +14,12 @@ state KCC20State {
 }
 
 state MinterProxyState {
-    byte[32] controller_id;
+    covid controller_id;
 }
 
 state MinterState {
     pubkey owner;
-    byte[32] kcc20_covid;
+    covid kcc20_covid;
     int amount;
     bool initialized;
 }
@@ -33,9 +33,9 @@ actor KCC20 owns KCC20State {
         next: KCC20;
     } {
         if (identifier_type == IDENTIFIER_PUBKEY) {
-            require(sig_verify(owner_sig, owner_identifier));
+            require(sigVerify(owner_sig, owner_identifier));
         } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
-            require(op_cov_input_count(owner_identifier) > 0);
+            require(covid(owner_identifier).authorized());
         } else {
             require(false);
         }
@@ -56,7 +56,7 @@ actor MinterProxy owns MinterProxyState {
         proxy: MinterProxy;
         recipient: KCC20;
     } {
-        require(op_cov_input_count(controller_id) > 0);
+        require(controller_id.authorized());
         require(next_proxy.controller_id == controller_id);
 
         become {
@@ -74,7 +74,7 @@ app KCC20Asset {
 actor Minter owns MinterState {
     entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
     // `observes` declares a foreign covenant id lane for this transition.
-    observes asset by kcc20_covid {
+    observes asset by self.kcc20_covid {
         // Named handles are exhaustive over the observed covenant inputs.
         inputs {
             proxy: MinterProxy;
@@ -91,7 +91,7 @@ actor Minter owns MinterState {
     } {
         MinterProxyState prev_proxy = asset.inputs.proxy.state;
 
-        require(sig_verify(owner_sig, owner));
+        require(sigVerify(owner_sig, owner));
         require(initialized);
         require(amount >= minted_amount);
         require(prev_proxy.controller_id == self.covenant_id);
@@ -106,7 +106,7 @@ actor Minter owns MinterState {
             amount: minted_amount,
         };
 
-        validate asset become {
+        require asset.outputs become {
             proxy <- MinterProxy(next_proxy);
             recipient <- KCC20(next_recipient);
         };
