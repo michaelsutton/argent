@@ -1,6 +1,6 @@
 use crate::error::{ArgentError, Result};
 
-pub const RESERVED_GENERATED_PREFIX: &str = "__argent_";
+pub const RESERVED_GENERATED_PREFIX: &str = "gen__";
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn rejects_reserved_generated_namespace_identifier() {
-        let err = lex("state __argent_state {}").expect_err("reserved generated namespace must be rejected");
+        let err = lex("state gen__state {}").expect_err("reserved generated namespace must be rejected");
         assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
     }
 }

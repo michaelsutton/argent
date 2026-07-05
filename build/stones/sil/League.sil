@@ -4,10 +4,10 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract League(
-    byte[32] __argent_init_template_league,
-    byte[32] __argent_init_template_player,
-    byte[32] __argent_init_template_stones_game,
-    byte[32] __argent_init_template_stones_settle,
+    byte[32] gen__init_template_league,
+    byte[32] gen__init_template_player,
+    byte[32] gen__init_template_stones_game,
+    byte[32] gen__init_template_stones_settle,
     byte[32] init_admin,
     int init_default_pile,
     int init_default_max_take
@@ -21,10 +21,10 @@ contract League(
 
     // State layouts
     struct PlayerState {
-        byte[32] __argent_template_league;
-        byte[32] __argent_template_player;
-        byte[32] __argent_template_stones_game;
-        byte[32] __argent_template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
@@ -34,10 +34,10 @@ contract League(
         int losses;
     }
     struct GameState {
-        byte[32] __argent_template_league;
-        byte[32] __argent_template_player;
-        byte[32] __argent_template_stones_game;
-        byte[32] __argent_template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
@@ -46,10 +46,10 @@ contract League(
         int turn;
     }
     struct SettleState {
-        byte[32] __argent_template_league;
-        byte[32] __argent_template_player;
-        byte[32] __argent_template_stones_game;
-        byte[32] __argent_template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
@@ -86,10 +86,10 @@ contract League(
     }
 
     // Template capability table
-    byte[32] __argent_template_league = __argent_init_template_league;
-    byte[32] __argent_template_player = __argent_init_template_player;
-    byte[32] __argent_template_stones_game = __argent_init_template_stones_game;
-    byte[32] __argent_template_stones_settle = __argent_init_template_stones_settle;
+    byte[32] gen__template_league = gen__init_template_league;
+    byte[32] gen__template_player = gen__init_template_player;
+    byte[32] gen__template_stones_game = gen__init_template_stones_game;
+    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
 
     // League state fields
     byte[32] admin = init_admin;
@@ -97,24 +97,24 @@ contract League(
     int default_max_take = init_default_max_take;
 
     // Entrypoints
-    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] __argent_league_prefix, byte[] __argent_league_suffix, byte[] __argent_player_prefix, byte[] __argent_player_suffix) {
-        int __argent_league_prefix_len = __argent_league_prefix.length;
-        int __argent_league_suffix_len = __argent_league_suffix.length;
-        int __argent_player_prefix_len = __argent_player_prefix.length;
-        int __argent_player_suffix_len = __argent_player_suffix.length;
+    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__league_prefix, byte[] gen__league_suffix, byte[] gen__player_prefix, byte[] gen__player_suffix) {
+        int gen__league_prefix_len = gen__league_prefix.length;
+        int gen__league_suffix_len = gen__league_suffix.length;
+        int gen__player_prefix_len = gen__player_prefix.length;
+        int gen__player_suffix_len = gen__player_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int __argent_lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output lane: League
-        int __argent_player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
+        int gen__lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output lane: League
+        int gen__player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
 
         require(checkSig(owner_sig, owner_pk));
         byte[32] owner = blake2b(owner_pk);
         byte[32] player_id = blake2b(bytes("StonesPlayer") + OpOutpointTxId(this.activeInputIndex) + byte[4](OpOutpointIndex(this.activeInputIndex)));
         PlayerState next_player = {
-            __argent_template_league: __argent_template_league,
-            __argent_template_player: __argent_template_player,
-            __argent_template_stones_game: __argent_template_stones_game,
-            __argent_template_stones_settle: __argent_template_stones_settle,
+            gen__template_league: gen__template_league,
+            gen__template_player: gen__template_player,
+            gen__template_stones_game: gen__template_stones_game,
+            gen__template_stones_settle: gen__template_stones_settle,
             // ----------- template fields above; source state below
             owner: owner,
             player_id: player_id,
@@ -123,20 +123,20 @@ contract League(
             wins: 0,
             losses: 0,
         };
-        require(tx.outputs[__argent_lane_output_idx].value == tx.inputs[this.activeInputIndex].value);
-        require(tx.outputs[__argent_player_output_idx].value > 0);
-        State __argent_generated_lane_state = {
-            __argent_template_league: __argent_template_league,
-            __argent_template_player: __argent_template_player,
-            __argent_template_stones_game: __argent_template_stones_game,
-            __argent_template_stones_settle: __argent_template_stones_settle,
+        require(tx.outputs[gen__lane_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[gen__player_output_idx].value > 0);
+        State gen__state_lane_state = {
+            gen__template_league: gen__template_league,
+            gen__template_player: gen__template_player,
+            gen__template_stones_game: gen__template_stones_game,
+            gen__template_stones_settle: gen__template_stones_settle,
             // ----------- template fields above; source state below
             admin: admin,
             default_pile: default_pile,
             default_max_take: default_max_take,
         };
-        validateOutputStateWithTemplate(__argent_lane_output_idx, __argent_generated_lane_state, __argent_league_prefix, __argent_league_suffix, __argent_template_league);
-        validateOutputStateWithTemplate(__argent_player_output_idx, next_player, __argent_player_prefix, __argent_player_suffix, __argent_template_player);
+        validateOutputStateWithTemplate(gen__lane_output_idx, gen__state_lane_state, gen__league_prefix, gen__league_suffix, gen__template_league);
+        validateOutputStateWithTemplate(gen__player_output_idx, next_player, gen__player_prefix, gen__player_suffix, gen__template_player);
     }
 
 }

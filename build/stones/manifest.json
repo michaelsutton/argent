@@ -1,19 +1,19 @@
 {
   "app": "Stones",
-  "root": "/Users/arthur/RustroverProjects/argent/examples/stones/app.ag",
+  "root": "examples/stones/app.ag",
   "modules": [
-    "/Users/arthur/RustroverProjects/argent/examples/stones/app.ag",
-    "/Users/arthur/RustroverProjects/argent/examples/stones/types.ag",
-    "/Users/arthur/RustroverProjects/argent/examples/stones/league.ag",
-    "/Users/arthur/RustroverProjects/argent/examples/stones/player.ag",
-    "/Users/arthur/RustroverProjects/argent/examples/stones/game.ag",
-    "/Users/arthur/RustroverProjects/argent/examples/stones/settle.ag"
+    "examples/stones/app.ag",
+    "examples/stones/types.ag",
+    "examples/stones/league.ag",
+    "examples/stones/player.ag",
+    "examples/stones/game.ag",
+    "examples/stones/settle.ag"
   ],
   "templates": [
-    { "actor": "League", "symbol": "__argent_template_league", "hash": null },
-    { "actor": "Player", "symbol": "__argent_template_player", "hash": null },
-    { "actor": "StonesGame", "symbol": "__argent_template_stones_game", "hash": null },
-    { "actor": "StonesSettle", "symbol": "__argent_template_stones_settle", "hash": null }
+    { "actor": "League", "symbol": "gen__template_league", "hash": null },
+    { "actor": "Player", "symbol": "gen__template_player", "hash": null },
+    { "actor": "StonesGame", "symbol": "gen__template_stones_game", "hash": null },
+    { "actor": "StonesSettle", "symbol": "gen__template_stones_settle", "hash": null }
   ],
   "actors": [
     {

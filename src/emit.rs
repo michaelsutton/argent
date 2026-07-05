@@ -1016,7 +1016,7 @@ fn push_indent(out: &mut String, indent: usize) {
 
 fn generated_state_name(route: &RouteCall, state_ty: &str) -> String {
     let base = route.output.as_deref().unwrap_or(route.actor.as_str());
-    format!("{RESERVED_GENERATED_PREFIX}generated_{}_{}", to_snake(base), to_snake(state_ty))
+    format!("{RESERVED_GENERATED_PREFIX}state_{}_{}", to_snake(base), to_snake(state_ty))
 }
 
 fn parse_unique_self_outpoint(expr: &str) -> Option<String> {
@@ -1227,14 +1227,14 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     let mut out = String::new();
     out.push_str("{\n");
     out.push_str(&format!("  \"app\": \"{}\",\n", json_escape(&model.app_name)));
-    out.push_str(&format!("  \"root\": \"{}\",\n", json_escape(&program.root.display().to_string())));
+    out.push_str(&format!("  \"root\": \"{}\",\n", json_escape(&manifest_path(&program.root))));
 
     out.push_str("  \"modules\": [\n");
     for (idx, module) in program.modules.iter().enumerate() {
         if idx > 0 {
             out.push_str(",\n");
         }
-        out.push_str(&format!("    \"{}\"", json_escape(&module.path.display().to_string())));
+        out.push_str(&format!("    \"{}\"", json_escape(&manifest_path(&module.path))));
     }
     out.push_str("\n  ],\n");
 
@@ -1349,6 +1349,19 @@ fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
             out.push_str("] }");
         }
     }
+}
+
+fn manifest_path(path: &Path) -> String {
+    if let Ok(cwd) = std::env::current_dir()
+        && let Ok(relative) = path.strip_prefix(&cwd)
+    {
+        return display_path(relative);
+    }
+    display_path(path)
+}
+
+fn display_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn to_snake(input: &str) -> String {
@@ -1641,7 +1654,7 @@ mod tests {
     #[test]
     fn rejects_reserved_state_field_from_model() {
         let mut program = test_program();
-        program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "__argent_template_player".to_string() });
+        program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "gen__template_player".to_string() });
 
         let err = Model::from_program(&program).expect_err("reserved state field must be rejected");
         assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
@@ -1652,7 +1665,7 @@ mod tests {
         let mut program = test_program();
         program.modules[0].actors[0].entries[0]
             .params
-            .push(ParamDecl { name: "__argent_next_output_idx".to_string(), ty: TypeRef::new("int") });
+            .push(ParamDecl { name: "gen__next_output_idx".to_string(), ty: TypeRef::new("int") });
 
         let err = Model::from_program(&program).expect_err("reserved entry parameter must be rejected");
         assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
@@ -1661,13 +1674,9 @@ mod tests {
     #[test]
     fn rejects_reserved_output_handle_from_model() {
         let mut program = test_program();
-        program.modules[0].actors[0].entries[0].emits = EmitSpec::Outputs(vec![EmitOutput {
-            name: "__argent_next".to_string(),
-            actors: vec!["Player".to_string()],
-            auth_index: 0,
-        }]);
-        let route =
-            RouteCall { output: Some("__argent_next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() };
+        program.modules[0].actors[0].entries[0].emits =
+            EmitSpec::Outputs(vec![EmitOutput { name: "gen__next".to_string(), actors: vec!["Player".to_string()], auth_index: 0 }]);
+        let route = RouteCall { output: Some("gen__next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() };
         program.modules[0].actors[0].entries[0].routes = vec![route.clone()];
         program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![route]];
 
@@ -1737,18 +1746,35 @@ mod tests {
         let sil = emit_actor(actor, &model).expect("actor emits");
         let manifest = emit_manifest(&program, &model);
 
-        assert!(sil.contains("byte[32] __argent_init_template_foo"), "{sil}");
-        assert!(sil.contains("byte[32] __argent_template_foo = __argent_init_template_foo;"), "{sil}");
-        assert!(sil.contains("byte[] __argent_foo_prefix"), "{sil}");
-        assert!(sil.contains("int __argent_foo_prefix_len = __argent_foo_prefix.length;"), "{sil}");
-        assert!(sil.contains("int __argent_next_output_idx = OpAuthOutputIdx"), "{sil}");
-        assert!(sil.contains("tx.outputs[__argent_next_output_idx].value"), "{sil}");
-        assert!(sil.contains("validateOutputStateWithTemplate(__argent_next_output_idx,"), "{sil}");
-        assert!(sil.contains("__argent_generated_foo_state"), "{sil}");
-        assert!(manifest.contains(r#""symbol": "__argent_template_foo""#), "{manifest}");
+        assert!(sil.contains("byte[32] gen__init_template_foo"), "{sil}");
+        assert!(sil.contains("byte[32] gen__template_foo = gen__init_template_foo;"), "{sil}");
+        assert!(sil.contains("byte[] gen__foo_prefix"), "{sil}");
+        assert!(sil.contains("int gen__foo_prefix_len = gen__foo_prefix.length;"), "{sil}");
+        assert!(sil.contains("int gen__next_output_idx = OpAuthOutputIdx"), "{sil}");
+        assert!(sil.contains("tx.outputs[gen__next_output_idx].value"), "{sil}");
+        assert!(sil.contains("validateOutputStateWithTemplate(gen__next_output_idx,"), "{sil}");
+        assert!(sil.contains("gen__state_foo_state"), "{sil}");
+        assert!(manifest.contains(r#""symbol": "gen__template_foo""#), "{manifest}");
         assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
         assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
+        assert!(!sil.contains("__argent_"), "{sil}");
+    }
+
+    #[test]
+    fn manifest_uses_relative_paths_when_possible() {
+        let cwd = std::env::current_dir().expect("current dir");
+        let mut program = test_program();
+        program.root = cwd.join("examples/tickets.ag");
+        program.modules[0].path = cwd.join("examples/tickets.ag");
+        program.modules[0].actors[0].entries.clear();
+        let model = Model::from_program(&program).expect("model validates");
+
+        let manifest = emit_manifest(&program, &model);
+
+        assert!(manifest.contains(r#""root": "examples/tickets.ag""#), "{manifest}");
+        assert!(manifest.contains(r#""examples/tickets.ag""#), "{manifest}");
+        assert!(!manifest.contains(&display_path(&cwd)), "{manifest}");
     }
 
     fn assert_duplicate_top_level_error(err: &ArgentError, kind: &str, name: &str) {
