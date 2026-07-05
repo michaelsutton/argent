@@ -4,10 +4,10 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesGame(
-    byte[32] init_template_league,
-    byte[32] init_template_player,
-    byte[32] init_template_stones_game,
-    byte[32] init_template_stones_settle,
+    byte[32] gen__init_template_league,
+    byte[32] gen__init_template_player,
+    byte[32] gen__init_template_stones_game,
+    byte[32] gen__init_template_stones_settle,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_pile,
@@ -23,20 +23,20 @@ contract StonesGame(
 
     // State layouts
     struct LeagueState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] owner;
         byte[32] player_id;
@@ -46,10 +46,10 @@ contract StonesGame(
         int losses;
     }
     struct SettleState {
-        byte[32] template_league;
-        byte[32] template_player;
-        byte[32] template_stones_game;
-        byte[32] template_stones_settle;
+        byte[32] gen__template_league;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // ----------- template fields above; source state below
         byte[32] player_a;
         byte[32] player_b;
@@ -86,10 +86,10 @@ contract StonesGame(
     }
 
     // Template capability table
-    byte[32] template_league = init_template_league;
-    byte[32] template_player = init_template_player;
-    byte[32] template_stones_game = init_template_stones_game;
-    byte[32] template_stones_settle = init_template_stones_settle;
+    byte[32] gen__template_league = gen__init_template_league;
+    byte[32] gen__template_player = gen__init_template_player;
+    byte[32] gen__template_stones_game = gen__init_template_stones_game;
+    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
 
     // StonesGame state fields
     byte[32] player_a = init_player_a;
@@ -99,14 +99,14 @@ contract StonesGame(
     int turn = init_turn;
 
     // Entrypoints
-    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] stones_game_prefix, byte[] stones_game_suffix, byte[] stones_settle_prefix, byte[] stones_settle_suffix) {
-        int stones_game_prefix_len = stones_game_prefix.length;
-        int stones_game_suffix_len = stones_game_suffix.length;
-        int stones_settle_prefix_len = stones_settle_prefix.length;
-        int stones_settle_suffix_len = stones_settle_suffix.length;
+    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+        int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
+        int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
+        int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
+        int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: StonesGame | StonesSettle
+        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: StonesGame | StonesSettle
 
         require(pile > 0);
         require(amount >= 1);
@@ -117,25 +117,25 @@ contract StonesGame(
         require(actor_ref == expected_ref);
         require(checkSig(move_sig, move_pk));
         int next_pile = pile - amount;
-        require(tx.outputs[next_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         if (next_pile == 0) {
             SettleState ticket = {
-                template_league: template_league,
-                template_player: template_player,
-                template_stones_game: template_stones_game,
-                template_stones_settle: template_stones_settle,
+                gen__template_league: gen__template_league,
+                gen__template_player: gen__template_player,
+                gen__template_stones_game: gen__template_stones_game,
+                gen__template_stones_settle: gen__template_stones_settle,
                 // ----------- template fields above; source state below
                 player_a: player_a,
                 player_b: player_b,
                 status: win_status(turn),
             };
-            validateOutputStateWithTemplate(next_output_idx, ticket, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
+            validateOutputStateWithTemplate(gen__next_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__template_stones_settle);
         } else {
             State next_game = {
-                template_league: template_league,
-                template_player: template_player,
-                template_stones_game: template_stones_game,
-                template_stones_settle: template_stones_settle,
+                gen__template_league: gen__template_league,
+                gen__template_player: gen__template_player,
+                gen__template_stones_game: gen__template_stones_game,
+                gen__template_stones_settle: gen__template_stones_settle,
                 // ----------- template fields above; source state below
                 player_a: player_a,
                 player_b: player_b,
@@ -143,34 +143,34 @@ contract StonesGame(
                 max_take: max_take,
                 turn: other_side(turn),
             };
-            validateOutputStateWithTemplate(next_output_idx, next_game, stones_game_prefix, stones_game_suffix, template_stones_game);
+            validateOutputStateWithTemplate(gen__next_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
         }
     }
 
-    entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] stones_settle_prefix, byte[] stones_settle_suffix) {
-        int stones_settle_prefix_len = stones_settle_prefix.length;
-        int stones_settle_suffix_len = stones_settle_suffix.length;
+    entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+        int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
+        int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output settle: StonesSettle
+        int gen__settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output settle: StonesSettle
 
         byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
         byte[32] expected_ref = side_player(turn, player_a, player_b);
         require(actor_ref == expected_ref);
         require(checkSig(move_sig, move_pk));
-        require(tx.outputs[settle_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[gen__settle_output_idx].value == tx.inputs[this.activeInputIndex].value);
         int winner = other_side(turn);
         SettleState ticket = {
-            template_league: template_league,
-            template_player: template_player,
-            template_stones_game: template_stones_game,
-            template_stones_settle: template_stones_settle,
+            gen__template_league: gen__template_league,
+            gen__template_player: gen__template_player,
+            gen__template_stones_game: gen__template_stones_game,
+            gen__template_stones_settle: gen__template_stones_settle,
             // ----------- template fields above; source state below
             player_a: player_a,
             player_b: player_b,
             status: win_status(winner),
         };
-        validateOutputStateWithTemplate(settle_output_idx, ticket, stones_settle_prefix, stones_settle_suffix, template_stones_settle);
+        validateOutputStateWithTemplate(gen__settle_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__template_stones_settle);
     }
 
 }
