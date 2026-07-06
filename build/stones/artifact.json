@@ -17,22 +17,150 @@
   "argent": {
     "templates": [
       {
+        "id": "template/league",
         "actor": "League",
         "symbol": "gen__template_league"
       },
       {
+        "id": "template/player",
         "actor": "Player",
         "symbol": "gen__template_player"
       },
       {
+        "id": "template/stones_game",
         "actor": "StonesGame",
         "symbol": "gen__template_stones_game"
       },
       {
+        "id": "template/stones_settle",
         "actor": "StonesSettle",
         "symbol": "gen__template_stones_settle"
       }
     ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/league",
+          "actor": "League",
+          "contract": "League",
+          "symbol": "gen__template_league",
+          "hash_hex": "6acf036aa52a761892896c7c05bb773318c1ec2695c2176f717563af2dad7d93"
+        },
+        {
+          "id": "template/player",
+          "actor": "Player",
+          "contract": "Player",
+          "symbol": "gen__template_player",
+          "hash_hex": "886116e6ef44c20bc0399c58ff3b81297df9ff8bbe8e12a94a52c91cac7d43e2"
+        },
+        {
+          "id": "template/stones_game",
+          "actor": "StonesGame",
+          "contract": "StonesGame",
+          "symbol": "gen__template_stones_game",
+          "hash_hex": "0691035534be97ba6ed84d7dfa5f4ac4bfdca8b3843da043566d7110e6fc1adc"
+        },
+        {
+          "id": "template/stones_settle",
+          "actor": "StonesSettle",
+          "contract": "StonesSettle",
+          "symbol": "gen__template_stones_settle",
+          "hash_hex": "997dc41ff0f8c95537046425fe907f7b0947a79ec0b55ead5b9247be38082ae5"
+        }
+      ],
+      "witness_recipes": [
+        {
+          "id": "witness/player/template_prefix_bytes",
+          "template_id": "template/player",
+          "actor": "Player",
+          "param": "gen__player_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/player/template_suffix_bytes",
+          "template_id": "template/player",
+          "actor": "Player",
+          "param": "gen__player_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/player/template_prefix_len",
+          "template_id": "template/player",
+          "actor": "Player",
+          "param": "gen__player_prefix_len",
+          "purpose": {
+            "kind": "template_prefix_len"
+          }
+        },
+        {
+          "id": "witness/player/template_suffix_len",
+          "template_id": "template/player",
+          "actor": "Player",
+          "param": "gen__player_suffix_len",
+          "purpose": {
+            "kind": "template_suffix_len"
+          }
+        },
+        {
+          "id": "witness/stones_game/template_prefix_bytes",
+          "template_id": "template/stones_game",
+          "actor": "StonesGame",
+          "param": "gen__stones_game_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/stones_game/template_suffix_bytes",
+          "template_id": "template/stones_game",
+          "actor": "StonesGame",
+          "param": "gen__stones_game_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/stones_settle/template_prefix_len",
+          "template_id": "template/stones_settle",
+          "actor": "StonesSettle",
+          "param": "gen__stones_settle_prefix_len",
+          "purpose": {
+            "kind": "template_prefix_len"
+          }
+        },
+        {
+          "id": "witness/stones_settle/template_suffix_len",
+          "template_id": "template/stones_settle",
+          "actor": "StonesSettle",
+          "param": "gen__stones_settle_suffix_len",
+          "purpose": {
+            "kind": "template_suffix_len"
+          }
+        },
+        {
+          "id": "witness/stones_settle/template_prefix_bytes",
+          "template_id": "template/stones_settle",
+          "actor": "StonesSettle",
+          "param": "gen__stones_settle_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/stones_settle/template_suffix_bytes",
+          "template_id": "template/stones_settle",
+          "actor": "StonesSettle",
+          "param": "gen__stones_settle_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        }
+      ]
+    },
     "states": [
       {
         "name": "GameState",
@@ -214,69 +342,36 @@
                       "output": "league",
                       "auth_index": 0,
                       "actor": "League",
+                      "template_id": "template/league",
                       "state_expr": "self.state",
-                      "witnesses": []
+                      "witness_recipe_ids": []
                     },
                     {
                       "output": "player",
                       "auth_index": 1,
                       "actor": "Player",
+                      "template_id": "template/player",
                       "state_expr": "next_player",
-                      "witnesses": [
-                        {
-                          "param": "gen__player_prefix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__player_suffix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/player/template_prefix_bytes",
+                        "witness/player/template_suffix_bytes"
                       ]
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__player_prefix",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__player_suffix",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
+                  "witness_recipe_ids": [
+                    "witness/player/template_prefix_bytes",
+                    "witness/player/template_suffix_bytes"
                   ]
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__player_prefix",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__player_suffix",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/player/template_prefix_bytes",
+                "witness/player/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/player/template_prefix_bytes",
                 "name": "gen__player_prefix",
                 "type": {
                   "kind": "bytes"
@@ -287,6 +382,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_bytes",
                 "name": "gen__player_suffix",
                 "type": {
                   "kind": "bytes"
@@ -299,6 +395,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/player/template_prefix_bytes",
                 "param": "gen__player_prefix",
                 "actor": "Player",
                 "purpose": {
@@ -306,6 +403,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_bytes",
                 "param": "gen__player_suffix",
                 "actor": "Player",
                 "purpose": {
@@ -337,11 +435,13 @@
               {
                 "output": "league",
                 "actor": "League",
+                "template_id": "template/league",
                 "state_expr": "self.state"
               },
               {
                 "output": "player",
                 "actor": "Player",
+                "template_id": "template/player",
                 "state_expr": "next_player"
               }
             ],
@@ -351,11 +451,13 @@
                   {
                     "output": "league",
                     "actor": "League",
+                    "template_id": "template/league",
                     "state_expr": "self.state"
                   },
                   {
                     "output": "player",
                     "actor": "Player",
+                    "template_id": "template/player",
                     "state_expr": "next_player"
                   }
                 ]
@@ -426,104 +528,48 @@
                       "output": "self_out",
                       "auth_index": 0,
                       "actor": "Player",
+                      "template_id": "template/player",
                       "state_expr": "next_self",
-                      "witnesses": []
+                      "witness_recipe_ids": []
                     },
                     {
                       "output": "opponent_out",
                       "auth_index": 1,
                       "actor": "Player",
+                      "template_id": "template/player",
                       "state_expr": "next_opponent",
-                      "witnesses": []
+                      "witness_recipe_ids": []
                     },
                     {
                       "output": "game",
                       "auth_index": 2,
                       "actor": "StonesGame",
+                      "template_id": "template/stones_game",
                       "state_expr": "next_game",
-                      "witnesses": [
-                        {
-                          "param": "gen__stones_game_prefix",
-                          "actor": "StonesGame",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__stones_game_suffix",
-                          "actor": "StonesGame",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/stones_game/template_prefix_bytes",
+                        "witness/stones_game/template_suffix_bytes"
                       ]
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__player_prefix_len",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_prefix_len"
-                      }
-                    },
-                    {
-                      "param": "gen__player_suffix_len",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_suffix_len"
-                      }
-                    },
-                    {
-                      "param": "gen__stones_game_prefix",
-                      "actor": "StonesGame",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__stones_game_suffix",
-                      "actor": "StonesGame",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
+                  "witness_recipe_ids": [
+                    "witness/player/template_prefix_len",
+                    "witness/player/template_suffix_len",
+                    "witness/stones_game/template_prefix_bytes",
+                    "witness/stones_game/template_suffix_bytes"
                   ]
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__player_prefix_len",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_prefix_len"
-                  }
-                },
-                {
-                  "param": "gen__player_suffix_len",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_suffix_len"
-                  }
-                },
-                {
-                  "param": "gen__stones_game_prefix",
-                  "actor": "StonesGame",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__stones_game_suffix",
-                  "actor": "StonesGame",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/player/template_prefix_len",
+                "witness/player/template_suffix_len",
+                "witness/stones_game/template_prefix_bytes",
+                "witness/stones_game/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/player/template_prefix_len",
                 "name": "gen__player_prefix_len",
                 "type": {
                   "kind": "int"
@@ -534,6 +580,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_len",
                 "name": "gen__player_suffix_len",
                 "type": {
                   "kind": "int"
@@ -544,6 +591,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_game/template_prefix_bytes",
                 "name": "gen__stones_game_prefix",
                 "type": {
                   "kind": "bytes"
@@ -554,6 +602,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_game/template_suffix_bytes",
                 "name": "gen__stones_game_suffix",
                 "type": {
                   "kind": "bytes"
@@ -566,6 +615,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/player/template_prefix_len",
                 "param": "gen__player_prefix_len",
                 "actor": "Player",
                 "purpose": {
@@ -573,6 +623,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_len",
                 "param": "gen__player_suffix_len",
                 "actor": "Player",
                 "purpose": {
@@ -580,6 +631,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_game/template_prefix_bytes",
                 "param": "gen__stones_game_prefix",
                 "actor": "StonesGame",
                 "purpose": {
@@ -587,6 +639,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_game/template_suffix_bytes",
                 "param": "gen__stones_game_suffix",
                 "actor": "StonesGame",
                 "purpose": {
@@ -630,16 +683,19 @@
               {
                 "output": "self_out",
                 "actor": "Player",
+                "template_id": "template/player",
                 "state_expr": "next_self"
               },
               {
                 "output": "opponent_out",
                 "actor": "Player",
+                "template_id": "template/player",
                 "state_expr": "next_opponent"
               },
               {
                 "output": "game",
                 "actor": "StonesGame",
+                "template_id": "template/stones_game",
                 "state_expr": "next_game"
               }
             ],
@@ -649,16 +705,19 @@
                   {
                     "output": "self_out",
                     "actor": "Player",
+                    "template_id": "template/player",
                     "state_expr": "next_self"
                   },
                   {
                     "output": "opponent_out",
                     "actor": "Player",
+                    "template_id": "template/player",
                     "state_expr": "next_opponent"
                   },
                   {
                     "output": "game",
                     "actor": "StonesGame",
+                    "template_id": "template/stones_game",
                     "state_expr": "next_game"
                   }
                 ]
@@ -692,25 +751,14 @@
               ],
               "outputs": [],
               "terminal_paths": [],
-              "witnesses": [
-                {
-                  "param": "gen__player_prefix_len",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_prefix_len"
-                  }
-                },
-                {
-                  "param": "gen__player_suffix_len",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_suffix_len"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/player/template_prefix_len",
+                "witness/player/template_suffix_len"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/player/template_prefix_len",
                 "name": "gen__player_prefix_len",
                 "type": {
                   "kind": "int"
@@ -721,6 +769,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_len",
                 "name": "gen__player_suffix_len",
                 "type": {
                   "kind": "int"
@@ -733,6 +782,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/player/template_prefix_len",
                 "param": "gen__player_prefix_len",
                 "actor": "Player",
                 "purpose": {
@@ -740,6 +790,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_len",
                 "param": "gen__player_suffix_len",
                 "actor": "Player",
                 "purpose": {
@@ -786,25 +837,14 @@
               ],
               "outputs": [],
               "terminal_paths": [],
-              "witnesses": [
-                {
-                  "param": "gen__stones_settle_prefix_len",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_prefix_len"
-                  }
-                },
-                {
-                  "param": "gen__stones_settle_suffix_len",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_suffix_len"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/stones_settle/template_prefix_len",
+                "witness/stones_settle/template_suffix_len"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_len",
                 "name": "gen__stones_settle_prefix_len",
                 "type": {
                   "kind": "int"
@@ -815,6 +855,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_len",
                 "name": "gen__stones_settle_suffix_len",
                 "type": {
                   "kind": "int"
@@ -827,6 +868,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_len",
                 "param": "gen__stones_settle_prefix_len",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -834,6 +876,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_len",
                 "param": "gen__stones_settle_suffix_len",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -874,7 +917,7 @@
               "consumes": [],
               "outputs": [],
               "terminal_paths": [],
-              "witnesses": []
+              "witness_recipe_ids": []
             },
             "hidden_params": [],
             "witnesses": [],
@@ -930,40 +973,17 @@
                       "output": "next",
                       "auth_index": 0,
                       "actor": "StonesSettle",
+                      "template_id": "template/stones_settle",
                       "state_expr": "ticket",
-                      "witnesses": [
-                        {
-                          "param": "gen__stones_settle_prefix",
-                          "actor": "StonesSettle",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__stones_settle_suffix",
-                          "actor": "StonesSettle",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/stones_settle/template_prefix_bytes",
+                        "witness/stones_settle/template_suffix_bytes"
                       ]
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__stones_settle_prefix",
-                      "actor": "StonesSettle",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__stones_settle_suffix",
-                      "actor": "StonesSettle",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
+                  "witness_recipe_ids": [
+                    "witness/stones_settle/template_prefix_bytes",
+                    "witness/stones_settle/template_suffix_bytes"
                   ]
                 },
                 {
@@ -972,32 +992,22 @@
                       "output": "next",
                       "auth_index": 0,
                       "actor": "StonesGame",
+                      "template_id": "template/stones_game",
                       "state_expr": "next_game",
-                      "witnesses": []
+                      "witness_recipe_ids": []
                     }
                   ],
-                  "witnesses": []
+                  "witness_recipe_ids": []
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__stones_settle_prefix",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__stones_settle_suffix",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/stones_settle/template_prefix_bytes",
+                "witness/stones_settle/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_bytes",
                 "name": "gen__stones_settle_prefix",
                 "type": {
                   "kind": "bytes"
@@ -1008,6 +1018,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_bytes",
                 "name": "gen__stones_settle_suffix",
                 "type": {
                   "kind": "bytes"
@@ -1020,6 +1031,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_bytes",
                 "param": "gen__stones_settle_prefix",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -1027,6 +1039,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_bytes",
                 "param": "gen__stones_settle_suffix",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -1052,11 +1065,13 @@
               {
                 "output": "next",
                 "actor": "StonesSettle",
+                "template_id": "template/stones_settle",
                 "state_expr": "ticket"
               },
               {
                 "output": "next",
                 "actor": "StonesGame",
+                "template_id": "template/stones_game",
                 "state_expr": "next_game"
               }
             ],
@@ -1066,6 +1081,7 @@
                   {
                     "output": "next",
                     "actor": "StonesSettle",
+                    "template_id": "template/stones_settle",
                     "state_expr": "ticket"
                   }
                 ]
@@ -1075,6 +1091,7 @@
                   {
                     "output": "next",
                     "actor": "StonesGame",
+                    "template_id": "template/stones_game",
                     "state_expr": "next_game"
                   }
                 ]
@@ -1116,62 +1133,28 @@
                       "output": "settle",
                       "auth_index": 0,
                       "actor": "StonesSettle",
+                      "template_id": "template/stones_settle",
                       "state_expr": "ticket",
-                      "witnesses": [
-                        {
-                          "param": "gen__stones_settle_prefix",
-                          "actor": "StonesSettle",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__stones_settle_suffix",
-                          "actor": "StonesSettle",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/stones_settle/template_prefix_bytes",
+                        "witness/stones_settle/template_suffix_bytes"
                       ]
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__stones_settle_prefix",
-                      "actor": "StonesSettle",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__stones_settle_suffix",
-                      "actor": "StonesSettle",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
+                  "witness_recipe_ids": [
+                    "witness/stones_settle/template_prefix_bytes",
+                    "witness/stones_settle/template_suffix_bytes"
                   ]
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__stones_settle_prefix",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__stones_settle_suffix",
-                  "actor": "StonesSettle",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/stones_settle/template_prefix_bytes",
+                "witness/stones_settle/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_bytes",
                 "name": "gen__stones_settle_prefix",
                 "type": {
                   "kind": "bytes"
@@ -1182,6 +1165,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_bytes",
                 "name": "gen__stones_settle_suffix",
                 "type": {
                   "kind": "bytes"
@@ -1194,6 +1178,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/stones_settle/template_prefix_bytes",
                 "param": "gen__stones_settle_prefix",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -1201,6 +1186,7 @@
                 }
               },
               {
+                "recipe_id": "witness/stones_settle/template_suffix_bytes",
                 "param": "gen__stones_settle_suffix",
                 "actor": "StonesSettle",
                 "purpose": {
@@ -1225,6 +1211,7 @@
               {
                 "output": "settle",
                 "actor": "StonesSettle",
+                "template_id": "template/stones_settle",
                 "state_expr": "ticket"
               }
             ],
@@ -1234,6 +1221,7 @@
                   {
                     "output": "settle",
                     "actor": "StonesSettle",
+                    "template_id": "template/stones_settle",
                     "state_expr": "ticket"
                   }
                 ]
@@ -1302,84 +1290,39 @@
                       "output": "player_a_out",
                       "auth_index": 0,
                       "actor": "Player",
+                      "template_id": "template/player",
                       "state_expr": "next_player_a",
-                      "witnesses": [
-                        {
-                          "param": "gen__player_prefix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__player_suffix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/player/template_prefix_bytes",
+                        "witness/player/template_suffix_bytes"
                       ]
                     },
                     {
                       "output": "player_b_out",
                       "auth_index": 1,
                       "actor": "Player",
+                      "template_id": "template/player",
                       "state_expr": "next_player_b",
-                      "witnesses": [
-                        {
-                          "param": "gen__player_prefix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__player_suffix",
-                          "actor": "Player",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
+                      "witness_recipe_ids": [
+                        "witness/player/template_prefix_bytes",
+                        "witness/player/template_suffix_bytes"
                       ]
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__player_prefix",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__player_suffix",
-                      "actor": "Player",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
+                  "witness_recipe_ids": [
+                    "witness/player/template_prefix_bytes",
+                    "witness/player/template_suffix_bytes"
                   ]
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__player_prefix",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__player_suffix",
-                  "actor": "Player",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
+              "witness_recipe_ids": [
+                "witness/player/template_prefix_bytes",
+                "witness/player/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
+                "recipe_id": "witness/player/template_prefix_bytes",
                 "name": "gen__player_prefix",
                 "type": {
                   "kind": "bytes"
@@ -1390,6 +1333,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_bytes",
                 "name": "gen__player_suffix",
                 "type": {
                   "kind": "bytes"
@@ -1402,6 +1346,7 @@
             ],
             "witnesses": [
               {
+                "recipe_id": "witness/player/template_prefix_bytes",
                 "param": "gen__player_prefix",
                 "actor": "Player",
                 "purpose": {
@@ -1409,6 +1354,7 @@
                 }
               },
               {
+                "recipe_id": "witness/player/template_suffix_bytes",
                 "param": "gen__player_suffix",
                 "actor": "Player",
                 "purpose": {
@@ -1449,11 +1395,13 @@
               {
                 "output": "player_a_out",
                 "actor": "Player",
+                "template_id": "template/player",
                 "state_expr": "next_player_a"
               },
               {
                 "output": "player_b_out",
                 "actor": "Player",
+                "template_id": "template/player",
                 "state_expr": "next_player_b"
               }
             ],
@@ -1463,11 +1411,13 @@
                   {
                     "output": "player_a_out",
                     "actor": "Player",
+                    "template_id": "template/player",
                     "state_expr": "next_player_a"
                   },
                   {
                     "output": "player_b_out",
                     "actor": "Player",
+                    "template_id": "template/player",
                     "state_expr": "next_player_b"
                   }
                 ]

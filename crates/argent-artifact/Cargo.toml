@@ -5,8 +5,11 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [dependencies]
+blake2b_simd = { workspace = true }
+faster-hex = { workspace = true }
 serde = { workspace = true }
 silverscript-abi = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

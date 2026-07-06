@@ -130,9 +130,12 @@ dependencies = [
 name = "argent-artifact"
 version = "0.1.0"
 dependencies = [
+ "blake2b_simd",
+ "faster-hex 0.10.0",
  "serde",
  "serde_json",
  "silverscript-abi",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

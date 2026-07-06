@@ -351,6 +351,8 @@ Obstacle to handle:
 
 ### 10. Introduce Template Plan Receipts
 
+Status: done.
+
 Produce a machine-checkable receipt for the template plan used by the generated
 contracts and artifact. The first version may be flat and unoptimized.
 

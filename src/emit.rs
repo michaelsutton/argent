@@ -1398,11 +1398,7 @@ fn emit_artifact_json(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap
 }
 
 fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<Artifact> {
-    let templates = model
-        .template_actors
-        .iter()
-        .map(|actor| TemplateRefArtifact { actor: actor.clone(), symbol: hidden_template_name(actor) })
-        .collect();
+    let templates = model.template_actors.iter().map(|actor| template_ref_artifact(actor)).collect::<Vec<_>>();
 
     let states: Vec<StateArtifact> = model
         .states
@@ -1417,18 +1413,68 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         })
         .collect();
 
-    let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
     let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
+    let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+    let template_plan = template_plan_artifact(&templates, &argent_actors, &sil_contracts)?;
 
-    Ok(Artifact {
+    let artifact = Artifact {
         schema_version: ARTIFACT_SCHEMA_VERSION,
         generator: GeneratorArtifact { name: "argentc".to_string(), version: env!("CARGO_PKG_VERSION").to_string() },
         app: model.app_name.clone(),
         root: manifest_path(&program.root),
         modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
-        argent: ArgentArtifact { templates, states: states.clone(), actors: argent_actors },
+        argent: ArgentArtifact { templates, template_plan, states: states.clone(), actors: argent_actors },
         sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
-    })
+    };
+    artifact.verify_template_plan().map_err(|err| ArgentError::new(format!("invalid template plan receipt: {err}")))?;
+    Ok(artifact)
+}
+
+fn template_ref_artifact(actor: &str) -> TemplateRefArtifact {
+    TemplateRefArtifact { id: template_receipt_id(actor), actor: actor.to_string(), symbol: hidden_template_name(actor) }
+}
+
+fn template_plan_artifact(
+    templates: &[TemplateRefArtifact],
+    actors: &[ActorArtifact],
+    sil_contracts: &[SilContractArtifact],
+) -> Result<TemplatePlanArtifact> {
+    let sil_by_name = sil_contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+    let templates = templates
+        .iter()
+        .map(|template| {
+            let contract = sil_by_name
+                .get(template.actor.as_str())
+                .ok_or_else(|| ArgentError::new(format!("missing Sil ABI contract for template actor `{}`", template.actor)))?;
+            Ok(TemplatePlanTemplateArtifact {
+                id: template.id.clone(),
+                actor: template.actor.clone(),
+                contract: contract.name.clone(),
+                symbol: template.symbol.clone(),
+                hash_hex: contract.compiled.template.hash_hex.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut seen = BTreeSet::new();
+    let mut witness_recipes = Vec::new();
+    for actor in actors {
+        for entry in &actor.entries {
+            for param in &entry.hidden_params {
+                if seen.insert(param.recipe_id.clone()) {
+                    witness_recipes.push(TemplateWitnessRecipeArtifact {
+                        id: param.recipe_id.clone(),
+                        template_id: template_receipt_id(&param.actor),
+                        actor: param.actor.clone(),
+                        param: param.name.clone(),
+                        purpose: param.purpose,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(TemplatePlanArtifact { templates, witness_recipes })
 }
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
@@ -1562,12 +1608,14 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
         match spec.form {
             TemplateWitnessForm::Bytes => {
                 hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixBytes),
                     name: hidden_witness_prefix_name(&spec.actor),
                     ty: TypeArtifact::Bytes,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
                 });
                 hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes),
                     name: hidden_witness_suffix_name(&spec.actor),
                     ty: TypeArtifact::Bytes,
                     actor: spec.actor.clone(),
@@ -1576,12 +1624,14 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             }
             TemplateWitnessForm::Len => {
                 hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen),
                     name: hidden_witness_prefix_len_name(&spec.actor),
                     ty: TypeArtifact::Int,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
                 });
                 hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen),
                     name: hidden_witness_suffix_len_name(&spec.actor),
                     ty: TypeArtifact::Int,
                     actor: spec.actor.clone(),
@@ -1597,7 +1647,12 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
     let hidden_params = hidden_params_for_entry(actor, entry, model);
     let witnesses = hidden_params
         .iter()
-        .map(|param| WitnessArtifact { param: param.name.clone(), actor: param.actor.clone(), purpose: param.purpose })
+        .map(|param| WitnessArtifact {
+            recipe_id: param.recipe_id.clone(),
+            param: param.name.clone(),
+            actor: param.actor.clone(),
+            purpose: param.purpose,
+        })
         .collect::<Vec<_>>();
     Ok(EntryArtifact {
         name: entry.name.clone(),
@@ -1662,7 +1717,7 @@ fn entry_route_plan_artifact(
         consumes,
         outputs,
         terminal_paths,
-        witnesses: witnesses.to_vec(),
+        witness_recipe_ids: witnesses.iter().map(|witness| witness.recipe_id.clone()).collect(),
     })
 }
 
@@ -1701,7 +1756,7 @@ fn planned_terminal_path_artifact(
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
 
-    let witnesses = witnesses_for_specs(template_witness_specs(model, read_actors, byte_actors));
+    let witness_recipe_ids = witness_recipe_ids_for_specs(template_witness_specs(model, read_actors, byte_actors));
     let routes = routes
         .iter()
         .map(|route| {
@@ -1710,9 +1765,14 @@ fn planned_terminal_path_artifact(
                 output: output.name.clone(),
                 auth_index: output.auth_index,
                 actor: route.actor.clone(),
+                template_id: template_receipt_id(&route.actor),
                 state_expr: compact_expr(&route.state),
-                witnesses: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
-                    witnesses_for_specs(template_witness_specs(model, BTreeSet::new(), [route.actor.clone()].into_iter().collect()))
+                witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
+                    witness_recipe_ids_for_specs(template_witness_specs(
+                        model,
+                        BTreeSet::new(),
+                        [route.actor.clone()].into_iter().collect(),
+                    ))
                 } else {
                     Vec::new()
                 },
@@ -1720,42 +1780,26 @@ fn planned_terminal_path_artifact(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    Ok(PlannedTerminalPathArtifact { routes, witnesses })
+    Ok(PlannedTerminalPathArtifact { routes, witness_recipe_ids })
 }
 
-fn witnesses_for_specs(specs: Vec<TemplateWitnessSpec>) -> Vec<WitnessArtifact> {
-    let mut witnesses = Vec::new();
+fn witness_recipe_ids_for_specs(specs: Vec<TemplateWitnessSpec>) -> Vec<String> {
+    let mut ids = Vec::new();
     for spec in specs {
-        push_actor_witnesses(&mut witnesses, &spec);
+        push_actor_witness_recipe_ids(&mut ids, &spec);
     }
-    witnesses
+    ids
 }
 
-fn push_actor_witnesses(out: &mut Vec<WitnessArtifact>, spec: &TemplateWitnessSpec) {
+fn push_actor_witness_recipe_ids(out: &mut Vec<String>, spec: &TemplateWitnessSpec) {
     match spec.form {
         TemplateWitnessForm::Bytes => {
-            out.push(WitnessArtifact {
-                param: hidden_witness_prefix_name(&spec.actor),
-                actor: spec.actor.clone(),
-                purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
-            });
-            out.push(WitnessArtifact {
-                param: hidden_witness_suffix_name(&spec.actor),
-                actor: spec.actor.clone(),
-                purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
-            });
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixBytes));
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes));
         }
         TemplateWitnessForm::Len => {
-            out.push(WitnessArtifact {
-                param: hidden_witness_prefix_len_name(&spec.actor),
-                actor: spec.actor.clone(),
-                purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
-            });
-            out.push(WitnessArtifact {
-                param: hidden_witness_suffix_len_name(&spec.actor),
-                actor: spec.actor.clone(),
-                purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
-            });
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen));
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen));
         }
     }
 }
@@ -1806,7 +1850,12 @@ fn emit_spec_artifact(emits: &EmitSpec) -> EmitArtifact {
 }
 
 fn route_artifact(route: &RouteCall) -> RouteArtifact {
-    RouteArtifact { output: route.output.clone(), actor: route.actor.clone(), state_expr: compact_expr(&route.state) }
+    RouteArtifact {
+        output: route.output.clone(),
+        actor: route.actor.clone(),
+        template_id: template_receipt_id(&route.actor),
+        state_expr: compact_expr(&route.state),
+    }
 }
 
 fn type_artifact(ty: &TypeRef) -> TypeArtifact {
@@ -1897,6 +1946,23 @@ fn hidden_template_init_name(actor: &str) -> String {
 
 fn hidden_template_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
+}
+
+fn template_receipt_id(actor: &str) -> String {
+    format!("template/{}", hidden_actor_suffix(actor))
+}
+
+fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) -> String {
+    format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
+}
+
+fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
+    match purpose {
+        HiddenParamPurposeArtifact::TemplatePrefixBytes => "template_prefix_bytes",
+        HiddenParamPurposeArtifact::TemplateSuffixBytes => "template_suffix_bytes",
+        HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
+        HiddenParamPurposeArtifact::TemplateSuffixLen => "template_suffix_len",
+    }
 }
 
 fn hidden_witness_prefix_name(actor: &str) -> String {
@@ -2305,8 +2371,8 @@ mod tests {
         let bump = foo.entries.iter().find(|entry| entry.name == "bump").expect("bump entry is present");
         assert!(bump.hidden_params.is_empty());
         assert!(bump.witnesses.is_empty());
-        assert!(bump.route_plan.witnesses.is_empty());
-        assert!(bump.route_plan.terminal_paths[0].witnesses.is_empty());
+        assert!(bump.route_plan.witness_recipe_ids.is_empty());
+        assert!(bump.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
 
         let sil_foo = artifact.sil_abi.contract("Foo").expect("Foo Sil ABI exists");
         let sil_bump = sil_foo.entry("bump").expect("bump Sil ABI exists");
@@ -2351,6 +2417,13 @@ mod tests {
         assert_eq!(artifact.app, "Test");
         assert_eq!(artifact.root, "test.ag");
         assert_eq!(artifact.argent.templates[0].symbol, "gen__template_foo");
+        assert_eq!(artifact.argent.templates[0].id, "template/foo");
+        assert_eq!(artifact.argent.template_plan.templates[0].id, "template/foo");
+        assert_eq!(
+            artifact.argent.template_plan.templates[0].hash_hex,
+            artifact.sil_abi.contract("Foo").unwrap().compiled.template.hash_hex
+        );
+        artifact.verify_template_plan().expect("template plan receipt verifies");
         assert_eq!(
             artifact.argent.states, artifact.sil_abi.states,
             "source and ABI structural state descriptors should be derived from the same model"
@@ -2398,8 +2471,9 @@ mod tests {
         assert_eq!(entry.route_plan.outputs[0].auth_index, 0);
         assert_eq!(entry.route_plan.outputs[0].name, None);
         assert_eq!(entry.route_plan.terminal_paths[0].routes[0].actor, "Foo");
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].template_id, "template/foo");
         assert_eq!(entry.route_plan.terminal_paths[0].routes[0].auth_index, 0);
-        assert!(entry.route_plan.terminal_paths[0].witnesses.is_empty());
+        assert!(entry.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
 
         let sil_entry = sil_contract.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
         assert_eq!(sil_entry.selector, None);
@@ -2522,7 +2596,7 @@ mod tests {
             ]
         );
         assert!(
-            register_player.route_plan.terminal_paths[0].routes[0].witnesses.is_empty(),
+            register_player.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty(),
             "exact league continuation should not need per-route template witnesses"
         );
 
@@ -2646,6 +2720,7 @@ mod tests {
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
         let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
         artifact.check_schema_version().expect("artifact schema version is supported");
+        artifact.verify_template_plan().expect("template plan receipt verifies");
 
         let expected_hashes = expected_hashes.iter().copied().collect::<BTreeMap<_, _>>();
         assert!(!artifact.argent.actors.is_empty(), "artifact should contain Argent actors");

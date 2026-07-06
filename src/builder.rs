@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::{
     artifact::{
         ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, RuntimeFieldRoleArtifact,
-        SilContractArtifact,
+        SilContractArtifact, TemplatePlanError,
     },
     codec::{ArtifactValue, CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script},
 };
@@ -29,6 +29,8 @@ pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
 pub enum BuilderError {
     #[error(transparent)]
     ArtifactVersion(#[from] ArtifactVersionError),
+    #[error(transparent)]
+    TemplatePlan(#[from] TemplatePlanError),
     #[error(transparent)]
     Codec(#[from] CodecError),
     #[error(transparent)]
@@ -68,6 +70,7 @@ pub struct TerminalPathOutputRequest<'a> {
 impl<'a> ArtifactTxBuilder<'a> {
     pub fn new(artifact: &'a Artifact) -> BuilderResult<Self> {
         artifact.check_schema_version()?;
+        artifact.verify_template_plan()?;
         Ok(Self { artifact })
     }
 
@@ -440,29 +443,14 @@ mod tests {
             ]
         );
         assert_eq!(
-            entry.route_plan.terminal_paths[0]
-                .witnesses
-                .iter()
-                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
-                .collect::<Vec<_>>(),
-            entry
-                .witnesses
-                .iter()
-                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
-                .collect::<Vec<_>>()
+            entry.route_plan.terminal_paths[0].witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            entry.witnesses.iter().map(|witness| witness.recipe_id.as_str()).collect::<Vec<_>>()
         );
-        assert!(entry.route_plan.terminal_paths[0].routes[0].witnesses.is_empty());
-        assert!(entry.route_plan.terminal_paths[0].routes[1].witnesses.is_empty());
+        assert!(entry.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty());
+        assert!(entry.route_plan.terminal_paths[0].routes[1].witness_recipe_ids.is_empty());
         assert_eq!(
-            entry.route_plan.terminal_paths[0].routes[2]
-                .witnesses
-                .iter()
-                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
-                .collect::<Vec<_>>(),
-            vec![
-                ("gen__stones_game_prefix", "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
-                ("gen__stones_game_suffix", "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
-            ]
+            entry.route_plan.terminal_paths[0].routes[2].witness_recipe_ids.as_slice(),
+            ["witness/stones_game/template_prefix_bytes", "witness/stones_game/template_suffix_bytes"]
         );
 
         let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
@@ -643,6 +631,29 @@ mod tests {
             wrong_peer_unsigned_tx.outputs,
         );
         assert!(execute_input_with_covenants(&wrong_peer_tx, wrong_entries, 0).is_err());
+    }
+
+    #[test]
+    fn builder_rejects_template_plan_hash_mismatch() {
+        let mut artifact = tickets_artifact();
+        artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+        let ticket_receipt = artifact
+            .argent
+            .template_plan
+            .templates
+            .iter_mut()
+            .find(|template| template.actor == "Ticket")
+            .expect("Ticket template receipt exists");
+        ticket_receipt.hash_hex = "00".repeat(32);
+
+        let err = match ArtifactTxBuilder::new(&artifact) {
+            Ok(_) => panic!("builder must reject a corrupted template plan receipt"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(err, BuilderError::TemplatePlan(TemplatePlanError::TemplateHashMismatch { ref id, .. }) if id == "template/ticket"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
