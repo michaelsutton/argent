@@ -1365,7 +1365,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<ActorArtifact> {
     let state = model.state(&actor.state)?;
-    let entries = actor.entries.iter().map(|entry| entry_artifact(entry, model)).collect();
+    let entries = actor.entries.iter().enumerate().map(|(idx, entry)| entry_artifact(actor, idx, entry, model)).collect();
     let sil = actor_sil
         .get(&actor.name)
         .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
@@ -1477,7 +1477,7 @@ fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFiel
     fields
 }
 
-fn entry_artifact(entry: &EntryDecl, model: &Model<'_>) -> EntryArtifact {
+fn entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, model: &Model<'_>) -> EntryArtifact {
     let witness_actors = entry_witness_actors(entry, model);
     let mut hidden_params = Vec::new();
     for actor in &witness_actors {
@@ -1499,6 +1499,7 @@ fn entry_artifact(entry: &EntryDecl, model: &Model<'_>) -> EntryArtifact {
             EntryKind::Leader => EntryKindArtifact::Leader,
             EntryKind::Delegate => EntryKindArtifact::Delegate,
         },
+        selector: (actor.entries.len() > 1).then_some(entry_index as i64),
         user_params: entry
             .params
             .iter()
@@ -2070,6 +2071,7 @@ mod tests {
 
         let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
         assert_eq!(entry.kind, EntryKindArtifact::Leader);
+        assert_eq!(entry.selector, None);
         assert_eq!(entry.user_params[0].name, "amount");
         assert_eq!(entry.user_params[0].ty, TypeArtifact::Int);
         assert_eq!(entry.hidden_params.len(), 2);
@@ -2094,6 +2096,71 @@ mod tests {
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
+    }
+
+    #[test]
+    fn artifact_codec_matches_silverscript_sigscript_builder() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                int count;
+                byte[4] tag;
+                bool flag;
+            }
+
+            actor Foo owns FooState {
+                entry bump(amount: int, next_tag: byte[4], next_flag: bool, b: byte) emits none {
+                    require(amount >= 0);
+                }
+
+                entry done() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor = model.actor("Foo").expect("actor exists");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+        let sil = actor_sil.get("Foo").expect("Foo Sil exists");
+        let constructor_args = constructor_args_for_actor(actor, &model).expect("constructor args build");
+        let compiled = compile_contract(sil, &constructor_args, CompileOptions::default()).expect("generated Sil compiles");
+
+        let bump = artifact.actors[0].entries.iter().find(|entry| entry.name == "bump").expect("bump entry exists");
+        let done = artifact.actors[0].entries.iter().find(|entry| entry.name == "done").expect("done entry exists");
+        assert_eq!(bump.selector, Some(0));
+        assert_eq!(done.selector, Some(1));
+
+        let portable_bump = crate::codec::encode_actor_entry_sig_script(
+            &artifact,
+            "Foo",
+            "bump",
+            &[
+                crate::codec::ArtifactValue::Int(17),
+                crate::codec::ArtifactValue::Bytes(vec![1, 2, 3, 4]),
+                crate::codec::ArtifactValue::Bool(true),
+                crate::codec::ArtifactValue::Byte(1),
+            ],
+        )
+        .expect("portable bump sigscript builds");
+        let sil_bump = compiled
+            .build_sig_script("bump", vec![SilExpr::int(17), SilExpr::bytes(vec![1, 2, 3, 4]), SilExpr::bool(true), SilExpr::byte(1)])
+            .expect("Sil bump sigscript builds");
+        assert_eq!(portable_bump, sil_bump);
+
+        let portable_done =
+            crate::codec::encode_actor_entry_sig_script(&artifact, "Foo", "done", &[]).expect("portable done sigscript builds");
+        let sil_done = compiled.build_sig_script("done", vec![]).expect("Sil done sigscript builds");
+        assert_eq!(portable_done, sil_done);
     }
 
     #[test]
@@ -2150,12 +2217,25 @@ mod tests {
         for actor in &artifact.actors {
             let compiled = actor.compiled.as_ref().unwrap_or_else(|| panic!("actor `{}` should compile", actor.name));
             assert_compiled_projection(actor.name.as_str(), compiled);
+            assert_runtime_state_round_trip(actor, compiled);
             if let Some(expected_hash) = expected_hashes.get(actor.name.as_str()) {
                 assert_eq!(&compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
             }
         }
 
         let _ = fs::remove_dir_all(out_dir);
+    }
+
+    fn assert_runtime_state_round_trip(actor: &ActorArtifact, compiled: &CompiledActorArtifact) {
+        let script = crate::codec::decode_hex(&compiled.script_hex).expect("script hex decodes");
+        let state_start = compiled.state_span.offset;
+        let state_end = state_start + compiled.state_span.len;
+        let state_script = &script[state_start..state_end];
+        let state_values =
+            crate::codec::decode_runtime_state_script(&actor.runtime_state, state_script).expect("runtime state decodes");
+        let reencoded =
+            crate::codec::encode_runtime_state_script(&actor.runtime_state, &state_values).expect("runtime state re-encodes");
+        assert_eq!(reencoded, state_script, "actor `{}` runtime state must re-encode byte-for-byte", actor.name);
     }
 
     fn assert_compiled_projection(actor: &str, compiled: &CompiledActorArtifact) {

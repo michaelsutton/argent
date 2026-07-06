@@ -100,6 +100,8 @@ pub enum RuntimeFieldRoleArtifact {
 pub struct EntryArtifact {
     pub name: String,
     pub kind: EntryKindArtifact,
+    #[serde(default)]
+    pub selector: Option<i64>,
     pub user_params: Vec<ParamArtifact>,
     pub hidden_params: Vec<HiddenParamArtifact>,
     pub consumes: Vec<ConsumeArtifact>,

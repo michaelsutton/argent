@@ -249,6 +249,7 @@
         {
           "name": "register_player",
           "kind": "leader",
+          "selector": null,
           "user_params": [
             {
               "name": "owner_sig",
@@ -481,6 +482,7 @@
         {
           "name": "start_game",
           "kind": "leader",
+          "selector": 0,
           "user_params": [
             {
               "name": "owner_sig",
@@ -629,6 +631,7 @@
         {
           "name": "accept_start",
           "kind": "delegate",
+          "selector": 1,
           "user_params": [
             {
               "name": "owner_sig",
@@ -680,6 +683,7 @@
         {
           "name": "settle",
           "kind": "delegate",
+          "selector": 2,
           "user_params": [],
           "hidden_params": [
             {
@@ -718,6 +722,7 @@
         {
           "name": "retire",
           "kind": "leader",
+          "selector": 3,
           "user_params": [
             {
               "name": "owner_sig",
@@ -858,6 +863,7 @@
         {
           "name": "take",
           "kind": "leader",
+          "selector": 0,
           "user_params": [
             {
               "name": "amount",
@@ -977,6 +983,7 @@
         {
           "name": "concede",
           "kind": "leader",
+          "selector": 1,
           "user_params": [
             {
               "name": "player_id",
@@ -1152,6 +1159,7 @@
         {
           "name": "settle",
           "kind": "leader",
+          "selector": null,
           "user_params": [],
           "hidden_params": [
             {

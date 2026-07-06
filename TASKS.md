@@ -158,6 +158,8 @@ Obstacle to handle:
 
 ### 4. Implement Artifact-Only ABI And State Codec
 
+Status: done.
+
 Implement a small runtime codec driven only by the portable type descriptors.
 This codec should encode:
 

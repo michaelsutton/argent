@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod ast;
+pub mod codec;
 pub mod emit;
 pub mod error;
 pub mod lexer;

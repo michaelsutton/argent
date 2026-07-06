@@ -118,6 +118,7 @@
         {
           "name": "issue",
           "kind": "leader",
+          "selector": null,
           "user_params": [
             {
               "name": "admin_sig",
@@ -306,6 +307,7 @@
         {
           "name": "redeem",
           "kind": "leader",
+          "selector": null,
           "user_params": [
             {
               "name": "owner_sig",
