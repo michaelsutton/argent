@@ -4,32 +4,30 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Ticket(
-    byte[32] gen__init_template_issuer,
     byte[32] gen__init_template_ticket,
     byte[32] init_owner,
     int init_serial,
     int init_redeemed
 ) {
-    // State layouts
+    // :: state layouts
     struct IssuerState {
-        byte[32] gen__template_issuer;
         byte[32] gen__template_ticket;
-        // ----------- template fields above; source state below
+        // :: gen__ ^ | src:
         byte[32] admin;
         int next_serial;
     }
 
-    // Template capability table
-    byte[32] gen__template_issuer = gen__init_template_issuer;
+    // :: route template table
     byte[32] gen__template_ticket = gen__init_template_ticket;
 
-    // Ticket state fields
+    // :: state fields: Ticket
     byte[32] owner = init_owner;
     int serial = init_serial;
     int redeemed = init_redeemed;
 
-    // Entrypoints
+    // :: entrypoints
     entrypoint function redeem(sig owner_sig, pubkey owner_pk) {
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: Ticket
 
@@ -38,13 +36,13 @@ contract Ticket(
         require(redeemed == 0);
         require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         State redeemed_ticket = {
-            gen__template_issuer: gen__template_issuer,
             gen__template_ticket: gen__template_ticket,
-            // ----------- template fields above; source state below
+            // :: gen__ ^ | src:
             owner: owner,
             serial: serial,
             redeemed: 1,
         };
+        // :: become Ticket
         validateOutputState(gen__next_output_idx, redeemed_ticket);
     }
 

@@ -151,6 +151,7 @@ pub struct RuntimeFieldArtifact {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeFieldRoleArtifact {
     Template { contract: String },
+    TemplateTable { contracts: Vec<String> },
     Source,
 }
 

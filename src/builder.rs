@@ -237,6 +237,13 @@ impl<'a> ArtifactTxBuilder<'a> {
                         ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
                     );
                 }
+                RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+                    let mut table = Vec::with_capacity(contracts.len() * 32);
+                    for contract in contracts {
+                        table.extend_from_slice(&decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?);
+                    }
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(table));
+                }
             }
         }
         if let Some(extra) = source_state.into_keys().next() {
@@ -382,10 +389,7 @@ mod tests {
             decoded.get("gen__template_ticket"),
             Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
-        assert_eq!(
-            decoded.get("gen__template_issuer"),
-            Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Issuer").unwrap().compiled.template.hash_hex).unwrap()))
-        );
+        assert!(!decoded.contains_key("gen__template_issuer"), "Ticket state should not carry unrelated Issuer template");
     }
 
     #[test]

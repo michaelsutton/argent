@@ -4,38 +4,29 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesSettle(
-    byte[32] gen__init_template_league,
-    byte[32] gen__init_template_player,
-    byte[32] gen__init_template_stones_game,
-    byte[32] gen__init_template_stones_settle,
+    byte[96] gen__init_template_table,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_status
 ) {
-    // Shared constants
+    // :: shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // State layouts
+    // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[96] gen__template_table;
+        // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[96] gen__template_table;
+        // :: gen__ ^ | src:
         byte[32] owner;
         byte[32] player_id;
         int open_games;
@@ -44,11 +35,8 @@ contract StonesSettle(
         int losses;
     }
     struct GameState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[96] gen__template_table;
+        // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
         int pile;
@@ -56,7 +44,7 @@ contract StonesSettle(
         int turn;
     }
 
-    // Shared helper functions
+    // :: shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -85,22 +73,24 @@ contract StonesSettle(
         return result;
     }
 
-    // Template capability table
-    byte[32] gen__template_league = gen__init_template_league;
-    byte[32] gen__template_player = gen__init_template_player;
-    byte[32] gen__template_stones_game = gen__init_template_stones_game;
-    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
+    // :: route template table
+    byte[96] gen__template_table = gen__init_template_table;
 
-    // StonesSettle state fields
+    // :: state fields: StonesSettle
     byte[32] player_a = init_player_a;
     byte[32] player_b = init_player_b;
     int status = init_status;
 
-    // Entrypoints
+    // :: entrypoints
     entrypoint function settle(byte[] gen__player_prefix, byte[] gen__player_suffix) {
+        // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
 
+        // :: routes: [0]=Player
+        byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));
+
+        // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) == 3);
         require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
@@ -108,6 +98,8 @@ contract StonesSettle(
         PlayerState player_a_in = readInputStateWithTemplate(gen__player_a_in_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
         int gen__player_b_in_input_idx = OpCovInputIdx(gen__cov_id, 2); // input Player at cov[2]
         PlayerState player_b_in = readInputStateWithTemplate(gen__player_b_in_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
+
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         int gen__player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
         int gen__player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
@@ -135,11 +127,8 @@ contract StonesSettle(
             require(tx.outputs[gen__player_b_out_output_idx].value == tx.inputs[gen__player_b_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
         }
         PlayerState next_player_a = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__template_table: gen__template_table,
+            // :: gen__ ^ | src:
             owner: player_a_in.owner,
             player_id: player_a_in.player_id,
             open_games: player_a_in.open_games - 1,
@@ -148,11 +137,8 @@ contract StonesSettle(
             losses: player_a_losses,
         };
         PlayerState next_player_b = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__template_table: gen__template_table,
+            // :: gen__ ^ | src:
             owner: player_b_in.owner,
             player_id: player_b_in.player_id,
             open_games: player_b_in.open_games - 1,
@@ -160,7 +146,9 @@ contract StonesSettle(
             wins: player_b_wins,
             losses: player_b_losses,
         };
+        // :: become Player
         validateOutputStateWithTemplate(gen__player_a_out_output_idx, next_player_a, gen__player_prefix, gen__player_suffix, gen__template_player);
+        // :: become Player
         validateOutputStateWithTemplate(gen__player_b_out_output_idx, next_player_b, gen__player_prefix, gen__player_suffix, gen__template_player);
     }
 

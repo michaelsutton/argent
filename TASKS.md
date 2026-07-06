@@ -371,6 +371,11 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
+Status: in progress. First step implemented route-family-scoped packed template
+tables (`byte[32 * N]`) so contracts can carry a deterministic capability table
+without exposing every template as an independent state field. Merkle roots,
+openings, and hint syntax remain follow-up work.
+
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
 rule plus optional developer hints that influence grouping/nesting.

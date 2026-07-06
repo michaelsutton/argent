@@ -41,6 +41,7 @@ struct Model<'a> {
     states: BTreeMap<String, &'a StateDecl>,
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
     actors: Vec<&'a ActorDecl>,
+    state_template_deps: BTreeMap<String, Vec<String>>,
 }
 
 impl<'a> Model<'a> {
@@ -68,7 +69,9 @@ impl<'a> Model<'a> {
             actors.push(actor);
         }
 
-        let model = Self { app_name, template_actors, consts, functions, states, actors_by_name: all_actors, actors };
+        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors)?;
+        let model =
+            Self { app_name, template_actors, consts, functions, states, actors_by_name: all_actors, actors, state_template_deps };
         model.validate()?;
         Ok(model)
     }
@@ -84,6 +87,10 @@ impl<'a> Model<'a> {
     fn actor_state(&self, name: &str) -> Result<&StateDecl> {
         let actor = self.actor(name)?;
         self.state(&actor.state)
+    }
+
+    fn template_deps_for_state(&self, state: &str) -> &[String] {
+        self.state_template_deps.get(state).map(Vec::as_slice).unwrap_or(&[])
     }
 
     fn validate(&self) -> Result<()> {
@@ -428,6 +435,75 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
     Ok(())
 }
 
+fn compute_state_template_deps<'a>(
+    actors: &[&'a ActorDecl],
+    actors_by_name: &BTreeMap<String, &'a ActorDecl>,
+    template_actors: &[String],
+) -> Result<BTreeMap<String, Vec<String>>> {
+    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for actor in actors {
+        direct.entry(actor.state.clone()).or_default();
+        adjacency.entry(actor.state.clone()).or_default();
+
+        for entry in &actor.entries {
+            for consume in &entry.consumes {
+                if template_actor_set.contains(&consume.actor) {
+                    direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
+                }
+            }
+
+            for route in &entry.routes {
+                let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
+                    ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
+                })?;
+                adjacency.entry(actor.state.clone()).or_default().insert(target.state.clone());
+                adjacency.entry(target.state.clone()).or_default().insert(actor.state.clone());
+
+                if template_actor_set.contains(&route.actor)
+                    && route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate
+                {
+                    direct.entry(actor.state.clone()).or_default().insert(route.actor.clone());
+                }
+            }
+        }
+    }
+
+    let mut result = BTreeMap::new();
+    let mut visited = BTreeSet::new();
+    for state in adjacency.keys() {
+        if visited.contains(state) {
+            continue;
+        }
+        let mut stack = vec![state.clone()];
+        let mut component = BTreeSet::new();
+        while let Some(next) = stack.pop() {
+            if !visited.insert(next.clone()) {
+                continue;
+            }
+            component.insert(next.clone());
+            if let Some(neighbors) = adjacency.get(&next) {
+                stack.extend(neighbors.iter().filter(|neighbor| !visited.contains(*neighbor)).cloned());
+            }
+        }
+
+        let mut deps = BTreeSet::new();
+        for component_state in &component {
+            if let Some(state_deps) = direct.get(component_state) {
+                deps.extend(state_deps.iter().cloned());
+            }
+        }
+        let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
+        for component_state in component {
+            result.insert(component_state, ordered.clone());
+        }
+    }
+
+    Ok(result)
+}
+
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
     if let Some(first_path) = seen.insert(name.to_string(), path) {
         return Err(ArgentError::new(format!(
@@ -448,9 +524,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 
     out.push_str(&format!("contract {}(\n", actor.name));
     let mut args = Vec::new();
-    for template_actor in &model.template_actors {
-        args.push(format!("    byte[32] {}", hidden_template_init_name(template_actor)));
-    }
+    args.extend(hidden_template_init_args_for_state(&actor.state, model).into_iter().map(|arg| format!("    {arg}")));
     for field in &state.fields {
         args.push(format!("    {} init_{}", field.ty.to_sil(), field.name));
     }
@@ -461,15 +535,11 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     emit_state_layouts(&mut out, actor, model)?;
     emit_shared_functions(&mut out, model);
 
-    emit_section_header(&mut out, "Template capability table");
-    for template_actor in &model.template_actors {
-        let template = hidden_template_name(template_actor);
-        let init_template = hidden_template_init_name(template_actor);
-        out.push_str(&format!("    byte[32] {template} = {init_template};\n"));
-    }
+    emit_section_header(&mut out, "Route template table");
+    emit_route_template_table(&mut out, &actor.state, model);
     out.push('\n');
 
-    emit_section_header(&mut out, &format!("{} state fields", actor.name));
+    emit_section_header_raw(&mut out, &format!("state fields: {}", actor.name));
     for field in &state.fields {
         out.push_str(&format!("    {} {} = init_{};\n", field.ty.to_sil(), field.name, field.name));
     }
@@ -486,7 +556,11 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 }
 
 fn emit_section_header(out: &mut String, title: &str) {
-    out.push_str(&format!("    // {title}\n"));
+    out.push_str(&format!("    // :: {}\n", title.to_ascii_lowercase()));
+}
+
+fn emit_section_header_raw(out: &mut String, title: &str) {
+    out.push_str(&format!("    // :: {title}\n"));
 }
 
 fn emit_shared_constants(out: &mut String, model: &Model<'_>) {
@@ -511,10 +585,7 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
         }
         let state = model.state(&actor.state)?;
         out.push_str(&format!("    struct {} {{\n", state.name));
-        for template_actor in &model.template_actors {
-            out.push_str(&format!("        byte[32] {};\n", hidden_template_name(template_actor)));
-        }
-        out.push_str("        // ----------- template fields above; source state below\n");
+        emit_hidden_template_fields(out, state.name.as_str(), model, 8);
         for field in &state.fields {
             out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
         }
@@ -545,8 +616,13 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     out.push_str(&sil_params.join(", "));
     out.push_str(") {\n");
 
-    for spec in &witness_specs {
-        if spec.form == TemplateWitnessForm::Bytes {
+    let has_byte_witnesses = witness_specs.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes);
+    if has_byte_witnesses {
+        out.push_str("        // :: witness lens\n");
+        for spec in &witness_specs {
+            if spec.form != TemplateWitnessForm::Bytes {
+                continue;
+            }
             let prefix = hidden_witness_prefix_name(&spec.actor);
             let suffix = hidden_witness_suffix_name(&spec.actor);
             let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
@@ -554,12 +630,15 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
             out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
         }
+        out.push('\n');
     }
-    if witness_specs.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) {
+
+    if emit_entry_template_locals(out, actor, &witness_specs, model) {
         out.push('\n');
     }
 
     if !entry.consumes.is_empty() {
+        out.push_str("        // :: cov inputs\n");
         let cov_id = hidden_cov_id_name();
         out.push_str(&format!("        byte[32] {cov_id} = OpInputCovenantId(this.activeInputIndex);\n"));
         match entry.kind {
@@ -596,8 +675,10 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
                 consume.name
             ));
         }
+        out.push('\n');
     }
 
+    out.push_str("        // :: auth outputs\n");
     match &entry.emits {
         EmitSpec::None => {
             out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 0);\n");
@@ -628,6 +709,28 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     out.push_str(&lower_entry_body(actor, entry, model)?);
     out.push_str("    }\n");
     Ok(())
+}
+
+fn emit_entry_template_locals(out: &mut String, actor: &ActorDecl, witness_specs: &[TemplateWitnessSpec], model: &Model<'_>) -> bool {
+    if !uses_packed_template_table(&actor.state, model) {
+        return false;
+    }
+    let deps = model.template_deps_for_state(&actor.state);
+    let needed = witness_specs.iter().map(|spec| spec.actor.as_str()).collect::<BTreeSet<_>>();
+    let table = hidden_template_table_name();
+    let locals = deps.iter().enumerate().filter(|(_, dep)| needed.contains(dep.as_str())).collect::<Vec<_>>();
+    if locals.is_empty() {
+        return false;
+    }
+
+    let labels = locals.iter().map(|(idx, dep)| format!("[{idx}]={dep}")).collect::<Vec<_>>().join(" ");
+    out.push_str(&format!("        // :: routes: {labels}\n"));
+    for (idx, dep) in locals {
+        let start = idx * 32;
+        let end = start + 32;
+        out.push_str(&format!("        byte[32] {} = byte[32]({table}.slice({start}, {end}));\n", hidden_template_name(dep)));
+    }
+    true
 }
 
 fn lower_entry_body(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<String> {
@@ -777,6 +880,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         if validation == RouteValidationKind::ExactScriptPublicKey {
             push_indent(out, indent);
+            out.push_str(&format!("// :: become {}\n", route.actor));
+            push_indent(out, indent);
             out.push_str(&format!(
                 "require(tx.outputs[{output_idx}].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);\n"
             ));
@@ -795,6 +900,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             name
         };
 
+        push_indent(out, indent);
+        out.push_str(&format!("// :: become {}\n", route.actor));
         push_indent(out, indent);
         match validation {
             RouteValidationKind::ExactScriptPublicKey => unreachable!("exact continuation returned before state lowering"),
@@ -834,7 +941,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let state_name = if ty == "State" { &self.actor.state } else { ty };
         let state = self.model.state(state_name)?;
         let fields = state.fields.iter().map(|field| (field.name.clone(), field.name.clone())).collect::<Vec<_>>();
-        self.render_state_object(&fields, indent)
+        self.render_state_object_for_state(state_name, &fields, indent)
     }
 
     fn lower_state_constructor(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
@@ -857,7 +964,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .into_iter()
             .map(|(name, expr)| self.lower_expr(&expr, None, indent + 4).map(|lowered| (name, lowered)))
             .collect::<Result<Vec<_>>>()?;
-        self.render_state_object(&fields, indent)
+        self.render_state_object_for_state(state_name, &fields, indent)
     }
 
     fn lower_local_type(&self, source_ty: &str) -> String {
@@ -874,16 +981,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
     }
 
-    fn render_state_object(&self, fields: &[(String, String)], indent: usize) -> Result<String> {
+    fn render_state_object_for_state(&self, state_name: &str, fields: &[(String, String)], indent: usize) -> Result<String> {
         let field_indent = " ".repeat(indent + 4);
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        for template_actor in &self.model.template_actors {
-            let template = hidden_template_name(template_actor);
-            out.push_str(&format!("{field_indent}{template}: {template},\n"));
+        for (field, expr) in hidden_template_object_fields_for_state(state_name, self.model) {
+            out.push_str(&format!("{field_indent}{field}: {expr},\n"));
         }
-        out.push_str(&format!("{field_indent}// ----------- template fields above; source state below\n"));
+        if !self.model.template_deps_for_state(state_name).is_empty() {
+            out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
+        }
         for (name, expr) in fields {
             out.push_str(&format!("{field_indent}{name}: {expr},\n"));
         }
@@ -1513,15 +1621,18 @@ fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<
 
 fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
     let state = model.state(&actor.state)?;
-    let mut args = Vec::with_capacity(model.template_actors.len() + state.fields.len());
+    let deps = model.template_deps_for_state(&actor.state);
+    let mut args = Vec::with_capacity(usize::from(!deps.is_empty()) + state.fields.len());
 
     // These placeholders are valid because Argent-generated constructor
-    // arguments are state initializers: hidden template hashes and source state
-    // fields. If a constructor argument affects code shape outside the compiled
-    // state span, the template hash changes and the contract must be recompiled
-    // for that value.
-    for _ in &model.template_actors {
-        args.push(SilExpr::bytes(vec![0; 32]));
+    // arguments are state initializers: hidden template commitments and source
+    // state fields. If a constructor argument affects code shape outside the
+    // compiled state span, the template hash changes and the contract must be
+    // recompiled for that value.
+    match deps {
+        [] => {}
+        [_] => args.push(zero_byte_array_expr(32)),
+        deps => args.push(zero_byte_array_expr(deps.len() * 32)),
     }
     for field in &state.fields {
         args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
@@ -1537,7 +1648,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
 
 fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
     match (&ty.name[..], ty.array) {
-        ("byte", Some(len)) => Ok(SilExpr::bytes(vec![0; len])),
+        ("byte", Some(len)) => Ok(zero_byte_array_expr(len)),
         (_, Some(len)) => {
             let item = TypeRef::new(ty.name.clone());
             let values = (0..len).map(|_| placeholder_expr_for_type(&item)).collect::<Result<Vec<_>>>()?;
@@ -1547,11 +1658,15 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
         ("bool", None) => Ok(SilExpr::bool(false)),
         ("byte", None) => Ok(SilExpr::byte(0)),
         ("string", None) => Ok(SilExpr::string("")),
-        ("pubkey", None) => Ok(SilExpr::bytes(vec![0; 32])),
-        ("sig", None) => Ok(SilExpr::bytes(vec![0; 65])),
-        ("datasig", None) => Ok(SilExpr::bytes(vec![0; 64])),
+        ("pubkey", None) => Ok(zero_byte_array_expr(32)),
+        ("sig", None) => Ok(zero_byte_array_expr(65)),
+        ("datasig", None) => Ok(zero_byte_array_expr(64)),
         (name, None) => Err(ArgentError::new(format!("unsupported constructor placeholder type `{name}`"))),
     }
+}
+
+fn zero_byte_array_expr<'i>(len: usize) -> SilExpr<'i> {
+    (0..len).map(|_| SilExpr::byte(0)).collect::<Vec<_>>().into()
 }
 
 fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledContractArtifact> {
@@ -1584,12 +1699,23 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
 
 fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
     let mut fields = Vec::new();
-    for actor in &model.template_actors {
-        fields.push(RuntimeFieldArtifact {
-            name: hidden_template_name(actor),
-            ty: TypeArtifact::from_parts("byte", Some(32)),
-            role: RuntimeFieldRoleArtifact::Template { contract: actor.clone() },
-        });
+    let deps = model.template_deps_for_state(&state.name);
+    match deps {
+        [] => {}
+        [actor] => {
+            fields.push(RuntimeFieldArtifact {
+                name: hidden_template_name(actor),
+                ty: TypeArtifact::from_parts("byte", Some(32)),
+                role: RuntimeFieldRoleArtifact::Template { contract: actor.clone() },
+            });
+        }
+        deps => {
+            fields.push(RuntimeFieldArtifact {
+                name: hidden_template_table_name(),
+                ty: TypeArtifact::from_parts("byte", Some(deps.len() * 32)),
+                role: RuntimeFieldRoleArtifact::TemplateTable { contracts: deps.to_vec() },
+            });
+        }
     }
     for field in &state.fields {
         fields.push(RuntimeFieldArtifact {
@@ -1946,6 +2072,66 @@ fn hidden_template_init_name(actor: &str) -> String {
 
 fn hidden_template_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_table_init_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}init_template_table")
+}
+
+fn hidden_template_table_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_table")
+}
+
+fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
+    let deps = model.template_deps_for_state(state);
+    match deps {
+        [] => Vec::new(),
+        [actor] => vec![format!("byte[32] {}", hidden_template_init_name(actor))],
+        deps => vec![format!("byte[{}] {}", deps.len() * 32, hidden_template_table_init_name())],
+    }
+}
+
+fn uses_packed_template_table(state: &str, model: &Model<'_>) -> bool {
+    model.template_deps_for_state(state).len() > 1
+}
+
+fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
+    let deps = model.template_deps_for_state(state);
+    match deps {
+        [] => out.push_str("    // No foreign route templates required.\n"),
+        [actor] => {
+            out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
+        }
+        deps => {
+            let table = hidden_template_table_name();
+            out.push_str(&format!("    byte[{}] {table} = {};\n", deps.len() * 32, hidden_template_table_init_name()));
+        }
+    }
+}
+
+fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>, indent: usize) {
+    let field_indent = " ".repeat(indent);
+    let deps = model.template_deps_for_state(state);
+    match deps {
+        [] => {}
+        [actor] => {
+            out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
+            out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
+        }
+        deps => {
+            out.push_str(&format!("{field_indent}byte[{}] {};\n", deps.len() * 32, hidden_template_table_name()));
+            out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
+        }
+    }
+}
+
+fn hidden_template_object_fields_for_state(state: &str, model: &Model<'_>) -> Vec<(String, String)> {
+    let deps = model.template_deps_for_state(state);
+    match deps {
+        [] => Vec::new(),
+        [actor] => vec![(hidden_template_name(actor), hidden_template_name(actor))],
+        _ => vec![(hidden_template_table_name(), hidden_template_table_name())],
+    }
 }
 
 fn template_receipt_id(actor: &str) -> String {
@@ -2314,8 +2500,8 @@ mod tests {
         let sil = emit_actor(actor, &model).expect("actor emits");
         let manifest = emit_manifest(&program, &model);
 
-        assert!(sil.contains("byte[32] gen__init_template_foo"), "{sil}");
-        assert!(sil.contains("byte[32] gen__template_foo = gen__init_template_foo;"), "{sil}");
+        assert!(!sil.contains("byte[32] gen__init_template_foo"), "{sil}");
+        assert!(!sil.contains("byte[32] gen__template_foo = gen__init_template_foo;"), "{sil}");
         assert!(sil.contains("int gen__next_output_idx = OpAuthOutputIdx"), "{sil}");
         assert!(sil.contains("tx.outputs[gen__next_output_idx].value"), "{sil}");
         assert!(
@@ -2445,14 +2631,12 @@ mod tests {
         assert_compiled_projection(sil_contract.name.as_str(), &sil_contract.compiled);
         assert_eq!(
             sil_contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
-            ["gen__template_foo", "owner", "count"],
+            ["owner", "count"],
             "runtime state field order must match generated Silverscript state order"
         );
-        assert_eq!(sil_contract.runtime_state.fields[0].name, "gen__template_foo");
-        assert_eq!(sil_contract.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { contract: "Foo".to_string() });
-        assert_eq!(sil_contract.runtime_state.fields[1].name, "owner");
+        assert_eq!(sil_contract.runtime_state.fields[0].name, "owner");
+        assert_eq!(sil_contract.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Source);
         assert_eq!(sil_contract.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
-        assert_eq!(sil_contract.runtime_state.fields[2].role, RuntimeFieldRoleArtifact::Source);
 
         let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
         assert_eq!(entry.kind, EntryKindArtifact::Leader);
@@ -2493,8 +2677,8 @@ mod tests {
             "examples/tickets.ag",
             "tickets",
             &[
-                ("Issuer", "5404d6e8784964254e7639560c10b08d10ba4ff53f77d38c90128273e6f5c50d"),
-                ("Ticket", "af2c2f57d547110b19467ceea32a3a34e947649b03893b222ed8da5fc57f6324"),
+                ("Issuer", "e91f3e3570438b064be220a2cc0f623450af006ef883810349d2fc07acf8814e"),
+                ("Ticket", "be416b25f340479bb31b271c28cdd230764a8595bc1298270736449a1edb4575"),
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
@@ -2526,6 +2710,25 @@ mod tests {
             "{player_sil}"
         );
         assert!(!player_sil.contains("byte[] gen__player_prefix"), "{player_sil}");
+        assert!(player_sil.contains("byte[96] gen__init_template_table"), "{player_sil}");
+        assert!(player_sil.contains("byte[96] gen__template_table = gen__init_template_table;"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));"), "{player_sil}");
+        assert!(
+            player_sil.contains("byte[32] gen__template_stones_game = byte[32](gen__template_table.slice(32, 64));"),
+            "{player_sil}"
+        );
+        assert!(
+            player_sil.contains("byte[32] gen__template_stones_settle = byte[32](gen__template_table.slice(64, 96));"),
+            "{player_sil}"
+        );
+        assert!(
+            !player_sil.contains("byte[32][]") && !player_sil.contains("byte[][]"),
+            "template tables should use fixed packed bytes, not nested arrays: {player_sil}"
+        );
+        assert!(
+            !player_sil.contains("gen__template_league"),
+            "Player route-family template table should not carry unrelated League template: {player_sil}"
+        );
         assert!(player_sil.contains("validateOutputState(gen__self_out_output_idx, next_self);"), "{player_sil}");
         assert!(player_sil.contains("validateOutputState(gen__opponent_out_output_idx, next_opponent);"), "{player_sil}");
         assert!(player_sil.contains("validateOutputStateWithTemplate(gen__game_output_idx, next_game"), "{player_sil}");
@@ -2570,6 +2773,14 @@ mod tests {
         );
 
         let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
+        assert_eq!(player_contract.runtime_state.fields[0].name, "gen__template_table");
+        assert_eq!(player_contract.runtime_state.fields[0].ty, TypeArtifact::FixedBytes { len: 96 });
+        assert_eq!(
+            player_contract.runtime_state.fields[0].role,
+            RuntimeFieldRoleArtifact::TemplateTable {
+                contracts: vec!["Player".to_string(), "StonesGame".to_string(), "StonesSettle".to_string()]
+            }
+        );
         let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
         assert_eq!(
             sil_accept_start.params.iter().map(|param| (param.name.as_str(), param.ty.clone())).collect::<Vec<_>>(),

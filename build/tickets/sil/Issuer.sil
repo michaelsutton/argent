@@ -4,34 +4,33 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Issuer(
-    byte[32] gen__init_template_issuer,
     byte[32] gen__init_template_ticket,
     byte[32] init_admin,
     int init_next_serial
 ) {
-    // State layouts
+    // :: state layouts
     struct TicketState {
-        byte[32] gen__template_issuer;
         byte[32] gen__template_ticket;
-        // ----------- template fields above; source state below
+        // :: gen__ ^ | src:
         byte[32] owner;
         int serial;
         int redeemed;
     }
 
-    // Template capability table
-    byte[32] gen__template_issuer = gen__init_template_issuer;
+    // :: route template table
     byte[32] gen__template_ticket = gen__init_template_ticket;
 
-    // Issuer state fields
+    // :: state fields: Issuer
     byte[32] admin = init_admin;
     int next_serial = init_next_serial;
 
-    // Entrypoints
+    // :: entrypoints
     entrypoint function issue(sig admin_sig, pubkey admin_pk, pubkey owner_pk, byte[] gen__ticket_prefix, byte[] gen__ticket_suffix) {
+        // :: witness lens
         int gen__ticket_prefix_len = gen__ticket_prefix.length;
         int gen__ticket_suffix_len = gen__ticket_suffix.length;
 
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         int gen__issuer_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output issuer: Issuer
         int gen__ticket_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output ticket: Ticket
@@ -41,23 +40,23 @@ contract Issuer(
         int serial = next_serial;
         byte[32] owner = blake2b(owner_pk);
         State next_issuer = {
-            gen__template_issuer: gen__template_issuer,
             gen__template_ticket: gen__template_ticket,
-            // ----------- template fields above; source state below
+            // :: gen__ ^ | src:
             admin: admin,
             next_serial: next_serial + 1,
         };
         TicketState new_ticket = {
-            gen__template_issuer: gen__template_issuer,
             gen__template_ticket: gen__template_ticket,
-            // ----------- template fields above; source state below
+            // :: gen__ ^ | src:
             owner: owner,
             serial: serial,
             redeemed: 0,
         };
         require(tx.outputs[gen__issuer_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__ticket_output_idx].value > 0);
+        // :: become Issuer
         validateOutputState(gen__issuer_output_idx, next_issuer);
+        // :: become Ticket
         validateOutputStateWithTemplate(gen__ticket_output_idx, new_ticket, gen__ticket_prefix, gen__ticket_suffix, gen__template_ticket);
     }
 
