@@ -180,7 +180,41 @@ Obstacle to handle:
   own runtime value representation, for example JSON values or a small
   `ArtifactValue` enum.
 
-### 5. Build Minimal Artifact-Only Transaction Harness
+### 5. Split Argent Artifact From Sil ABI Artifact
+
+Separate the coordination metadata owned by Argent from the bytecode ABI
+metadata owned by the generated Sil contract layer.
+
+The split should make the current artifact look conceptually like:
+
+```text
+Argent artifact
+  actors, routes, consumes, emits, become metadata, hidden witness recipes
+
+Sil ABI artifact
+  script bytes, entry ABI, selector, state layout, type descriptors,
+  state field order, prefix/suffix/template hash, codec contract
+```
+
+End-to-end test:
+
+- Build `examples/tickets.ag`.
+- Deserialize the outer Argent artifact and inner Sil ABI artifact without
+  importing compiler AST types.
+- Use the Sil ABI artifact with the artifact-only codec to reproduce the same
+  sigscript and state roundtrip coverage from task 4.
+- Assert Argent route metadata refers to inner Sil ABI actor ids instead of
+  duplicating bytecode ABI fields.
+
+Obstacle to handle:
+
+- This is a boundary cleanup, not a new source feature. Keep JSON migration
+  straightforward while making the future replacement path clear: if
+  Silverscript later emits its own portable artifact, Argent should be able to
+  wrap or reference that inner artifact instead of projecting `CompiledContract`
+  itself.
+
+### 6. Build Minimal Artifact-Only Transaction Harness
 
 Create the first reusable builder surface that consumes only artifact JSON. It
 should build P2SH signature scripts, covenant outputs, and populated test
@@ -198,7 +232,7 @@ Obstacle to handle:
 - Tests may still generate fixture artifacts through the compiler. The builder
   module under test must not import compiler crates.
 
-### 6. Represent Current `consumes` / `emits` / `become` Routes In Artifact
+### 7. Represent Current `consumes` / `emits` / `become` Routes In Artifact
 
 Promote the current route model into builder metadata. The artifact should know:
 
@@ -220,7 +254,7 @@ Obstacle to handle:
 - Route metadata must be emitted from the same validated model that emits
   Silverscript. Avoid a second ad hoc route parser in the builder.
 
-### 7. Add Same-Template Output Shortcut
+### 8. Add Same-Template Output Shortcut
 
 Generate the cheaper same-template validation path where the output is known to
 preserve the active actor template. Keep the conservative
@@ -237,7 +271,7 @@ Obstacle to handle:
 - Same actor name is not always enough. For observed or generic lanes, preserve
   the concrete runtime template identity, not just the source-level interface.
 
-### 8. Introduce Template Plan Receipts
+### 9. Introduce Template Plan Receipts
 
 Produce a machine-checkable receipt for the template plan used by the generated
 contracts and artifact. The first version may be flat and unoptimized.
@@ -255,7 +289,7 @@ Obstacle to handle:
   transaction builder's public shape. Design the receipt as a plan, not as a dump
   of current implementation details.
 
-### 9. Implement Concrete `observes` Lanes
+### 10. Implement Concrete `observes` Lanes
 
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
@@ -281,7 +315,7 @@ Obstacle to handle:
 - Observed lane output order must be deterministic and artifact-visible. Do not
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
-### 10. Hide Template Witnesses For Observed Lanes
+### 11. Hide Template Witnesses For Observed Lanes
 
 Make the builder fill observed-lane prefix/suffix/template witnesses from the
 artifact and live UTXOs. User code should provide semantic state transitions,
@@ -299,7 +333,7 @@ Obstacle to handle:
   actual prefix and suffix bytes. The artifact must say which witness shape each
   generated call expects.
 
-### 11. Implement Open Actor Interface Syntax
+### 12. Implement Open Actor Interface Syntax
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
@@ -334,7 +368,7 @@ Obstacle to handle:
   arbitrary foreign strategy determinism. Keep this distinction visible in docs
   and diagnostics.
 
-### 12. Implement Generic `T(next_state)` Become
+### 13. Implement Generic `T(next_state)` Become
 
 Lower:
 
@@ -359,7 +393,7 @@ Obstacle to handle:
   layout information. The builder must bind this bundle to the observed input,
   not to a user-provided arbitrary template.
 
-### 13. Implement Fixed Capability Header Preservation
+### 14. Implement Fixed Capability Header Preservation
 
 Add a reusable way for observed/open actors to declare which header fields are
 immutable under a transition and which fields the observing physics may mutate.
@@ -391,7 +425,7 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 14. Implement `state extends` For Header Views
+### 15. Implement `state extends` For Header Views
 
 Allow concrete agent states to extend a shared header state:
 
@@ -415,7 +449,7 @@ Obstacle to handle:
 - Header offsets must be stable and artifact-visible. Do not rely on source
   field names alone; record byte/push positions and type descriptors.
 
-### 15. Implement `expand <digest_field> as <State>`
+### 16. Implement `expand <digest_field> as <State>`
 
 Support fixed digest-backed substate:
 
@@ -442,7 +476,7 @@ Obstacle to handle:
 - The digest preimage serialization must use the same artifact codec as state
   encoding. Otherwise expanded memory and stored state will drift.
 
-### 16. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
+### 17. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
 
 Keep a closed-world fixture that does not require open actor generics. It should
 exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
@@ -460,7 +494,7 @@ Obstacle to handle:
   should be. Replace placeholders only when the artifact/builder can support the
   actual lane identity cleanly.
 
-### 17. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
+### 18. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
 
 After observed lanes, generic actors, header views, and digest expansion exist,
 turn the sketch into a real compiler fixture.
@@ -478,7 +512,7 @@ Obstacle to handle:
 - This fixture combines most hard features. Do not start here. It should be the
   integration proof that the smaller features were designed correctly.
 
-### 18. Add Chunk Or Cell-Birth Board Authority
+### 19. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -497,7 +531,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 19. Add Optional Intent UTXO Layer
+### 20. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
@@ -568,12 +602,12 @@ argent-builder -> silverscript-lang: forbidden
 
 ## Near-Term Cut
 
-The first valuable milestone is tasks 1 through 5. That gives Argent a real
+The first valuable milestone is tasks 1 through 6. That gives Argent a real
 artifact boundary and proves that a transaction can be built without compiler
 runtime types.
 
-The second milestone is tasks 6 through 10. That turns existing Argent routing
+The second milestone is tasks 7 through 11. That turns existing Argent routing
 and the minter observer sketch into artifact-driven ICC transactions.
 
-The third milestone is tasks 11 through 17. That unlocks the Open Lattice open-agent
+The third milestone is tasks 12 through 18. That unlocks the Open Lattice open-agent
 game pattern.
