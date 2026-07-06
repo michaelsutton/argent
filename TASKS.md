@@ -354,7 +354,51 @@ Obstacle to handle:
   actual prefix and suffix bytes. The artifact must say which witness shape each
   generated call expects.
 
-### 12. Introduce Typed Template Handles
+### 12. Support Artifact Bundles And External App Dependencies
+
+Allow one transaction builder invocation to compose multiple immutable artifacts.
+This is the open-agent deployment shape: the game publishes a core artifact, and
+players publish strategy artifacts that import the core state/interface files.
+
+Conceptually:
+
+```text
+core artifact
+  exports Cell, AgentCapsule, physics entries
+
+forager artifact
+  depends on core artifact id
+  exports Forager
+  declares Forager implements core::actor<AgentCapsule>
+
+artifact bundle
+  core artifact + forager artifact + resolver metadata
+```
+
+The bundle is builder knowledge, not consensus truth. Scripts still verify
+template hashes, covenant ids, script public keys, state bytes, and signatures.
+The builder should reject inconsistent bundles before constructing a transaction.
+
+End-to-end test:
+
+- Compile a core game artifact exposing `Cell` and `AgentCapsule`.
+- Compile a separate `Forager` artifact that imports the core definitions and
+  declares an `AgentCapsule` view.
+- Build one transaction with core `Cell` inputs/outputs and a `Forager`
+  input/output using only the artifact bundle.
+- Reject a `Forager` artifact compiled against a different core artifact id or
+  incompatible `AgentCapsule` layout.
+
+Obstacle to handle:
+
+- Artifact names are not identities. Dependencies must bind to artifact ids and
+  exported interface fingerprints, while source aliases remain only human-facing
+  syntax.
+- The bundle resolver must map qualified actor refs, template hashes, and
+  interface views across artifacts without merging the artifacts into one mutable
+  object.
+
+### 13. Introduce Typed Template Handles
 
 Model runtime-selected actor templates as typed handles instead of raw
 `byte[32]` hashes. This covers both closed multiplex routing and open-agent
@@ -410,7 +454,7 @@ Obstacle to handle:
   open or preserve that template. Closed mux handles can be table-driven;
   open-agent handles must be bound to the co-spent input/template witness.
 
-### 13. Implement Open Actor Interface Syntax
+### 14. Implement Open Actor Interface Syntax
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
@@ -445,7 +489,7 @@ Obstacle to handle:
   arbitrary foreign strategy determinism. Keep this distinction visible in docs
   and diagnostics.
 
-### 14. Implement Generic `T(next_state)` Become
+### 15. Implement Generic `T(next_state)` Become
 
 Lower:
 
@@ -470,7 +514,7 @@ Obstacle to handle:
   layout information. The builder must bind this bundle to the observed input,
   not to a user-provided arbitrary template.
 
-### 15. Implement Fixed Capability Header Preservation
+### 16. Implement Fixed Capability Header Preservation
 
 Add a reusable way for observed/open actors to declare which header fields are
 immutable under a transition and which fields the observing physics may mutate.
@@ -502,7 +546,7 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 16. Implement `state extends` For Header Views
+### 17. Implement `state extends` For Header Views
 
 Allow concrete agent states to extend a shared header state:
 
@@ -526,7 +570,7 @@ Obstacle to handle:
 - Header offsets must be stable and artifact-visible. Do not rely on source
   field names alone; record byte/push positions and type descriptors.
 
-### 17. Implement `expand <digest_field> as <State>`
+### 18. Implement `expand <digest_field> as <State>`
 
 Support fixed digest-backed substate:
 
@@ -553,7 +597,7 @@ Obstacle to handle:
 - The digest preimage serialization must use the same artifact codec as state
   encoding. Otherwise expanded memory and stored state will drift.
 
-### 18. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
+### 19. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
 
 Keep a closed-world fixture that does not require open actor generics. It should
 exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
@@ -571,7 +615,7 @@ Obstacle to handle:
   should be. Replace placeholders only when the artifact/builder can support the
   actual observed actor identity cleanly.
 
-### 19. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
+### 20. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
 
 After `observes` blocks, generic actors, header views, and digest expansion exist,
 turn the sketch into a real compiler fixture.
@@ -589,7 +633,7 @@ Obstacle to handle:
 - This fixture combines most hard features. Do not start here. It should be the
   integration proof that the smaller features were designed correctly.
 
-### 20. Add Chunk Or Cell-Birth Board Authority
+### 21. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -608,7 +652,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 21. Add Optional Intent UTXO Layer
+### 22. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
@@ -686,5 +730,5 @@ runtime types.
 The second milestone is tasks 7 through 11. That turns existing Argent routing
 and the minter observer sketch into artifact-driven ICC transactions.
 
-The third milestone is tasks 12 through 19. That unlocks the Open Lattice open-agent
+The third milestone is tasks 12 through 20. That unlocks the Open Lattice open-agent
 game pattern.
