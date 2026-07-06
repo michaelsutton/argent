@@ -110,6 +110,7 @@ pub struct EntryAbiRefArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WitnessArtifact {
     pub param: String,
+    pub actor: String,
     pub purpose: HiddenParamPurposeArtifact,
 }
 
@@ -132,14 +133,17 @@ pub struct HiddenParamArtifact {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: TypeArtifact,
+    pub actor: String,
     pub purpose: HiddenParamPurposeArtifact,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HiddenParamPurposeArtifact {
-    TemplatePrefix { actor: String },
-    TemplateSuffix { actor: String },
+    TemplatePrefixBytes,
+    TemplateSuffixBytes,
+    TemplatePrefixLen,
+    TemplateSuffixLen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

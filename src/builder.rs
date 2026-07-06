@@ -104,11 +104,17 @@ impl<'a> ArtifactTxBuilder<'a> {
         let mut args = user_args;
         for hidden in &entry.hidden_params {
             args.push(match &hidden.purpose {
-                HiddenParamPurposeArtifact::TemplatePrefix { actor } => {
-                    ArtifactValue::Bytes(decode_hex(&self.actor(actor)?.compiled.template.prefix_hex)?)
+                HiddenParamPurposeArtifact::TemplatePrefixBytes => {
+                    ArtifactValue::Bytes(decode_hex(&self.actor(&hidden.actor)?.compiled.template.prefix_hex)?)
                 }
-                HiddenParamPurposeArtifact::TemplateSuffix { actor } => {
-                    ArtifactValue::Bytes(decode_hex(&self.actor(actor)?.compiled.template.suffix_hex)?)
+                HiddenParamPurposeArtifact::TemplateSuffixBytes => {
+                    ArtifactValue::Bytes(decode_hex(&self.actor(&hidden.actor)?.compiled.template.suffix_hex)?)
+                }
+                HiddenParamPurposeArtifact::TemplatePrefixLen => {
+                    ArtifactValue::Int(decode_hex(&self.actor(&hidden.actor)?.compiled.template.prefix_hex)?.len() as i64)
+                }
+                HiddenParamPurposeArtifact::TemplateSuffixLen => {
+                    ArtifactValue::Int(decode_hex(&self.actor(&hidden.actor)?.compiled.template.suffix_hex)?.len() as i64)
                 }
             });
         }
@@ -413,6 +419,44 @@ mod tests {
             entry.route_plan.outputs.iter().map(|output| (output.name.as_deref(), output.auth_index)).collect::<Vec<_>>(),
             vec![(Some("self_out"), 0), (Some("opponent_out"), 1), (Some("game"), 2)]
         );
+        assert_eq!(
+            entry
+                .witnesses
+                .iter()
+                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__player_prefix", "Player", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__player_suffix", "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                ("gen__stones_game_prefix", "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__stones_game_suffix", "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+        assert_eq!(
+            entry.route_plan.terminal_paths[0]
+                .witnesses
+                .iter()
+                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
+                .collect::<Vec<_>>(),
+            entry
+                .witnesses
+                .iter()
+                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
+                .collect::<Vec<_>>()
+        );
+
+        let accept_start = builder.actor("Player").expect("Player actor exists").entry("accept_start").expect("accept_start exists");
+        assert_eq!(
+            accept_start
+                .hidden_params
+                .iter()
+                .map(|param| (param.name.as_str(), param.actor.as_str(), param.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__player_prefix_len", "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
+                ("gen__player_suffix_len", "Player", HiddenParamPurposeArtifact::TemplateSuffixLen),
+            ]
+        );
 
         let owner_a = keypair_from_byte(3);
         let owner_b = keypair_from_byte(4);
@@ -469,7 +513,7 @@ mod tests {
         );
         let tx = signed_start_game_tx(
             &builder,
-            unsigned_tx,
+            unsigned_tx.clone(),
             entries.clone(),
             outpoint_a,
             outpoint_b,
@@ -483,6 +527,44 @@ mod tests {
 
         execute_input_with_covenants(&tx, entries.clone(), 0).expect("leader input passes");
         execute_input_with_covenants(&tx, entries.clone(), 1).expect("delegate input passes");
+
+        let player_template = &builder.actor("Player").expect("Player actor exists").compiled.template;
+        let wrong_delegate_sigscript = {
+            let delegate_sig = sign_input(&unsigned_tx, entries.clone(), 1, &owner_b);
+            let prefix_len = decode_hex(&player_template.prefix_hex).expect("prefix hex decodes").len() as i64;
+            let suffix_len = decode_hex(&player_template.suffix_hex).expect("suffix hex decodes").len() as i64;
+            let accept_entry =
+                builder.actor("Player").expect("Player actor exists").entry("accept_start").expect("accept_start exists");
+            let sigscript = encode_entry_sig_script(
+                &artifact.sil_abi,
+                builder.actor("Player").expect("Player actor exists"),
+                accept_entry,
+                &[
+                    ArtifactValue::Bytes(delegate_sig),
+                    ArtifactValue::Bytes(owner_b_pk.clone()),
+                    ArtifactValue::Int(prefix_len + 1),
+                    ArtifactValue::Int(suffix_len),
+                ],
+            )
+            .expect("bad delegate sigscript encodes");
+            pay_to_script_hash_signature_script_with_flags(
+                builder.redeem_script("Player", initial_b.clone()).expect("delegate redeem script builds"),
+                sigscript,
+                covenant_engine_flags(),
+            )
+            .expect("bad delegate p2sh sigscript builds")
+        };
+        let wrong_length_tx = ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, tx.inputs[0].signature_script.clone()),
+                ArtifactTxBuilder::transaction_input(outpoint_b, wrong_delegate_sigscript),
+            ],
+            tx.outputs.clone(),
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_length_tx, entries.clone(), 1).is_err(),
+            "delegate input must reject a wrong read-only template prefix length"
+        );
 
         let swapped_outputs = vec![outputs[1].clone(), outputs[0].clone(), outputs[2].clone()];
         let swapped_unsigned_tx = ArtifactTxBuilder::transaction(

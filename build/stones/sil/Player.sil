@@ -170,10 +170,7 @@ contract Player(
         validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
     }
 
-    entrypoint function accept_start(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix) {
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
-
+    entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len) {
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
@@ -186,10 +183,7 @@ contract Player(
         require(starter.player_id != player_id);
     }
 
-    entrypoint function settle(byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
-        int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
-        int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
-
+    entrypoint function settle(int gen__stones_settle_prefix_len, int gen__stones_settle_suffix_len) {
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);

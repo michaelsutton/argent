@@ -262,6 +262,8 @@ Obstacle to handle:
 
 ### 8. Split Template Witness Bytes From Length Witnesses
 
+Status: done.
+
 Separate template witness identity from witness form. The artifact should avoid
 encoding the actor inside each enum variant and should distinguish byte witnesses
 needed for output validation from length witnesses needed only for reading a

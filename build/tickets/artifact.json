@@ -118,16 +118,16 @@
                       "witnesses": [
                         {
                           "param": "gen__issuer_prefix",
+                          "actor": "Issuer",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Issuer"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__issuer_suffix",
+                          "actor": "Issuer",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Issuer"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -140,16 +140,16 @@
                       "witnesses": [
                         {
                           "param": "gen__ticket_prefix",
+                          "actor": "Ticket",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Ticket"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__ticket_suffix",
+                          "actor": "Ticket",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Ticket"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -158,30 +158,30 @@
                   "witnesses": [
                     {
                       "param": "gen__issuer_prefix",
+                      "actor": "Issuer",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Issuer"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__issuer_suffix",
+                      "actor": "Issuer",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Issuer"
+                        "kind": "template_suffix_bytes"
                       }
                     },
                     {
                       "param": "gen__ticket_prefix",
+                      "actor": "Ticket",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Ticket"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__ticket_suffix",
+                      "actor": "Ticket",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Ticket"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -190,30 +190,30 @@
               "witnesses": [
                 {
                   "param": "gen__issuer_prefix",
+                  "actor": "Issuer",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Issuer"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__issuer_suffix",
+                  "actor": "Issuer",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Issuer"
+                    "kind": "template_suffix_bytes"
                   }
                 },
                 {
                   "param": "gen__ticket_prefix",
+                  "actor": "Ticket",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Ticket"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__ticket_suffix",
+                  "actor": "Ticket",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Ticket"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -221,30 +221,30 @@
             "witnesses": [
               {
                 "param": "gen__issuer_prefix",
+                "actor": "Issuer",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Issuer"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__issuer_suffix",
+                "actor": "Issuer",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Issuer"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "param": "gen__ticket_prefix",
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Ticket"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__ticket_suffix",
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Ticket"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -345,16 +345,16 @@
                       "witnesses": [
                         {
                           "param": "gen__ticket_prefix",
+                          "actor": "Ticket",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Ticket"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__ticket_suffix",
+                          "actor": "Ticket",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Ticket"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -363,16 +363,16 @@
                   "witnesses": [
                     {
                       "param": "gen__ticket_prefix",
+                      "actor": "Ticket",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Ticket"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__ticket_suffix",
+                      "actor": "Ticket",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Ticket"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -381,16 +381,16 @@
               "witnesses": [
                 {
                   "param": "gen__ticket_prefix",
+                  "actor": "Ticket",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Ticket"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__ticket_suffix",
+                  "actor": "Ticket",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Ticket"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -398,16 +398,16 @@
             "witnesses": [
               {
                 "param": "gen__ticket_prefix",
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Ticket"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__ticket_suffix",
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Ticket"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -573,9 +573,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Issuer",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Issuer"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -583,9 +583,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Issuer",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Issuer"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
@@ -593,9 +593,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Ticket"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -603,9 +603,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Ticket"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -706,9 +706,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Ticket"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -716,9 +716,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Ticket",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Ticket"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]

@@ -218,16 +218,16 @@
                       "witnesses": [
                         {
                           "param": "gen__league_prefix",
+                          "actor": "League",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "League"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__league_suffix",
+                          "actor": "League",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "League"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -240,16 +240,16 @@
                       "witnesses": [
                         {
                           "param": "gen__player_prefix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Player"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__player_suffix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Player"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -258,30 +258,30 @@
                   "witnesses": [
                     {
                       "param": "gen__league_prefix",
+                      "actor": "League",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "League"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__league_suffix",
+                      "actor": "League",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "League"
+                        "kind": "template_suffix_bytes"
                       }
                     },
                     {
                       "param": "gen__player_prefix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Player"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__player_suffix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Player"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -290,30 +290,30 @@
               "witnesses": [
                 {
                   "param": "gen__league_prefix",
+                  "actor": "League",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "League"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__league_suffix",
+                  "actor": "League",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "League"
+                    "kind": "template_suffix_bytes"
                   }
                 },
                 {
                   "param": "gen__player_prefix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Player"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__player_suffix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Player"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -321,30 +321,30 @@
             "witnesses": [
               {
                 "param": "gen__league_prefix",
+                "actor": "League",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "League"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__league_suffix",
+                "actor": "League",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "League"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "param": "gen__player_prefix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__player_suffix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -465,16 +465,16 @@
                       "witnesses": [
                         {
                           "param": "gen__player_prefix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Player"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__player_suffix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Player"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -487,16 +487,16 @@
                       "witnesses": [
                         {
                           "param": "gen__player_prefix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Player"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__player_suffix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Player"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -509,16 +509,16 @@
                       "witnesses": [
                         {
                           "param": "gen__stones_game_prefix",
+                          "actor": "StonesGame",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "StonesGame"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__stones_game_suffix",
+                          "actor": "StonesGame",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "StonesGame"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -527,30 +527,30 @@
                   "witnesses": [
                     {
                       "param": "gen__player_prefix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Player"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__player_suffix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Player"
+                        "kind": "template_suffix_bytes"
                       }
                     },
                     {
                       "param": "gen__stones_game_prefix",
+                      "actor": "StonesGame",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "StonesGame"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__stones_game_suffix",
+                      "actor": "StonesGame",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "StonesGame"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -559,30 +559,30 @@
               "witnesses": [
                 {
                   "param": "gen__player_prefix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Player"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__player_suffix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Player"
+                    "kind": "template_suffix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_game_prefix",
+                  "actor": "StonesGame",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "StonesGame"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_game_suffix",
+                  "actor": "StonesGame",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "StonesGame"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -590,30 +590,30 @@
             "witnesses": [
               {
                 "param": "gen__player_prefix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__player_suffix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "param": "gen__stones_game_prefix",
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesGame"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__stones_game_suffix",
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesGame"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -717,34 +717,34 @@
               "terminal_paths": [],
               "witnesses": [
                 {
-                  "param": "gen__player_prefix",
+                  "param": "gen__player_prefix_len",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Player"
+                    "kind": "template_prefix_len"
                   }
                 },
                 {
-                  "param": "gen__player_suffix",
+                  "param": "gen__player_suffix_len",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Player"
+                    "kind": "template_suffix_len"
                   }
                 }
               ]
             },
             "witnesses": [
               {
-                "param": "gen__player_prefix",
+                "param": "gen__player_prefix_len",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_len"
                 }
               },
               {
-                "param": "gen__player_suffix",
+                "param": "gen__player_suffix_len",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_len"
                 }
               }
             ],
@@ -789,34 +789,34 @@
               "terminal_paths": [],
               "witnesses": [
                 {
-                  "param": "gen__stones_settle_prefix",
+                  "param": "gen__stones_settle_prefix_len",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "StonesSettle"
+                    "kind": "template_prefix_len"
                   }
                 },
                 {
-                  "param": "gen__stones_settle_suffix",
+                  "param": "gen__stones_settle_suffix_len",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "StonesSettle"
+                    "kind": "template_suffix_len"
                   }
                 }
               ]
             },
             "witnesses": [
               {
-                "param": "gen__stones_settle_prefix",
+                "param": "gen__stones_settle_prefix_len",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_len"
                 }
               },
               {
-                "param": "gen__stones_settle_suffix",
+                "param": "gen__stones_settle_suffix_len",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_len"
                 }
               }
             ],
@@ -912,16 +912,16 @@
                       "witnesses": [
                         {
                           "param": "gen__stones_settle_prefix",
+                          "actor": "StonesSettle",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "StonesSettle"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__stones_settle_suffix",
+                          "actor": "StonesSettle",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "StonesSettle"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -930,16 +930,16 @@
                   "witnesses": [
                     {
                       "param": "gen__stones_settle_prefix",
+                      "actor": "StonesSettle",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "StonesSettle"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__stones_settle_suffix",
+                      "actor": "StonesSettle",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "StonesSettle"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -954,16 +954,16 @@
                       "witnesses": [
                         {
                           "param": "gen__stones_game_prefix",
+                          "actor": "StonesGame",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "StonesGame"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__stones_game_suffix",
+                          "actor": "StonesGame",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "StonesGame"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -972,16 +972,16 @@
                   "witnesses": [
                     {
                       "param": "gen__stones_game_prefix",
+                      "actor": "StonesGame",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "StonesGame"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__stones_game_suffix",
+                      "actor": "StonesGame",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "StonesGame"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -990,30 +990,30 @@
               "witnesses": [
                 {
                   "param": "gen__stones_game_prefix",
+                  "actor": "StonesGame",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "StonesGame"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_game_suffix",
+                  "actor": "StonesGame",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "StonesGame"
+                    "kind": "template_suffix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_settle_prefix",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "StonesSettle"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_settle_suffix",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "StonesSettle"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -1021,30 +1021,30 @@
             "witnesses": [
               {
                 "param": "gen__stones_game_prefix",
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesGame"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__stones_game_suffix",
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesGame"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "param": "gen__stones_settle_prefix",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__stones_settle_suffix",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -1134,16 +1134,16 @@
                       "witnesses": [
                         {
                           "param": "gen__stones_settle_prefix",
+                          "actor": "StonesSettle",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "StonesSettle"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__stones_settle_suffix",
+                          "actor": "StonesSettle",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "StonesSettle"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -1152,16 +1152,16 @@
                   "witnesses": [
                     {
                       "param": "gen__stones_settle_prefix",
+                      "actor": "StonesSettle",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "StonesSettle"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__stones_settle_suffix",
+                      "actor": "StonesSettle",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "StonesSettle"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -1170,16 +1170,16 @@
               "witnesses": [
                 {
                   "param": "gen__stones_settle_prefix",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "StonesSettle"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__stones_settle_suffix",
+                  "actor": "StonesSettle",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "StonesSettle"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -1187,16 +1187,16 @@
             "witnesses": [
               {
                 "param": "gen__stones_settle_prefix",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__stones_settle_suffix",
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -1298,16 +1298,16 @@
                       "witnesses": [
                         {
                           "param": "gen__player_prefix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Player"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__player_suffix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Player"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -1320,16 +1320,16 @@
                       "witnesses": [
                         {
                           "param": "gen__player_prefix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_prefix",
-                            "actor": "Player"
+                            "kind": "template_prefix_bytes"
                           }
                         },
                         {
                           "param": "gen__player_suffix",
+                          "actor": "Player",
                           "purpose": {
-                            "kind": "template_suffix",
-                            "actor": "Player"
+                            "kind": "template_suffix_bytes"
                           }
                         }
                       ]
@@ -1338,16 +1338,16 @@
                   "witnesses": [
                     {
                       "param": "gen__player_prefix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_prefix",
-                        "actor": "Player"
+                        "kind": "template_prefix_bytes"
                       }
                     },
                     {
                       "param": "gen__player_suffix",
+                      "actor": "Player",
                       "purpose": {
-                        "kind": "template_suffix",
-                        "actor": "Player"
+                        "kind": "template_suffix_bytes"
                       }
                     }
                   ]
@@ -1356,16 +1356,16 @@
               "witnesses": [
                 {
                   "param": "gen__player_prefix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_prefix",
-                    "actor": "Player"
+                    "kind": "template_prefix_bytes"
                   }
                 },
                 {
                   "param": "gen__player_suffix",
+                  "actor": "Player",
                   "purpose": {
-                    "kind": "template_suffix",
-                    "actor": "Player"
+                    "kind": "template_suffix_bytes"
                   }
                 }
               ]
@@ -1373,16 +1373,16 @@
             "witnesses": [
               {
                 "param": "gen__player_prefix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "param": "gen__player_suffix",
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -1686,9 +1686,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "League",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "League"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -1696,9 +1696,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "League",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "League"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
@@ -1706,9 +1706,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -1716,9 +1716,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -1887,9 +1887,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -1897,9 +1897,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
@@ -1907,9 +1907,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesGame"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -1917,9 +1917,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesGame"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -1943,23 +1943,23 @@
             ],
             "hidden_params": [
               {
-                "name": "gen__player_prefix",
+                "name": "gen__player_prefix_len",
                 "type": {
-                  "kind": "bytes"
+                  "kind": "int"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_len"
                 }
               },
               {
-                "name": "gen__player_suffix",
+                "name": "gen__player_suffix_len",
                 "type": {
-                  "kind": "bytes"
+                  "kind": "int"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_len"
                 }
               }
             ]
@@ -1970,23 +1970,23 @@
             "user_params": [],
             "hidden_params": [
               {
-                "name": "gen__stones_settle_prefix",
+                "name": "gen__stones_settle_prefix_len",
                 "type": {
-                  "kind": "bytes"
+                  "kind": "int"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_len"
                 }
               },
               {
-                "name": "gen__stones_settle_suffix",
+                "name": "gen__stones_settle_suffix_len",
                 "type": {
-                  "kind": "bytes"
+                  "kind": "int"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_len"
                 }
               }
             ]
@@ -2012,11 +2012,11 @@
           }
         ],
         "compiled": {
-          "script_hex": "6b2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000000800000000000000000800000000000000006c76009c6375b9cf76d0529c697600d1b99c697651d176bf785279c9011279827c75519602ea0093011279827c75519693945379c9011379827c75519602ea0093011379827c7551969394011379827c75519602ea0093011379827c7551969393bcaa02000001aa7e01207e7c7e01877e87697678c9011179827c75519602ea0093011179827c75519693945279c9011279827c75519602ea0093011279827c7551969394011279827c75519693bc785279c9011279827c75519602ea0093011279827c7551969394011279827c7551969302ea00935379c9011379827c75519602ea0093011379827c7551969394011379827c7551969302ea0093011279827c75519693bc7e5b797caa87697678c9011179827c75519602ea0093011179827c7551969394011179827c7551965193935279c9011279827c75519602ea0093011279827c7551969394011279827c755196519393012093bc785279c9011279827c75519602ea0093011279827c7551969394011279827c755196012293935379c9011379827c75519602ea0093011379827c7551969394011379827c75519601229393012093bc52795379c9011379827c75519602ea0093011379827c7551969394011379827c755196014393935479c9011479827c75519602ea0093011479827c7551969394011479827c75519601439393012093bc53795479c9011479827c75519602ea0093011479827c7551969394011479827c755196016493935579c9011579827c75519602ea0093011579827c7551969394011579827c75519601649393012093bc54795579c9011579827c75519602ea0093011579827c7551969394011579827c75519602850093935679c9011679827c75519602ea0093011679827c7551969394011679827c7551960285009393012093bc55795679c9011679827c75519602ea0093011679827c7551969394011679827c75519602a60093935779c9011779827c75519602ea0093011779827c7551969394011779827c75519602a6009393012093bc56795779c9011779827c75519602ea0093011779827c7551969394011779827c75519602c70093935879c9011879827c75519602ea0093011879827c7551969394011879827c75519602c70093935893bc57795879c9011879827c75519602ea0093011879827c7551969394011879827c75519602d00093935979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d00093935893bc58795979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d90093935a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602d90093935893bc59795a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602e20093935b79c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602e20093935893bcb9cb539c69b900ccb951ccb952cc012079aa0115798769012179012179ac695779011479879169011f79009c012079519c9b69011e7900a069011d7900a0695279c2b9be9c6978c25e79be9c6976c200a069011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e011879519358cd01087c7e01187958cd01087c7e01187958cd01087c7e01187958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5379c38769011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e5c7901207c7e5c7901207c7e5c79519358cd01087c7e5c7958cd01087c7e5c7958cd01087c7e5c7958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5279c38769011a79011a797e0117797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e0118790118797eaa01207c7e5d795d797eaa01207c7e01247958cd01087c7e01247958cd01087c7e01277958cd01087c7e7e7e7e7e7e7e7e7e011b797c7e011a797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757575516776519c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f79827c75519602ea00935f79827c7551969394537900d1c96079827c75519602ea00936079827c75519693946079827c75519602ea00936079827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e79827c75519602ea00935e79827c7551969394527900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519693bc7800d1527900d1c95f79827c75519602ea00935f79827c75519693945f79827c7551969302ea0093537900d1c96079827c75519602ea00936079827c75519693946079827c7551969302ea00935f79827c75519693bc7e5a797caa87697600d17800d1c95e79827c75519602ea00935e79827c75519693945e79827c755196519393527900d1c95f79827c75519602ea00935f79827c75519693945f79827c755196519393012093bc7800d1527900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601229393537900d1c96079827c75519602ea00936079827c75519693946079827c75519601229393012093bc527900d1537900d1c96079827c75519602ea00936079827c75519693946079827c75519601439393547900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601439393012093bc537900d1547900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601649393557900d1c9011279827c75519602ea0093011279827c7551969394011279827c75519601649393012093bc547900d1557900d1c9011279827c75519602ea0093011279827c7551969394011279827c7551960285009393567900d1c9011379827c75519602ea0093011379827c7551969394011379827c7551960285009393012093bc557900d1567900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602a6009393577900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602a6009393012093bc567900d1577900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602c7009393587900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602c70093935893bc577900d1587900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d0009393597900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d00093935893bc587900d1597900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d90093935a7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602d90093935893bc597900d15a7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602e20093935b7900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519602e20093935893bcb9cb009c69011779aa0111798769011879011879ac6954796079879169007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575757575516776529c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f79827c75519602cf00935f79827c7551969394537900d1c96079827c75519602cf00936079827c75519693946079827c75519602cf00936079827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e79827c75519602cf00935e79827c7551969394527900d1c95f79827c75519602cf00935f79827c75519693945f79827c75519693bc7800d1527900d1c95f79827c75519602cf00935f79827c75519693945f79827c7551969302cf0093537900d1c96079827c75519602cf00936079827c75519693946079827c7551969302cf00935f79827c75519693bc7e58797caa87697600d17800d1c95e79827c75519602cf00935e79827c75519693945e79827c755196519393527900d1c95f79827c75519602cf00935f79827c75519693945f79827c755196519393012093bc7800d1527900d1c95f79827c75519602cf00935f79827c75519693945f79827c75519601229393537900d1c96079827c75519602cf00936079827c75519693946079827c75519601229393012093bc527900d1537900d1c96079827c75519602cf00936079827c75519693946079827c75519601439393547900d1c9011179827c75519602cf0093011179827c7551969394011179827c75519601439393012093bc537900d1547900d1c9011179827c75519602cf0093011179827c7551969394011179827c75519601649393557900d1c9011279827c75519602cf0093011279827c7551969394011279827c75519601649393012093bc547900d1557900d1c9011279827c75519602cf0093011279827c7551969394011279827c7551960285009393567900d1c9011379827c75519602cf0093011379827c7551969394011379827c7551960285009393012093bc557900d1567900d1c9011379827c75519602cf0093011379827c7551969394011379827c75519602a6009393577900d1c9011479827c75519602cf0093011479827c7551969394011479827c75519602a6009393012093bc567900d1577900d1c9011479827c75519602cf0093011479827c7551969394011479827c75519602c7009393587900d1c9011579827c75519602cf0093011579827c7551969394011579827c75519602c70093935893bcb9cb009c695d795d797eaa76547987785479879b69007a75007a75007a75007a75007a75007a75007a75007a75007a75757575757575757575757575516776539c6375b9cb009c695a79aa567987695b795b79ac695379009c69757575757575757575757575516775006968686868",
+          "script_hex": "6b2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000000800000000000000000800000000000000006c76009c6375b9cf76d0529c697600d1b99c697651d176bf785279c9011279827c75519602ea0093011279827c75519693945379c9011379827c75519602ea0093011379827c7551969394011379827c75519602ea0093011379827c7551969393bcaa02000001aa7e01207e7c7e01877e87697678c9011179827c75519602ea0093011179827c75519693945279c9011279827c75519602ea0093011279827c7551969394011279827c75519693bc785279c9011279827c75519602ea0093011279827c7551969394011279827c7551969302ea00935379c9011379827c75519602ea0093011379827c7551969394011379827c7551969302ea0093011279827c75519693bc7e5b797caa87697678c9011179827c75519602ea0093011179827c7551969394011179827c7551965193935279c9011279827c75519602ea0093011279827c7551969394011279827c755196519393012093bc785279c9011279827c75519602ea0093011279827c7551969394011279827c755196012293935379c9011379827c75519602ea0093011379827c7551969394011379827c75519601229393012093bc52795379c9011379827c75519602ea0093011379827c7551969394011379827c755196014393935479c9011479827c75519602ea0093011479827c7551969394011479827c75519601439393012093bc53795479c9011479827c75519602ea0093011479827c7551969394011479827c755196016493935579c9011579827c75519602ea0093011579827c7551969394011579827c75519601649393012093bc54795579c9011579827c75519602ea0093011579827c7551969394011579827c75519602850093935679c9011679827c75519602ea0093011679827c7551969394011679827c7551960285009393012093bc55795679c9011679827c75519602ea0093011679827c7551969394011679827c75519602a60093935779c9011779827c75519602ea0093011779827c7551969394011779827c75519602a6009393012093bc56795779c9011779827c75519602ea0093011779827c7551969394011779827c75519602c70093935879c9011879827c75519602ea0093011879827c7551969394011879827c75519602c70093935893bc57795879c9011879827c75519602ea0093011879827c7551969394011879827c75519602d00093935979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d00093935893bc58795979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d90093935a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602d90093935893bc59795a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602e20093935b79c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602e20093935893bcb9cb539c69b900ccb951ccb952cc012079aa0115798769012179012179ac695779011479879169011f79009c012079519c9b69011e7900a069011d7900a0695279c2b9be9c6978c25e79be9c6976c200a069011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e011879519358cd01087c7e01187958cd01087c7e01187958cd01087c7e01187958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5379c38769011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e5c7901207c7e5c7901207c7e5c79519358cd01087c7e5c7958cd01087c7e5c7958cd01087c7e5c7958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5279c38769011a79011a797e0117797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e0118790118797eaa01207c7e5d795d797eaa01207c7e01247958cd01087c7e01247958cd01087c7e01277958cd01087c7e7e7e7e7e7e7e7e7e011b797c7e011a797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757575516776519c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f7902ea00935f799394537900d1c9607902ea009360799394607902ea009360799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e7902ea00935e799394527900d1c95f7902ea00935f7993945f7993bc7800d1527900d1c95f7902ea00935f7993945f799302ea0093537900d1c9607902ea00936079939460799302ea00935f7993bc7e5a797caa87697600d17800d1c95e7902ea00935e7993945e79519393527900d1c95f7902ea00935f7993945f79519393012093bc7800d1527900d1c95f7902ea00935f7993945f7901229393537900d1c9607902ea009360799394607901229393012093bc527900d1537900d1c9607902ea009360799394607901439393547900d1c901117902ea0093011179939401117901439393012093bc537900d1547900d1c901117902ea0093011179939401117901649393557900d1c901127902ea0093011279939401127901649393012093bc547900d1557900d1c901127902ea009301127993940112790285009393567900d1c901137902ea009301137993940113790285009393012093bc557900d1567900d1c901137902ea0093011379939401137902a6009393577900d1c901147902ea0093011479939401147902a6009393012093bc567900d1577900d1c901147902ea0093011479939401147902c7009393587900d1c901157902ea0093011579939401157902c70093935893bc577900d1587900d1c901157902ea0093011579939401157902d0009393597900d1c901167902ea0093011679939401167902d00093935893bc587900d1597900d1c901167902ea0093011679939401167902d90093935a7900d1c901177902ea0093011779939401177902d90093935893bc597900d15a7900d1c901177902ea0093011779939401177902e20093935b7900d1c901187902ea0093011879939401187902e20093935893bcb9cb009c69011779aa0111798769011879011879ac6954796079879169007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575757575516776529c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f7902cf00935f799394537900d1c9607902cf009360799394607902cf009360799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e7902cf00935e799394527900d1c95f7902cf00935f7993945f7993bc7800d1527900d1c95f7902cf00935f7993945f799302cf0093537900d1c9607902cf00936079939460799302cf00935f7993bc7e58797caa87697600d17800d1c95e7902cf00935e7993945e79519393527900d1c95f7902cf00935f7993945f79519393012093bc7800d1527900d1c95f7902cf00935f7993945f7901229393537900d1c9607902cf009360799394607901229393012093bc527900d1537900d1c9607902cf009360799394607901439393547900d1c901117902cf0093011179939401117901439393012093bc537900d1547900d1c901117902cf0093011179939401117901649393557900d1c901127902cf0093011279939401127901649393012093bc547900d1557900d1c901127902cf009301127993940112790285009393567900d1c901137902cf009301137993940113790285009393012093bc557900d1567900d1c901137902cf0093011379939401137902a6009393577900d1c901147902cf0093011479939401147902a6009393012093bc567900d1577900d1c901147902cf0093011479939401147902c7009393587900d1c901157902cf0093011579939401157902c70093935893bcb9cb009c695d795d797eaa76547987785479879b69007a75007a75007a75007a75007a75007a75007a75007a75007a75757575757575757575757575516776539c6375b9cb009c695a79aa567987695b795b79ac695379009c69757575757575757575757575516775006968686868",
           "template": {
             "prefix_hex": "6b",
-            "suffix_hex": "6c76009c6375b9cf76d0529c697600d1b99c697651d176bf785279c9011279827c75519602ea0093011279827c75519693945379c9011379827c75519602ea0093011379827c7551969394011379827c75519602ea0093011379827c7551969393bcaa02000001aa7e01207e7c7e01877e87697678c9011179827c75519602ea0093011179827c75519693945279c9011279827c75519602ea0093011279827c7551969394011279827c75519693bc785279c9011279827c75519602ea0093011279827c7551969394011279827c7551969302ea00935379c9011379827c75519602ea0093011379827c7551969394011379827c7551969302ea0093011279827c75519693bc7e5b797caa87697678c9011179827c75519602ea0093011179827c7551969394011179827c7551965193935279c9011279827c75519602ea0093011279827c7551969394011279827c755196519393012093bc785279c9011279827c75519602ea0093011279827c7551969394011279827c755196012293935379c9011379827c75519602ea0093011379827c7551969394011379827c75519601229393012093bc52795379c9011379827c75519602ea0093011379827c7551969394011379827c755196014393935479c9011479827c75519602ea0093011479827c7551969394011479827c75519601439393012093bc53795479c9011479827c75519602ea0093011479827c7551969394011479827c755196016493935579c9011579827c75519602ea0093011579827c7551969394011579827c75519601649393012093bc54795579c9011579827c75519602ea0093011579827c7551969394011579827c75519602850093935679c9011679827c75519602ea0093011679827c7551969394011679827c7551960285009393012093bc55795679c9011679827c75519602ea0093011679827c7551969394011679827c75519602a60093935779c9011779827c75519602ea0093011779827c7551969394011779827c75519602a6009393012093bc56795779c9011779827c75519602ea0093011779827c7551969394011779827c75519602c70093935879c9011879827c75519602ea0093011879827c7551969394011879827c75519602c70093935893bc57795879c9011879827c75519602ea0093011879827c7551969394011879827c75519602d00093935979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d00093935893bc58795979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d90093935a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602d90093935893bc59795a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602e20093935b79c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602e20093935893bcb9cb539c69b900ccb951ccb952cc012079aa0115798769012179012179ac695779011479879169011f79009c012079519c9b69011e7900a069011d7900a0695279c2b9be9c6978c25e79be9c6976c200a069011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e011879519358cd01087c7e01187958cd01087c7e01187958cd01087c7e01187958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5379c38769011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e5c7901207c7e5c7901207c7e5c79519358cd01087c7e5c7958cd01087c7e5c7958cd01087c7e5c7958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5279c38769011a79011a797e0117797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e0118790118797eaa01207c7e5d795d797eaa01207c7e01247958cd01087c7e01247958cd01087c7e01277958cd01087c7e7e7e7e7e7e7e7e7e011b797c7e011a797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757575516776519c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f79827c75519602ea00935f79827c7551969394537900d1c96079827c75519602ea00936079827c75519693946079827c75519602ea00936079827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e79827c75519602ea00935e79827c7551969394527900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519693bc7800d1527900d1c95f79827c75519602ea00935f79827c75519693945f79827c7551969302ea0093537900d1c96079827c75519602ea00936079827c75519693946079827c7551969302ea00935f79827c75519693bc7e5a797caa87697600d17800d1c95e79827c75519602ea00935e79827c75519693945e79827c755196519393527900d1c95f79827c75519602ea00935f79827c75519693945f79827c755196519393012093bc7800d1527900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601229393537900d1c96079827c75519602ea00936079827c75519693946079827c75519601229393012093bc527900d1537900d1c96079827c75519602ea00936079827c75519693946079827c75519601439393547900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601439393012093bc537900d1547900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601649393557900d1c9011279827c75519602ea0093011279827c7551969394011279827c75519601649393012093bc547900d1557900d1c9011279827c75519602ea0093011279827c7551969394011279827c7551960285009393567900d1c9011379827c75519602ea0093011379827c7551969394011379827c7551960285009393012093bc557900d1567900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602a6009393577900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602a6009393012093bc567900d1577900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602c7009393587900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602c70093935893bc577900d1587900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d0009393597900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d00093935893bc587900d1597900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d90093935a7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602d90093935893bc597900d15a7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602e20093935b7900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519602e20093935893bcb9cb009c69011779aa0111798769011879011879ac6954796079879169007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575757575516776529c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f79827c75519602cf00935f79827c7551969394537900d1c96079827c75519602cf00936079827c75519693946079827c75519602cf00936079827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e79827c75519602cf00935e79827c7551969394527900d1c95f79827c75519602cf00935f79827c75519693945f79827c75519693bc7800d1527900d1c95f79827c75519602cf00935f79827c75519693945f79827c7551969302cf0093537900d1c96079827c75519602cf00936079827c75519693946079827c7551969302cf00935f79827c75519693bc7e58797caa87697600d17800d1c95e79827c75519602cf00935e79827c75519693945e79827c755196519393527900d1c95f79827c75519602cf00935f79827c75519693945f79827c755196519393012093bc7800d1527900d1c95f79827c75519602cf00935f79827c75519693945f79827c75519601229393537900d1c96079827c75519602cf00936079827c75519693946079827c75519601229393012093bc527900d1537900d1c96079827c75519602cf00936079827c75519693946079827c75519601439393547900d1c9011179827c75519602cf0093011179827c7551969394011179827c75519601439393012093bc537900d1547900d1c9011179827c75519602cf0093011179827c7551969394011179827c75519601649393557900d1c9011279827c75519602cf0093011279827c7551969394011279827c75519601649393012093bc547900d1557900d1c9011279827c75519602cf0093011279827c7551969394011279827c7551960285009393567900d1c9011379827c75519602cf0093011379827c7551969394011379827c7551960285009393012093bc557900d1567900d1c9011379827c75519602cf0093011379827c7551969394011379827c75519602a6009393577900d1c9011479827c75519602cf0093011479827c7551969394011479827c75519602a6009393012093bc567900d1577900d1c9011479827c75519602cf0093011479827c7551969394011479827c75519602c7009393587900d1c9011579827c75519602cf0093011579827c7551969394011579827c75519602c70093935893bcb9cb009c695d795d797eaa76547987785479879b69007a75007a75007a75007a75007a75007a75007a75007a75007a75757575757575757575757575516776539c6375b9cb009c695a79aa567987695b795b79ac695379009c69757575757575757575757575516775006968686868",
-            "hash_hex": "5679b84dad0e6da07c2617e759c663547f79186b2068c1b6b74a6e3aa4b2372c"
+            "suffix_hex": "6c76009c6375b9cf76d0529c697600d1b99c697651d176bf785279c9011279827c75519602ea0093011279827c75519693945379c9011379827c75519602ea0093011379827c7551969394011379827c75519602ea0093011379827c7551969393bcaa02000001aa7e01207e7c7e01877e87697678c9011179827c75519602ea0093011179827c75519693945279c9011279827c75519602ea0093011279827c7551969394011279827c75519693bc785279c9011279827c75519602ea0093011279827c7551969394011279827c7551969302ea00935379c9011379827c75519602ea0093011379827c7551969394011379827c7551969302ea0093011279827c75519693bc7e5b797caa87697678c9011179827c75519602ea0093011179827c7551969394011179827c7551965193935279c9011279827c75519602ea0093011279827c7551969394011279827c755196519393012093bc785279c9011279827c75519602ea0093011279827c7551969394011279827c755196012293935379c9011379827c75519602ea0093011379827c7551969394011379827c75519601229393012093bc52795379c9011379827c75519602ea0093011379827c7551969394011379827c755196014393935479c9011479827c75519602ea0093011479827c7551969394011479827c75519601439393012093bc53795479c9011479827c75519602ea0093011479827c7551969394011479827c755196016493935579c9011579827c75519602ea0093011579827c7551969394011579827c75519601649393012093bc54795579c9011579827c75519602ea0093011579827c7551969394011579827c75519602850093935679c9011679827c75519602ea0093011679827c7551969394011679827c7551960285009393012093bc55795679c9011679827c75519602ea0093011679827c7551969394011679827c75519602a60093935779c9011779827c75519602ea0093011779827c7551969394011779827c75519602a6009393012093bc56795779c9011779827c75519602ea0093011779827c7551969394011779827c75519602c70093935879c9011879827c75519602ea0093011879827c7551969394011879827c75519602c70093935893bc57795879c9011879827c75519602ea0093011879827c7551969394011879827c75519602d00093935979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d00093935893bc58795979c9011979827c75519602ea0093011979827c7551969394011979827c75519602d90093935a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602d90093935893bc59795a79c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519602e20093935b79c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602e20093935893bcb9cb539c69b900ccb951ccb952cc012079aa0115798769012179012179ac695779011479879169011f79009c012079519c9b69011e7900a069011d7900a0695279c2b9be9c6978c25e79be9c6976c200a069011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e01187901207c7e011879519358cd01087c7e01187958cd01087c7e01187958cd01087c7e01187958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5379c38769011c79011c797e0118797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e5c7901207c7e5c7901207c7e5c79519358cd01087c7e5c7958cd01087c7e5c7958cd01087c7e5c7958cd01087c7e7e7e7e7e7e7e7e7e7e011d797c7e011c797eaa02000001aa7e01207e7c7e01877e5279c38769011a79011a797e0117797caa876901187901207c7e01187901207c7e01187901207c7e01187901207c7e0118790118797eaa01207c7e5d795d797eaa01207c7e01247958cd01087c7e01247958cd01087c7e01277958cd01087c7e7e7e7e7e7e7e7e7e011b797c7e011a797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757575516776519c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f7902ea00935f799394537900d1c9607902ea009360799394607902ea009360799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e7902ea00935e799394527900d1c95f7902ea00935f7993945f7993bc7800d1527900d1c95f7902ea00935f7993945f799302ea0093537900d1c9607902ea00936079939460799302ea00935f7993bc7e5a797caa87697600d17800d1c95e7902ea00935e7993945e79519393527900d1c95f7902ea00935f7993945f79519393012093bc7800d1527900d1c95f7902ea00935f7993945f7901229393537900d1c9607902ea009360799394607901229393012093bc527900d1537900d1c9607902ea009360799394607901439393547900d1c901117902ea0093011179939401117901439393012093bc537900d1547900d1c901117902ea0093011179939401117901649393557900d1c901127902ea0093011279939401127901649393012093bc547900d1557900d1c901127902ea009301127993940112790285009393567900d1c901137902ea009301137993940113790285009393012093bc557900d1567900d1c901137902ea0093011379939401137902a6009393577900d1c901147902ea0093011479939401147902a6009393012093bc567900d1577900d1c901147902ea0093011479939401147902c7009393587900d1c901157902ea0093011579939401157902c70093935893bc577900d1587900d1c901157902ea0093011579939401157902d0009393597900d1c901167902ea0093011679939401167902d00093935893bc587900d1597900d1c901167902ea0093011679939401167902d90093935a7900d1c901177902ea0093011779939401177902d90093935893bc597900d15a7900d1c901177902ea0093011779939401177902e20093935b7900d1c901187902ea0093011879939401187902e20093935893bcb9cb009c69011779aa0111798769011879011879ac6954796079879169007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575757575516776529c6375b9cf76d052a2697600d1b99e697600d1bf7800d1527900d1c95f7902cf00935f799394537900d1c9607902cf009360799394607902cf009360799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95e7902cf00935e799394527900d1c95f7902cf00935f7993945f7993bc7800d1527900d1c95f7902cf00935f7993945f799302cf0093537900d1c9607902cf00936079939460799302cf00935f7993bc7e58797caa87697600d17800d1c95e7902cf00935e7993945e79519393527900d1c95f7902cf00935f7993945f79519393012093bc7800d1527900d1c95f7902cf00935f7993945f7901229393537900d1c9607902cf009360799394607901229393012093bc527900d1537900d1c9607902cf009360799394607901439393547900d1c901117902cf0093011179939401117901439393012093bc537900d1547900d1c901117902cf0093011179939401117901649393557900d1c901127902cf0093011279939401127901649393012093bc547900d1557900d1c901127902cf009301127993940112790285009393567900d1c901137902cf009301137993940113790285009393012093bc557900d1567900d1c901137902cf0093011379939401137902a6009393577900d1c901147902cf0093011479939401147902a6009393012093bc567900d1577900d1c901147902cf0093011479939401147902c7009393587900d1c901157902cf0093011579939401157902c70093935893bcb9cb009c695d795d797eaa76547987785479879b69007a75007a75007a75007a75007a75007a75007a75007a75007a75757575757575757575757575516776539c6375b9cb009c695a79aa567987695b795b79ac695379009c69757575757575757575757575516775006968686868",
+            "hash_hex": "b2afa7151e2c38d4b357506431e0e7a633806feb2371b3b3a3d9b1f50b52d838"
           },
           "state_span": {
             "offset": 1,
@@ -2160,9 +2160,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesGame"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -2170,9 +2170,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesGame",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesGame"
+                  "kind": "template_suffix_bytes"
                 }
               },
               {
@@ -2180,9 +2180,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -2190,9 +2190,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -2227,9 +2227,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "StonesSettle"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -2237,9 +2237,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "StonesSettle",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "StonesSettle"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -2350,9 +2350,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_prefix",
-                  "actor": "Player"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
@@ -2360,9 +2360,9 @@
                 "type": {
                   "kind": "bytes"
                 },
+                "actor": "Player",
                 "purpose": {
-                  "kind": "template_suffix",
-                  "actor": "Player"
+                  "kind": "template_suffix_bytes"
                 }
               }
             ]

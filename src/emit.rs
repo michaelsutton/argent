@@ -540,20 +540,22 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     out.push_str(&format!("    entrypoint function {}(", entry.name));
-    let witness_actors = entry_witness_actors(entry, model);
-    let sil_params = lower_entry_params(&entry.params, &witness_actors);
+    let witness_specs = entry_witness_specs(entry, model);
+    let sil_params = lower_entry_params(&entry.params, &witness_specs);
     out.push_str(&sil_params.join(", "));
     out.push_str(") {\n");
 
-    for actor_name in &witness_actors {
-        let prefix = hidden_witness_prefix_name(actor_name);
-        let suffix = hidden_witness_suffix_name(actor_name);
-        let prefix_len = hidden_witness_prefix_len_name(actor_name);
-        let suffix_len = hidden_witness_suffix_len_name(actor_name);
-        out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-        out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
+    for spec in &witness_specs {
+        if spec.form == TemplateWitnessForm::Bytes {
+            let prefix = hidden_witness_prefix_name(&spec.actor);
+            let suffix = hidden_witness_suffix_name(&spec.actor);
+            let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
+            let suffix_len = hidden_witness_suffix_len_name(&spec.actor);
+            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
+            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
+        }
     }
-    if !witness_actors.is_empty() {
+    if witness_specs.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) {
         out.push('\n');
     }
 
@@ -1188,48 +1190,65 @@ fn split_top_level_commas(input: &str) -> Vec<&str> {
     parts
 }
 
-fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TemplateWitnessForm {
+    Bytes,
+    Len,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TemplateWitnessSpec {
+    actor: String,
+    form: TemplateWitnessForm,
+}
+
+fn lower_entry_params(params: &[ParamDecl], witness_specs: &[TemplateWitnessSpec]) -> Vec<String> {
     let mut out = Vec::new();
     for param in params {
         out.push(format!("{} {}", param.ty.to_sil(), param.name));
     }
-    for actor_name in witness_actors {
-        out.push(format!("byte[] {}", hidden_witness_prefix_name(actor_name)));
-        out.push(format!("byte[] {}", hidden_witness_suffix_name(actor_name)));
+    for spec in witness_specs {
+        match spec.form {
+            TemplateWitnessForm::Bytes => {
+                out.push(format!("byte[] {}", hidden_witness_prefix_name(&spec.actor)));
+                out.push(format!("byte[] {}", hidden_witness_suffix_name(&spec.actor)));
+            }
+            TemplateWitnessForm::Len => {
+                out.push(format!("int {}", hidden_witness_prefix_len_name(&spec.actor)));
+                out.push(format!("int {}", hidden_witness_suffix_len_name(&spec.actor)));
+            }
+        }
     }
     out
 }
 
-fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
-    let mut required = BTreeSet::new();
-    for consume in &entry.consumes {
-        required.insert(consume.actor.clone());
-    }
+fn entry_witness_specs(entry: &EntryDecl, model: &Model<'_>) -> Vec<TemplateWitnessSpec> {
+    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let byte_actors = entry.routes.iter().map(|route| route.actor.clone()).collect::<BTreeSet<_>>();
+    template_witness_specs(model, read_actors, byte_actors)
+}
 
-    match &entry.emits {
-        EmitSpec::None => {}
-        EmitSpec::One { actors } => {
-            required.extend(actors.iter().cloned());
-        }
-        EmitSpec::Outputs(outputs) => {
-            for output in outputs {
-                required.extend(output.actors.iter().cloned());
-            }
-        }
-    }
-
-    for route in &entry.routes {
-        required.insert(route.actor.clone());
-    }
-
+fn template_witness_specs(
+    model: &Model<'_>,
+    read_actors: BTreeSet<String>,
+    byte_actors: BTreeSet<String>,
+) -> Vec<TemplateWitnessSpec> {
+    let mut required = read_actors.union(&byte_actors).cloned().collect::<BTreeSet<_>>();
     let mut ordered = Vec::new();
     for actor in &model.template_actors {
         if required.remove(actor) {
-            ordered.push(actor.clone());
+            ordered.push(TemplateWitnessSpec { actor: actor.clone(), form: witness_form(actor, &byte_actors) });
         }
     }
-    ordered.extend(required);
+    ordered.extend(required.into_iter().map(|actor| {
+        let form = witness_form(&actor, &byte_actors);
+        TemplateWitnessSpec { actor, form }
+    }));
     ordered
+}
+
+fn witness_form(actor: &str, byte_actors: &BTreeSet<String>) -> TemplateWitnessForm {
+    if byte_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -1489,19 +1508,39 @@ fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFiel
 }
 
 fn hidden_params_for_entry(entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenParamArtifact> {
-    let witness_actors = entry_witness_actors(entry, model);
+    let witness_specs = entry_witness_specs(entry, model);
     let mut hidden_params = Vec::new();
-    for actor in &witness_actors {
-        hidden_params.push(HiddenParamArtifact {
-            name: hidden_witness_prefix_name(actor),
-            ty: TypeArtifact::Bytes,
-            purpose: HiddenParamPurposeArtifact::TemplatePrefix { actor: actor.clone() },
-        });
-        hidden_params.push(HiddenParamArtifact {
-            name: hidden_witness_suffix_name(actor),
-            ty: TypeArtifact::Bytes,
-            purpose: HiddenParamPurposeArtifact::TemplateSuffix { actor: actor.clone() },
-        });
+    for spec in &witness_specs {
+        match spec.form {
+            TemplateWitnessForm::Bytes => {
+                hidden_params.push(HiddenParamArtifact {
+                    name: hidden_witness_prefix_name(&spec.actor),
+                    ty: TypeArtifact::Bytes,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    name: hidden_witness_suffix_name(&spec.actor),
+                    ty: TypeArtifact::Bytes,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                });
+            }
+            TemplateWitnessForm::Len => {
+                hidden_params.push(HiddenParamArtifact {
+                    name: hidden_witness_prefix_len_name(&spec.actor),
+                    ty: TypeArtifact::Int,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    name: hidden_witness_suffix_len_name(&spec.actor),
+                    ty: TypeArtifact::Int,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
+                });
+            }
+        }
     }
     hidden_params
 }
@@ -1509,7 +1548,7 @@ fn hidden_params_for_entry(entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenPa
 fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryArtifact> {
     let witnesses = hidden_params_for_entry(entry, model)
         .into_iter()
-        .map(|param| WitnessArtifact { param: param.name, purpose: param.purpose })
+        .map(|param| WitnessArtifact { param: param.name, actor: param.actor, purpose: param.purpose })
         .collect::<Vec<_>>();
     Ok(EntryArtifact {
         name: entry.name.clone(),
@@ -1600,15 +1639,10 @@ fn route_output_handles(emits: &EmitSpec) -> Vec<RouteOutputHandleArtifact> {
 }
 
 fn planned_terminal_path_artifact(routes: &[RouteCall], entry: &EntryDecl, model: &Model<'_>) -> Result<PlannedTerminalPathArtifact> {
-    let mut witness_actors = BTreeSet::new();
-    for consume in &entry.consumes {
-        witness_actors.insert(consume.actor.clone());
-    }
-    for route in routes {
-        witness_actors.insert(route.actor.clone());
-    }
+    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let byte_actors = routes.iter().map(|route| route.actor.clone()).collect::<BTreeSet<_>>();
 
-    let witnesses = witnesses_for_actors(model, witness_actors);
+    let witnesses = witnesses_for_specs(template_witness_specs(model, read_actors, byte_actors));
     let routes = routes
         .iter()
         .map(|route| {
@@ -1618,7 +1652,11 @@ fn planned_terminal_path_artifact(routes: &[RouteCall], entry: &EntryDecl, model
                 auth_index: output.auth_index,
                 actor: route.actor.clone(),
                 state_expr: compact_expr(&route.state),
-                witnesses: witnesses_for_actors(model, [route.actor.clone()].into_iter().collect()),
+                witnesses: witnesses_for_specs(template_witness_specs(
+                    model,
+                    BTreeSet::new(),
+                    [route.actor.clone()].into_iter().collect(),
+                )),
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -1626,28 +1664,41 @@ fn planned_terminal_path_artifact(routes: &[RouteCall], entry: &EntryDecl, model
     Ok(PlannedTerminalPathArtifact { routes, witnesses })
 }
 
-fn witnesses_for_actors(model: &Model<'_>, mut actors: BTreeSet<String>) -> Vec<WitnessArtifact> {
-    let mut ordered = Vec::new();
-    for actor in &model.template_actors {
-        if actors.remove(actor) {
-            push_actor_witnesses(&mut ordered, actor);
-        }
+fn witnesses_for_specs(specs: Vec<TemplateWitnessSpec>) -> Vec<WitnessArtifact> {
+    let mut witnesses = Vec::new();
+    for spec in specs {
+        push_actor_witnesses(&mut witnesses, &spec);
     }
-    for actor in actors {
-        push_actor_witnesses(&mut ordered, &actor);
-    }
-    ordered
+    witnesses
 }
 
-fn push_actor_witnesses(out: &mut Vec<WitnessArtifact>, actor: &str) {
-    out.push(WitnessArtifact {
-        param: hidden_witness_prefix_name(actor),
-        purpose: HiddenParamPurposeArtifact::TemplatePrefix { actor: actor.to_string() },
-    });
-    out.push(WitnessArtifact {
-        param: hidden_witness_suffix_name(actor),
-        purpose: HiddenParamPurposeArtifact::TemplateSuffix { actor: actor.to_string() },
-    });
+fn push_actor_witnesses(out: &mut Vec<WitnessArtifact>, spec: &TemplateWitnessSpec) {
+    match spec.form {
+        TemplateWitnessForm::Bytes => {
+            out.push(WitnessArtifact {
+                param: hidden_witness_prefix_name(&spec.actor),
+                actor: spec.actor.clone(),
+                purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+            });
+            out.push(WitnessArtifact {
+                param: hidden_witness_suffix_name(&spec.actor),
+                actor: spec.actor.clone(),
+                purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+            });
+        }
+        TemplateWitnessForm::Len => {
+            out.push(WitnessArtifact {
+                param: hidden_witness_prefix_len_name(&spec.actor),
+                actor: spec.actor.clone(),
+                purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
+            });
+            out.push(WitnessArtifact {
+                param: hidden_witness_suffix_len_name(&spec.actor),
+                actor: spec.actor.clone(),
+                purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
+            });
+        }
+    }
 }
 
 fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutputHandleArtifact> {
@@ -2230,8 +2281,11 @@ mod tests {
         assert_eq!(entry.abi.entry, "step");
         assert_eq!(entry.witnesses.len(), 2);
         assert_eq!(entry.witnesses[0].param, "gen__foo_prefix");
-        assert_eq!(entry.witnesses[0].purpose, HiddenParamPurposeArtifact::TemplatePrefix { actor: "Foo".to_string() });
+        assert_eq!(entry.witnesses[0].actor, "Foo");
+        assert_eq!(entry.witnesses[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixBytes);
         assert_eq!(entry.witnesses[1].param, "gen__foo_suffix");
+        assert_eq!(entry.witnesses[1].actor, "Foo");
+        assert_eq!(entry.witnesses[1].purpose, HiddenParamPurposeArtifact::TemplateSuffixBytes);
         assert!(matches!(entry.emits, EmitArtifact::One { .. }));
         assert_eq!(entry.routes[0].actor, "Foo");
         assert_eq!(entry.routes[0].state_expr, "self.state");
@@ -2255,13 +2309,14 @@ mod tests {
         assert_eq!(sil_entry.user_params[0].ty, TypeArtifact::Int);
         assert_eq!(sil_entry.hidden_params.len(), 2);
         assert_eq!(
-            entry.witnesses.iter().map(|witness| (witness.param.clone(), witness.purpose.clone())).collect::<Vec<_>>(),
-            sil_entry.hidden_params.iter().map(|param| (param.name.clone(), param.purpose.clone())).collect::<Vec<_>>(),
+            entry.witnesses.iter().map(|witness| (witness.param.clone(), witness.actor.clone(), witness.purpose)).collect::<Vec<_>>(),
+            sil_entry.hidden_params.iter().map(|param| (param.name.clone(), param.actor.clone(), param.purpose)).collect::<Vec<_>>(),
             "outer witness recipes must correspond to inner hidden ABI params"
         );
         assert_eq!(sil_entry.hidden_params[0].name, "gen__foo_prefix");
         assert_eq!(sil_entry.hidden_params[0].ty, TypeArtifact::Bytes);
-        assert_eq!(sil_entry.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefix { actor: "Foo".to_string() });
+        assert_eq!(sil_entry.hidden_params[0].actor, "Foo");
+        assert_eq!(sil_entry.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixBytes);
         assert_eq!(sil_entry.hidden_params[1].name, "gen__foo_suffix");
     }
 
@@ -2276,6 +2331,62 @@ mod tests {
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
+    }
+
+    #[test]
+    fn stones_delegate_reads_use_length_only_template_witnesses() {
+        let out_dir = std::env::temp_dir().join(format!("argent-stones-length-witness-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new("examples/stones/app.ag")).expect("stones example loads");
+        emit_build(&program, &out_dir).expect("stones example builds");
+        let player_sil = fs::read_to_string(out_dir.join("sil/Player.sil")).expect("Player.sil exists");
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+
+        assert!(
+            player_sil.contains(
+                "entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len)"
+            ),
+            "{player_sil}"
+        );
+        assert!(!player_sil.contains("entrypoint function accept_start(sig owner_sig, pubkey owner_pk, byte[]"), "{player_sil}");
+        assert!(
+            player_sil.contains(
+                "entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, byte[] gen__player_prefix, byte[] gen__player_suffix, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix)"
+            ),
+            "{player_sil}"
+        );
+        assert!(player_sil.contains("int gen__player_prefix_len = gen__player_prefix.length;"), "{player_sil}");
+
+        let player_actor = artifact.sil_abi.actor("Player").expect("Player Sil ABI exists");
+        let accept_start = player_actor.entry("accept_start").expect("accept_start ABI exists");
+        assert_eq!(accept_start.hidden_params.len(), 2);
+        assert_eq!(accept_start.hidden_params[0].name, "gen__player_prefix_len");
+        assert_eq!(accept_start.hidden_params[0].ty, TypeArtifact::Int);
+        assert_eq!(accept_start.hidden_params[0].actor, "Player");
+        assert_eq!(accept_start.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixLen);
+        assert_eq!(accept_start.hidden_params[1].name, "gen__player_suffix_len");
+        assert_eq!(accept_start.hidden_params[1].ty, TypeArtifact::Int);
+        assert_eq!(accept_start.hidden_params[1].actor, "Player");
+        assert_eq!(accept_start.hidden_params[1].purpose, HiddenParamPurposeArtifact::TemplateSuffixLen);
+
+        let start_game = player_actor.entry("start_game").expect("start_game ABI exists");
+        assert_eq!(
+            start_game
+                .hidden_params
+                .iter()
+                .map(|param| (param.name.as_str(), param.ty.clone(), param.actor.as_str(), param.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__player_prefix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__player_suffix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                ("gen__stones_game_prefix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__stones_game_suffix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+
+        let _ = fs::remove_dir_all(out_dir);
     }
 
     #[test]
