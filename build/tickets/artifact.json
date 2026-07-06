@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "Tickets",
+  "root": "examples/tickets.ag",
+  "modules": [
+    "examples/tickets.ag"
+  ],
+  "templates": [
+    {
+      "actor": "Issuer",
+      "symbol": "gen__template_issuer"
+    },
+    {
+      "actor": "Ticket",
+      "symbol": "gen__template_ticket"
+    }
+  ],
+  "states": [
+    {
+      "name": "IssuerState",
+      "fields": [
+        {
+          "name": "admin",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "next_serial",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "TicketState",
+      "fields": [
+        {
+          "name": "owner",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "serial",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "redeemed",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    }
+  ],
+  "actors": [
+    {
+      "name": "Issuer",
+      "state": "IssuerState",
+      "sil": "sil/Issuer.sil",
+      "runtime_state": {
+        "source": "IssuerState",
+        "fields": [
+          {
+            "name": "gen__template_issuer",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Issuer"
+            }
+          },
+          {
+            "name": "gen__template_ticket",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Ticket"
+            }
+          },
+          {
+            "name": "admin",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "next_serial",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "issue",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "admin_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "admin_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__issuer_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Issuer"
+              }
+            },
+            {
+              "name": "gen__issuer_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Issuer"
+              }
+            },
+            {
+              "name": "gen__ticket_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Ticket"
+              }
+            },
+            {
+              "name": "gen__ticket_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Ticket"
+              }
+            }
+          ],
+          "consumes": [],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "issuer",
+                "auth_index": 0,
+                "actors": [
+                  "Issuer"
+                ]
+              },
+              {
+                "name": "ticket",
+                "auth_index": 1,
+                "actors": [
+                  "Ticket"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "issuer",
+              "actor": "Issuer",
+              "state_expr": "next_issuer"
+            },
+            {
+              "output": "ticket",
+              "actor": "Ticket",
+              "state_expr": "new_ticket"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "issuer",
+                  "actor": "Issuer",
+                  "state_expr": "next_issuer"
+                },
+                {
+                  "output": "ticket",
+                  "actor": "Ticket",
+                  "state_expr": "new_ticket"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "compiled": null
+    },
+    {
+      "name": "Ticket",
+      "state": "TicketState",
+      "sil": "sil/Ticket.sil",
+      "runtime_state": {
+        "source": "TicketState",
+        "fields": [
+          {
+            "name": "gen__template_issuer",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Issuer"
+            }
+          },
+          {
+            "name": "gen__template_ticket",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Ticket"
+            }
+          },
+          {
+            "name": "owner",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "serial",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "redeemed",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "redeem",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "owner_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__ticket_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Ticket"
+              }
+            },
+            {
+              "name": "gen__ticket_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Ticket"
+              }
+            }
+          ],
+          "consumes": [],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "next",
+                "auth_index": 0,
+                "actors": [
+                  "Ticket"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "next",
+              "actor": "Ticket",
+              "state_expr": "redeemed_ticket"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "next",
+                  "actor": "Ticket",
+                  "state_expr": "redeemed_ticket"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "compiled": null
+    }
+  ]
+}

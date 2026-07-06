@@ -65,6 +65,7 @@ cargo run -- build examples/tickets.ag --out build/tickets
 
 The generated artifacts are written under `build/stones`:
 
+- `build/stones/artifact.json`
 - `build/stones/manifest.json`
 - `build/stones/sil/League.sil`
 - `build/stones/sil/Player.sil`

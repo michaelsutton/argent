@@ -1,0 +1,1207 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "Stones",
+  "root": "examples/stones/app.ag",
+  "modules": [
+    "examples/stones/app.ag",
+    "examples/stones/types.ag",
+    "examples/stones/league.ag",
+    "examples/stones/player.ag",
+    "examples/stones/game.ag",
+    "examples/stones/settle.ag"
+  ],
+  "templates": [
+    {
+      "actor": "League",
+      "symbol": "gen__template_league"
+    },
+    {
+      "actor": "Player",
+      "symbol": "gen__template_player"
+    },
+    {
+      "actor": "StonesGame",
+      "symbol": "gen__template_stones_game"
+    },
+    {
+      "actor": "StonesSettle",
+      "symbol": "gen__template_stones_settle"
+    }
+  ],
+  "states": [
+    {
+      "name": "GameState",
+      "fields": [
+        {
+          "name": "player_a",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "player_b",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "pile",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "max_take",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "turn",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "LeagueState",
+      "fields": [
+        {
+          "name": "admin",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "default_pile",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "default_max_take",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "PlayerState",
+      "fields": [
+        {
+          "name": "owner",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "player_id",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "open_games",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "games",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "wins",
+          "type": {
+            "kind": "int"
+          }
+        },
+        {
+          "name": "losses",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    },
+    {
+      "name": "SettleState",
+      "fields": [
+        {
+          "name": "player_a",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "player_b",
+          "type": {
+            "kind": "fixed_bytes",
+            "len": 32
+          }
+        },
+        {
+          "name": "status",
+          "type": {
+            "kind": "int"
+          }
+        }
+      ]
+    }
+  ],
+  "actors": [
+    {
+      "name": "League",
+      "state": "LeagueState",
+      "sil": "sil/League.sil",
+      "runtime_state": {
+        "source": "LeagueState",
+        "fields": [
+          {
+            "name": "gen__template_league",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "League"
+            }
+          },
+          {
+            "name": "gen__template_player",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Player"
+            }
+          },
+          {
+            "name": "gen__template_stones_game",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesGame"
+            }
+          },
+          {
+            "name": "gen__template_stones_settle",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesSettle"
+            }
+          },
+          {
+            "name": "admin",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "default_pile",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "default_max_take",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "register_player",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "owner_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__league_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "League"
+              }
+            },
+            {
+              "name": "gen__league_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "League"
+              }
+            },
+            {
+              "name": "gen__player_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Player"
+              }
+            },
+            {
+              "name": "gen__player_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Player"
+              }
+            }
+          ],
+          "consumes": [],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "lane",
+                "auth_index": 0,
+                "actors": [
+                  "League"
+                ]
+              },
+              {
+                "name": "player",
+                "auth_index": 1,
+                "actors": [
+                  "Player"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "lane",
+              "actor": "League",
+              "state_expr": "self.state"
+            },
+            {
+              "output": "player",
+              "actor": "Player",
+              "state_expr": "next_player"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "lane",
+                  "actor": "League",
+                  "state_expr": "self.state"
+                },
+                {
+                  "output": "player",
+                  "actor": "Player",
+                  "state_expr": "next_player"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "compiled": null
+    },
+    {
+      "name": "Player",
+      "state": "PlayerState",
+      "sil": "sil/Player.sil",
+      "runtime_state": {
+        "source": "PlayerState",
+        "fields": [
+          {
+            "name": "gen__template_league",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "League"
+            }
+          },
+          {
+            "name": "gen__template_player",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Player"
+            }
+          },
+          {
+            "name": "gen__template_stones_game",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesGame"
+            }
+          },
+          {
+            "name": "gen__template_stones_settle",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesSettle"
+            }
+          },
+          {
+            "name": "owner",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "player_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "open_games",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "games",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "wins",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "losses",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "start_game",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "owner_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            },
+            {
+              "name": "first_turn",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "pile",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "max_take",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__player_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Player"
+              }
+            },
+            {
+              "name": "gen__player_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Player"
+              }
+            },
+            {
+              "name": "gen__stones_game_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_game_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "StonesGame"
+              }
+            }
+          ],
+          "consumes": [
+            {
+              "name": "opponent",
+              "actor": "Player"
+            }
+          ],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "self_out",
+                "auth_index": 0,
+                "actors": [
+                  "Player"
+                ]
+              },
+              {
+                "name": "opponent_out",
+                "auth_index": 1,
+                "actors": [
+                  "Player"
+                ]
+              },
+              {
+                "name": "game",
+                "auth_index": 2,
+                "actors": [
+                  "StonesGame"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "self_out",
+              "actor": "Player",
+              "state_expr": "next_self"
+            },
+            {
+              "output": "opponent_out",
+              "actor": "Player",
+              "state_expr": "next_opponent"
+            },
+            {
+              "output": "game",
+              "actor": "StonesGame",
+              "state_expr": "next_game"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "self_out",
+                  "actor": "Player",
+                  "state_expr": "next_self"
+                },
+                {
+                  "output": "opponent_out",
+                  "actor": "Player",
+                  "state_expr": "next_opponent"
+                },
+                {
+                  "output": "game",
+                  "actor": "StonesGame",
+                  "state_expr": "next_game"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "accept_start",
+          "kind": "delegate",
+          "user_params": [
+            {
+              "name": "owner_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__player_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Player"
+              }
+            },
+            {
+              "name": "gen__player_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Player"
+              }
+            }
+          ],
+          "consumes": [
+            {
+              "name": "starter",
+              "actor": "Player"
+            }
+          ],
+          "emits": {
+            "kind": "none"
+          },
+          "routes": [],
+          "terminal_paths": []
+        },
+        {
+          "name": "settle",
+          "kind": "delegate",
+          "user_params": [],
+          "hidden_params": [
+            {
+              "name": "gen__stones_settle_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "StonesSettle"
+              }
+            },
+            {
+              "name": "gen__stones_settle_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "StonesSettle"
+              }
+            }
+          ],
+          "consumes": [
+            {
+              "name": "settle",
+              "actor": "StonesSettle"
+            }
+          ],
+          "emits": {
+            "kind": "none"
+          },
+          "routes": [],
+          "terminal_paths": []
+        },
+        {
+          "name": "retire",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "owner_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "owner_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [],
+          "consumes": [],
+          "emits": {
+            "kind": "none"
+          },
+          "routes": [],
+          "terminal_paths": []
+        }
+      ],
+      "compiled": null
+    },
+    {
+      "name": "StonesGame",
+      "state": "GameState",
+      "sil": "sil/StonesGame.sil",
+      "runtime_state": {
+        "source": "GameState",
+        "fields": [
+          {
+            "name": "gen__template_league",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "League"
+            }
+          },
+          {
+            "name": "gen__template_player",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Player"
+            }
+          },
+          {
+            "name": "gen__template_stones_game",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesGame"
+            }
+          },
+          {
+            "name": "gen__template_stones_settle",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesSettle"
+            }
+          },
+          {
+            "name": "player_a",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "player_b",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "pile",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "max_take",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "turn",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "take",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "amount",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "player_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "move_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "move_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__stones_game_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_game_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_settle_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "StonesSettle"
+              }
+            },
+            {
+              "name": "gen__stones_settle_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "StonesSettle"
+              }
+            }
+          ],
+          "consumes": [],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "next",
+                "auth_index": 0,
+                "actors": [
+                  "StonesGame",
+                  "StonesSettle"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "next",
+              "actor": "StonesSettle",
+              "state_expr": "ticket"
+            },
+            {
+              "output": "next",
+              "actor": "StonesGame",
+              "state_expr": "next_game"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "next",
+                  "actor": "StonesSettle",
+                  "state_expr": "ticket"
+                }
+              ]
+            },
+            {
+              "routes": [
+                {
+                  "output": "next",
+                  "actor": "StonesGame",
+                  "state_expr": "next_game"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "concede",
+          "kind": "leader",
+          "user_params": [
+            {
+              "name": "player_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "move_sig",
+              "type": {
+                "kind": "sig"
+              }
+            },
+            {
+              "name": "move_pk",
+              "type": {
+                "kind": "pubkey"
+              }
+            }
+          ],
+          "hidden_params": [
+            {
+              "name": "gen__stones_settle_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "StonesSettle"
+              }
+            },
+            {
+              "name": "gen__stones_settle_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "StonesSettle"
+              }
+            }
+          ],
+          "consumes": [],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "settle",
+                "auth_index": 0,
+                "actors": [
+                  "StonesSettle"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "settle",
+              "actor": "StonesSettle",
+              "state_expr": "ticket"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "settle",
+                  "actor": "StonesSettle",
+                  "state_expr": "ticket"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "compiled": null
+    },
+    {
+      "name": "StonesSettle",
+      "state": "SettleState",
+      "sil": "sil/StonesSettle.sil",
+      "runtime_state": {
+        "source": "SettleState",
+        "fields": [
+          {
+            "name": "gen__template_league",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "League"
+            }
+          },
+          {
+            "name": "gen__template_player",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "Player"
+            }
+          },
+          {
+            "name": "gen__template_stones_game",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesGame"
+            }
+          },
+          {
+            "name": "gen__template_stones_settle",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "template",
+              "actor": "StonesSettle"
+            }
+          },
+          {
+            "name": "player_a",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "player_b",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            },
+            "role": {
+              "kind": "source"
+            }
+          },
+          {
+            "name": "status",
+            "type": {
+              "kind": "int"
+            },
+            "role": {
+              "kind": "source"
+            }
+          }
+        ]
+      },
+      "entries": [
+        {
+          "name": "settle",
+          "kind": "leader",
+          "user_params": [],
+          "hidden_params": [
+            {
+              "name": "gen__player_prefix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_prefix",
+                "actor": "Player"
+              }
+            },
+            {
+              "name": "gen__player_suffix",
+              "type": {
+                "kind": "bytes"
+              },
+              "purpose": {
+                "kind": "template_suffix",
+                "actor": "Player"
+              }
+            }
+          ],
+          "consumes": [
+            {
+              "name": "player_a_in",
+              "actor": "Player"
+            },
+            {
+              "name": "player_b_in",
+              "actor": "Player"
+            }
+          ],
+          "emits": {
+            "kind": "outputs",
+            "outputs": [
+              {
+                "name": "player_a_out",
+                "auth_index": 0,
+                "actors": [
+                  "Player"
+                ]
+              },
+              {
+                "name": "player_b_out",
+                "auth_index": 1,
+                "actors": [
+                  "Player"
+                ]
+              }
+            ]
+          },
+          "routes": [
+            {
+              "output": "player_a_out",
+              "actor": "Player",
+              "state_expr": "next_player_a"
+            },
+            {
+              "output": "player_b_out",
+              "actor": "Player",
+              "state_expr": "next_player_b"
+            }
+          ],
+          "terminal_paths": [
+            {
+              "routes": [
+                {
+                  "output": "player_a_out",
+                  "actor": "Player",
+                  "state_expr": "next_player_a"
+                },
+                {
+                  "output": "player_b_out",
+                  "actor": "Player",
+                  "state_expr": "next_player_b"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "compiled": null
+    }
+  ]
+}

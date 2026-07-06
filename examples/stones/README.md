@@ -42,9 +42,11 @@ Build:
 cargo run -- build examples/stones/app.ag --out build/stones
 ```
 
-Generated Silverscript:
+Generated artifacts:
 
 ```text
+build/stones/artifact.json
+build/stones/manifest.json
 build/stones/sil/League.sil
 build/stones/sil/Player.sil
 build/stones/sil/StonesGame.sil

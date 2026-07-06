@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use crate::artifact::*;
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
@@ -20,6 +21,9 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
 
     fs::write(out_dir.join("manifest.json"), emit_manifest(program, &model))
         .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
+
+    fs::write(out_dir.join("artifact.json"), emit_artifact_json(program, &model)?)
+        .map_err(|err| ArgentError::at(out_dir.join("artifact.json"), err.to_string()))?;
     Ok(())
 }
 
@@ -1314,6 +1318,148 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     out
 }
 
+fn emit_artifact_json(program: &Program, model: &Model<'_>) -> Result<String> {
+    let artifact = emit_artifact(program, model)?;
+    let mut json = serde_json::to_string_pretty(&artifact).map_err(|err| ArgentError::new(err.to_string()))?;
+    json.push('\n');
+    Ok(json)
+}
+
+fn emit_artifact(program: &Program, model: &Model<'_>) -> Result<Artifact> {
+    let templates = model
+        .template_actors
+        .iter()
+        .map(|actor| TemplateRefArtifact { actor: actor.clone(), symbol: hidden_template_name(actor) })
+        .collect();
+
+    let states = model
+        .states
+        .values()
+        .map(|state| StateArtifact {
+            name: state.name.clone(),
+            fields: state
+                .fields
+                .iter()
+                .map(|field| FieldArtifact { name: field.name.clone(), ty: type_artifact(&field.ty) })
+                .collect(),
+        })
+        .collect();
+
+    let actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+
+    Ok(Artifact {
+        schema_version: ARTIFACT_SCHEMA_VERSION,
+        generator: GeneratorArtifact { name: "argentc".to_string(), version: env!("CARGO_PKG_VERSION").to_string() },
+        app: model.app_name.clone(),
+        root: manifest_path(&program.root),
+        modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
+        templates,
+        states,
+        actors,
+    })
+}
+
+fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
+    let state = model.state(&actor.state)?;
+    let entries = actor.entries.iter().map(|entry| entry_artifact(entry, model)).collect();
+
+    Ok(ActorArtifact {
+        name: actor.name.clone(),
+        state: actor.state.clone(),
+        sil: format!("sil/{}.sil", actor.name),
+        runtime_state: RuntimeStateArtifact { source: state.name.clone(), fields: runtime_state_fields(state, model) },
+        entries,
+        compiled: None,
+    })
+}
+
+fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
+    let mut fields = Vec::new();
+    for actor in &model.template_actors {
+        fields.push(RuntimeFieldArtifact {
+            name: hidden_template_name(actor),
+            ty: TypeArtifact::from_parts("byte", Some(32)),
+            role: RuntimeFieldRoleArtifact::Template { actor: actor.clone() },
+        });
+    }
+    for field in &state.fields {
+        fields.push(RuntimeFieldArtifact {
+            name: field.name.clone(),
+            ty: type_artifact(&field.ty),
+            role: RuntimeFieldRoleArtifact::Source,
+        });
+    }
+    fields
+}
+
+fn entry_artifact(entry: &EntryDecl, model: &Model<'_>) -> EntryArtifact {
+    let witness_actors = entry_witness_actors(entry, model);
+    let mut hidden_params = Vec::new();
+    for actor in &witness_actors {
+        hidden_params.push(HiddenParamArtifact {
+            name: hidden_witness_prefix_name(actor),
+            ty: TypeArtifact::Bytes,
+            purpose: HiddenParamPurposeArtifact::TemplatePrefix { actor: actor.clone() },
+        });
+        hidden_params.push(HiddenParamArtifact {
+            name: hidden_witness_suffix_name(actor),
+            ty: TypeArtifact::Bytes,
+            purpose: HiddenParamPurposeArtifact::TemplateSuffix { actor: actor.clone() },
+        });
+    }
+
+    EntryArtifact {
+        name: entry.name.clone(),
+        kind: match entry.kind {
+            EntryKind::Leader => EntryKindArtifact::Leader,
+            EntryKind::Delegate => EntryKindArtifact::Delegate,
+        },
+        user_params: entry
+            .params
+            .iter()
+            .map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty) })
+            .collect(),
+        hidden_params,
+        consumes: entry
+            .consumes
+            .iter()
+            .map(|consume| ConsumeArtifact { name: consume.name.clone(), actor: consume.actor.clone() })
+            .collect(),
+        emits: emit_spec_artifact(&entry.emits),
+        routes: entry.routes.iter().map(route_artifact).collect(),
+        terminal_paths: entry
+            .terminal_route_sets
+            .iter()
+            .map(|routes| TerminalPathArtifact { routes: routes.iter().map(route_artifact).collect() })
+            .collect(),
+    }
+}
+
+fn emit_spec_artifact(emits: &EmitSpec) -> EmitArtifact {
+    match emits {
+        EmitSpec::None => EmitArtifact::None,
+        EmitSpec::One { actors } => EmitArtifact::One { actors: actors.clone() },
+        EmitSpec::Outputs(outputs) => EmitArtifact::Outputs {
+            outputs: outputs
+                .iter()
+                .map(|output| EmitOutputArtifact {
+                    name: output.name.clone(),
+                    auth_index: output.auth_index,
+                    actors: output.actors.clone(),
+                })
+                .collect(),
+        },
+    }
+}
+
+fn route_artifact(route: &RouteCall) -> RouteArtifact {
+    RouteArtifact { output: route.output.clone(), actor: route.actor.clone(), state_expr: compact_expr(&route.state) }
+}
+
+fn type_artifact(ty: &TypeRef) -> TypeArtifact {
+    TypeArtifact::from_parts(&ty.name, ty.array)
+}
+
 fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
     match emits {
         EmitSpec::None => out.push_str("{ \"kind\": \"none\" }"),
@@ -1759,6 +1905,70 @@ mod tests {
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
         assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
         assert!(!sil.contains("__argent_"), "{sil}");
+    }
+
+    #[test]
+    fn emits_portable_artifact_schema() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                byte[32] owner;
+                int count;
+            }
+
+            actor Foo owns FooState {
+                entry step(amount: int) emits one Foo {
+                    require(next.value == self.value);
+                    become Foo(self.state);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+
+        let artifact = emit_artifact(&program, &model).expect("artifact emits");
+        artifact.check_schema_version().expect("schema version is current");
+        let json = serde_json::to_string(&artifact).expect("artifact serializes");
+        let artifact: crate::artifact::Artifact = serde_json::from_str(&json).expect("artifact deserializes");
+
+        assert_eq!(artifact.schema_version, ARTIFACT_SCHEMA_VERSION);
+        assert_eq!(artifact.generator.name, "argentc");
+        assert_eq!(artifact.app, "Test");
+        assert_eq!(artifact.root, "test.ag");
+        assert_eq!(artifact.templates[0].symbol, "gen__template_foo");
+
+        let state = artifact.states.iter().find(|state| state.name == "FooState").expect("source state is present");
+        assert_eq!(state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
+        assert_eq!(state.fields[1].ty, TypeArtifact::Int);
+
+        let actor = artifact.actors.iter().find(|actor| actor.name == "Foo").expect("actor is present");
+        assert_eq!(actor.sil, "sil/Foo.sil");
+        assert_eq!(actor.compiled, None);
+        assert_eq!(actor.runtime_state.fields[0].name, "gen__template_foo");
+        assert_eq!(actor.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { actor: "Foo".to_string() });
+        assert_eq!(actor.runtime_state.fields[1].name, "owner");
+
+        let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
+        assert_eq!(entry.kind, EntryKindArtifact::Leader);
+        assert_eq!(entry.user_params[0].name, "amount");
+        assert_eq!(entry.user_params[0].ty, TypeArtifact::Int);
+        assert_eq!(entry.hidden_params.len(), 2);
+        assert_eq!(entry.hidden_params[0].name, "gen__foo_prefix");
+        assert_eq!(entry.hidden_params[0].ty, TypeArtifact::Bytes);
+        assert_eq!(entry.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefix { actor: "Foo".to_string() });
+        assert_eq!(entry.hidden_params[1].name, "gen__foo_suffix");
+        assert!(matches!(entry.emits, EmitArtifact::One { .. }));
+        assert_eq!(entry.routes[0].actor, "Foo");
+        assert_eq!(entry.routes[0].state_expr, "self.state");
+        assert_eq!(entry.terminal_paths[0].routes[0], entry.routes[0]);
     }
 
     #[test]
