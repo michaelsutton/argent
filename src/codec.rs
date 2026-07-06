@@ -2,7 +2,9 @@ use std::{collections::BTreeMap, fmt};
 
 use serde::{Deserialize, Serialize};
 
-use crate::artifact::{ActorArtifact, Artifact, EntryArtifact, FieldArtifact, RuntimeStateArtifact, StateArtifact, TypeArtifact};
+use crate::artifact::{
+    FieldArtifact, RuntimeStateArtifact, SilAbiArtifact, SilActorArtifact, SilEntryArtifact, StateArtifact, TypeArtifact,
+};
 
 const OP_0: u8 = 0x00;
 const OP_DATA_1: u8 = 0x01;
@@ -77,28 +79,25 @@ impl fmt::Display for CodecError {
 impl std::error::Error for CodecError {}
 
 pub fn encode_actor_entry_sig_script(
-    artifact: &Artifact,
+    abi: &SilAbiArtifact,
     actor_name: &str,
     entry_name: &str,
     args: &[ArtifactValue],
 ) -> CodecResult<Vec<u8>> {
-    let actor = artifact
-        .actors
-        .iter()
-        .find(|actor| actor.name == actor_name)
-        .ok_or_else(|| CodecError::UnknownActor(actor_name.to_string()))?;
+    let actor =
+        abi.actors.iter().find(|actor| actor.name == actor_name).ok_or_else(|| CodecError::UnknownActor(actor_name.to_string()))?;
     let entry = actor
         .entries
         .iter()
         .find(|entry| entry.name == entry_name)
         .ok_or_else(|| CodecError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
-    encode_entry_sig_script(artifact, actor, entry, args)
+    encode_entry_sig_script(abi, actor, entry, args)
 }
 
 pub fn encode_entry_sig_script(
-    artifact: &Artifact,
-    actor: &ActorArtifact,
-    entry: &EntryArtifact,
+    abi: &SilAbiArtifact,
+    actor: &SilActorArtifact,
+    entry: &SilEntryArtifact,
     args: &[ArtifactValue],
 ) -> CodecResult<Vec<u8>> {
     let params = entry_params(entry);
@@ -110,7 +109,7 @@ pub fn encode_entry_sig_script(
         });
     }
 
-    let ctx = TypeContext::new(artifact);
+    let ctx = TypeContext::new(abi);
     let mut out = Vec::new();
     for ((name, ty), value) in params.iter().zip(args) {
         push_sig_arg(&mut out, &ctx, name, ty, value)?;
@@ -177,7 +176,7 @@ pub fn encode_hex(bytes: &[u8]) -> String {
     out
 }
 
-fn entry_params(entry: &EntryArtifact) -> Vec<(&str, &TypeArtifact)> {
+fn entry_params(entry: &SilEntryArtifact) -> Vec<(&str, &TypeArtifact)> {
     entry
         .user_params
         .iter()
@@ -191,8 +190,8 @@ struct TypeContext<'a> {
 }
 
 impl<'a> TypeContext<'a> {
-    fn new(artifact: &'a Artifact) -> Self {
-        Self { states: artifact.states.iter().map(|state| (state.name.as_str(), state)).collect() }
+    fn new(abi: &'a SilAbiArtifact) -> Self {
+        Self { states: abi.states.iter().map(|state| (state.name.as_str(), state)).collect() }
     }
 
     fn state(&self, name: &str) -> CodecResult<&'a StateArtifact> {
@@ -669,13 +668,13 @@ fn hex_nibble(byte: u8) -> CodecResult<u8> {
 mod tests {
     use super::*;
     use crate::artifact::{
-        ActorArtifact, CompiledActorArtifact, CompiledTemplateArtifact, EmitArtifact, EntryKindArtifact, GeneratorArtifact,
-        RuntimeFieldArtifact, RuntimeFieldRoleArtifact, StateSpanArtifact,
+        CompiledActorArtifact, CompiledTemplateArtifact, RuntimeFieldArtifact, RuntimeFieldRoleArtifact, SilActorArtifact,
+        SilEntryArtifact, StateSpanArtifact,
     };
 
     #[test]
     fn encodes_pushes_like_silverscript_builder() {
-        let artifact = tiny_artifact();
+        let artifact = tiny_sil_abi();
         let sigscript = encode_actor_entry_sig_script(
             &artifact,
             "Foo",
@@ -689,7 +688,7 @@ mod tests {
 
     #[test]
     fn rejects_sigscript_ints_that_do_not_fit_silverscript_script_number() {
-        let artifact = tiny_artifact();
+        let artifact = tiny_sil_abi();
         let err = encode_actor_entry_sig_script(
             &artifact,
             "Foo",
@@ -735,24 +734,17 @@ mod tests {
         );
     }
 
-    fn tiny_artifact() -> Artifact {
-        Artifact {
+    fn tiny_sil_abi() -> SilAbiArtifact {
+        SilAbiArtifact {
             schema_version: 1,
-            generator: GeneratorArtifact { name: "test".to_string(), version: "0".to_string() },
-            app: "Tiny".to_string(),
-            root: "tiny.ag".to_string(),
-            modules: vec!["tiny.ag".to_string()],
-            templates: Vec::new(),
             states: Vec::new(),
-            actors: vec![ActorArtifact {
+            actors: vec![SilActorArtifact {
                 name: "Foo".to_string(),
-                state: "FooState".to_string(),
-                sil: "sil/Foo.sil".to_string(),
+                source_path: "sil/Foo.sil".to_string(),
                 runtime_state: RuntimeStateArtifact { source: "FooState".to_string(), fields: Vec::new() },
                 entries: vec![
-                    EntryArtifact {
+                    SilEntryArtifact {
                         name: "main".to_string(),
-                        kind: EntryKindArtifact::Leader,
                         selector: Some(0),
                         user_params: vec![
                             param("n", TypeArtifact::Int),
@@ -761,24 +753,15 @@ mod tests {
                             param("b", TypeArtifact::Byte),
                         ],
                         hidden_params: Vec::new(),
-                        consumes: Vec::new(),
-                        emits: EmitArtifact::None,
-                        routes: Vec::new(),
-                        terminal_paths: Vec::new(),
                     },
-                    EntryArtifact {
+                    SilEntryArtifact {
                         name: "other".to_string(),
-                        kind: EntryKindArtifact::Leader,
                         selector: Some(1),
                         user_params: Vec::new(),
                         hidden_params: Vec::new(),
-                        consumes: Vec::new(),
-                        emits: EmitArtifact::None,
-                        routes: Vec::new(),
-                        terminal_paths: Vec::new(),
                     },
                 ],
-                compiled: Some(CompiledActorArtifact {
+                compiled: CompiledActorArtifact {
                     script_hex: String::new(),
                     template: CompiledTemplateArtifact {
                         prefix_hex: String::new(),
@@ -786,7 +769,7 @@ mod tests {
                         hash_hex: String::new(),
                     },
                     state_span: StateSpanArtifact { offset: 0, len: 0 },
-                }),
+                },
             }],
         }
     }

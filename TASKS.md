@@ -182,6 +182,8 @@ Obstacle to handle:
 
 ### 5. Split Argent Artifact From Sil ABI Artifact
 
+Status: done.
+
 Separate the coordination metadata owned by Argent from the bytecode ABI
 metadata owned by the generated Sil contract layer.
 

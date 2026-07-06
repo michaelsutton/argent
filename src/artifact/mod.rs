@@ -2,6 +2,13 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod sil_abi;
+
+pub use sil_abi::{
+    CompiledActorArtifact, CompiledTemplateArtifact, RuntimeFieldArtifact, RuntimeFieldRoleArtifact, RuntimeStateArtifact,
+    SIL_ABI_SCHEMA_VERSION, SilAbiArtifact, SilActorArtifact, SilEntryArtifact, StateSpanArtifact,
+};
+
 pub const ARTIFACT_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -11,6 +18,12 @@ pub struct Artifact {
     pub app: String,
     pub root: String,
     pub modules: Vec<String>,
+    pub argent: ArgentArtifact,
+    pub sil_abi: SilAbiArtifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArgentArtifact {
     pub templates: Vec<TemplateRefArtifact>,
     pub states: Vec<StateArtifact>,
     pub actors: Vec<ActorArtifact>,
@@ -18,23 +31,27 @@ pub struct Artifact {
 
 impl Artifact {
     pub fn check_schema_version(&self) -> std::result::Result<(), ArtifactVersionError> {
-        if self.schema_version == ARTIFACT_SCHEMA_VERSION {
-            Ok(())
-        } else {
-            Err(ArtifactVersionError { supported: ARTIFACT_SCHEMA_VERSION, found: self.schema_version })
+        if self.schema_version != ARTIFACT_SCHEMA_VERSION {
+            return Err(ArtifactVersionError {
+                artifact: "Argent artifact",
+                supported: ARTIFACT_SCHEMA_VERSION,
+                found: self.schema_version,
+            });
         }
+        self.sil_abi.check_schema_version()
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ArtifactVersionError {
+    pub artifact: &'static str,
     pub supported: u32,
     pub found: u32,
 }
 
 impl fmt::Display for ArtifactVersionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unsupported Argent artifact schema version {}; expected {}", self.found, self.supported)
+        write!(f, "unsupported {} schema version {}; expected {}", self.artifact, self.found, self.supported)
     }
 }
 
@@ -69,45 +86,37 @@ pub struct FieldArtifact {
 pub struct ActorArtifact {
     pub name: String,
     pub state: String,
-    pub sil: String,
-    pub runtime_state: RuntimeStateArtifact,
+    pub abi: ActorAbiRefArtifact,
     pub entries: Vec<EntryArtifact>,
-    pub compiled: Option<CompiledActorArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeStateArtifact {
-    pub source: String,
-    pub fields: Vec<RuntimeFieldArtifact>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RuntimeFieldArtifact {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub ty: TypeArtifact,
-    pub role: RuntimeFieldRoleArtifact,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RuntimeFieldRoleArtifact {
-    Template { actor: String },
-    Source,
+pub struct ActorAbiRefArtifact {
+    pub actor: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntryArtifact {
     pub name: String,
     pub kind: EntryKindArtifact,
-    #[serde(default)]
-    pub selector: Option<i64>,
-    pub user_params: Vec<ParamArtifact>,
-    pub hidden_params: Vec<HiddenParamArtifact>,
+    pub abi: EntryAbiRefArtifact,
+    pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
     pub routes: Vec<RouteArtifact>,
     pub terminal_paths: Vec<TerminalPathArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntryAbiRefArtifact {
+    pub actor: String,
+    pub entry: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WitnessArtifact {
+    pub param: String,
+    pub purpose: HiddenParamPurposeArtifact,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,26 +179,6 @@ pub struct RouteArtifact {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalPathArtifact {
     pub routes: Vec<RouteArtifact>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompiledActorArtifact {
-    pub script_hex: String,
-    pub template: CompiledTemplateArtifact,
-    pub state_span: StateSpanArtifact,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CompiledTemplateArtifact {
-    pub prefix_hex: String,
-    pub suffix_hex: String,
-    pub hash_hex: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StateSpanArtifact {
-    pub offset: usize,
-    pub len: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -270,59 +259,99 @@ mod tests {
           "app": "Tiny",
           "root": "examples/tiny.ag",
           "modules": ["examples/tiny.ag"],
-          "templates": [{ "actor": "Foo", "symbol": "gen__template_foo" }],
-          "states": [
-            {
-              "name": "FooState",
-              "fields": [{ "name": "owner", "type": { "kind": "fixed_bytes", "len": 32 } }]
-            }
-          ],
-          "actors": [
-            {
-              "name": "Foo",
-              "state": "FooState",
-              "sil": "sil/Foo.sil",
-              "runtime_state": {
-                "source": "FooState",
-                "fields": [
-                  {
-                    "name": "gen__template_foo",
-                    "type": { "kind": "fixed_bytes", "len": 32 },
-                    "role": { "kind": "template", "actor": "Foo" }
-                  },
-                  {
-                    "name": "owner",
-                    "type": { "kind": "fixed_bytes", "len": 32 },
-                    "role": { "kind": "source" }
-                  }
-                ]
-              },
-              "entries": [],
-              "compiled": null
-            }
-          ]
+          "argent": {
+            "templates": [{ "actor": "Foo", "symbol": "gen__template_foo" }],
+            "states": [
+              {
+                "name": "FooState",
+                "fields": [{ "name": "owner", "type": { "kind": "fixed_bytes", "len": 32 } }]
+              }
+            ],
+            "actors": [
+              {
+                "name": "Foo",
+                "state": "FooState",
+                "abi": { "actor": "Foo" },
+                "entries": []
+              }
+            ]
+          },
+          "sil_abi": {
+            "schema_version": 1,
+            "states": [
+              {
+                "name": "FooState",
+                "fields": [{ "name": "owner", "type": { "kind": "fixed_bytes", "len": 32 } }]
+              }
+            ],
+            "actors": [
+              {
+                "name": "Foo",
+                "source_path": "sil/Foo.sil",
+                "runtime_state": {
+                  "source": "FooState",
+                  "fields": [
+                    {
+                      "name": "gen__template_foo",
+                      "type": { "kind": "fixed_bytes", "len": 32 },
+                      "role": { "kind": "template", "actor": "Foo" }
+                    },
+                    {
+                      "name": "owner",
+                      "type": { "kind": "fixed_bytes", "len": 32 },
+                      "role": { "kind": "source" }
+                    }
+                  ]
+                },
+                "entries": [],
+                "compiled": {
+                  "script_hex": "",
+                  "template": { "prefix_hex": "", "suffix_hex": "", "hash_hex": "" },
+                  "state_span": { "offset": 0, "len": 0 }
+                }
+              }
+            ]
+          }
         }
         "#;
 
         let artifact: Artifact = serde_json::from_str(json).expect("artifact should deserialize");
         artifact.check_schema_version().expect("schema version should be supported");
-        assert_eq!(artifact.actors[0].compiled, None);
+        assert_eq!(artifact.argent.actors[0].abi.actor, "Foo");
+        assert_eq!(artifact.sil_abi.actors[0].compiled.script_hex, "");
     }
 
     #[test]
-    fn rejects_unknown_schema_version() {
+    fn rejects_unknown_argent_schema_version() {
         let artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION + 1,
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "Tiny".to_string(),
             root: "tiny.ag".to_string(),
             modules: Vec::new(),
-            templates: Vec::new(),
-            states: Vec::new(),
-            actors: Vec::new(),
+            argent: ArgentArtifact { templates: Vec::new(), states: Vec::new(), actors: Vec::new() },
+            sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states: Vec::new(), actors: Vec::new() },
         };
 
         let err = artifact.check_schema_version().expect_err("future schema must be rejected");
+        assert_eq!(err.artifact, "Argent artifact");
         assert_eq!(err.found, ARTIFACT_SCHEMA_VERSION + 1);
+    }
+
+    #[test]
+    fn rejects_unknown_sil_abi_schema_version() {
+        let artifact = Artifact {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
+            app: "Tiny".to_string(),
+            root: "tiny.ag".to_string(),
+            modules: Vec::new(),
+            argent: ArgentArtifact { templates: Vec::new(), states: Vec::new(), actors: Vec::new() },
+            sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION + 1, states: Vec::new(), actors: Vec::new() },
+        };
+
+        let err = artifact.check_schema_version().expect_err("future Sil ABI schema must be rejected");
+        assert_eq!(err.artifact, "Sil ABI artifact");
+        assert_eq!(err.found, SIL_ABI_SCHEMA_VERSION + 1);
     }
 }
