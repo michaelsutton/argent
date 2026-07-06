@@ -1,5 +1,6 @@
 pub mod artifact;
 pub mod ast;
+pub mod builder;
 pub mod codec;
 pub mod emit;
 pub mod error;

@@ -116,6 +116,10 @@ version = "0.1.0"
 dependencies = [
  "blake2b_simd",
  "faster-hex 0.10.0",
+ "kaspa-consensus-core",
+ "kaspa-txscript",
+ "kaspa-txscript-errors",
+ "secp256k1",
  "serde",
  "serde_json",
  "silverscript-lang",

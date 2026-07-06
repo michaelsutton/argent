@@ -218,6 +218,8 @@ Obstacle to handle:
 
 ### 6. Build Minimal Artifact-Only Transaction Harness
 
+Status: done.
+
 Create the first reusable builder surface that consumes only artifact JSON. It
 should build P2SH signature scripts, covenant outputs, and populated test
 transactions for one actor.
