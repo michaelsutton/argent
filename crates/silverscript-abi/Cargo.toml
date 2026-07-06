@@ -5,9 +5,10 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [dependencies]
-faster-hex = "0.10"
-serde = { version = "1", features = ["derive"] }
-thiserror = "2"
+faster-hex = { workspace = true }
+kaspa-txscript = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-serde_json = "1"
+serde_json = { workspace = true }

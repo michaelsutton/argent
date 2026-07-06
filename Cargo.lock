@@ -2940,6 +2940,7 @@ name = "silverscript-abi"
 version = "0.1.0"
 dependencies = [
  "faster-hex 0.10.0",
+ "kaspa-txscript",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

@@ -5,8 +5,8 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-silverscript-abi = { path = "../silverscript-abi" }
+serde = { workspace = true }
+silverscript-abi = { workspace = true }
 
 [dev-dependencies]
-serde_json = "1"
+serde_json = { workspace = true }

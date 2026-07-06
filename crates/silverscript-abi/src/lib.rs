@@ -1,5 +1,14 @@
 use std::collections::BTreeMap;
 
+use kaspa_txscript::{
+    EngineFlags, deserialize_i64 as deserialize_script_i64,
+    opcodes::codes::{
+        Op0 as OP_0, Op1 as OP_1, Op1Negate as OP_1_NEGATE, Op16 as OP_16, OpData1 as OP_DATA_1, OpData75 as OP_DATA_75,
+        OpPushData1 as OP_PUSH_DATA_1, OpPushData2 as OP_PUSH_DATA_2, OpPushData4 as OP_PUSH_DATA_4,
+    },
+    script_builder::{ScriptBuilder, ScriptBuilderError},
+    serialize_i64 as serialize_script_i64,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -173,17 +182,6 @@ pub struct StateSpanArtifact {
     pub len: usize,
 }
 
-const OP_0: u8 = 0x00;
-const OP_DATA_1: u8 = 0x01;
-const OP_DATA_75: u8 = 0x4b;
-const OP_PUSH_DATA_1: u8 = 0x4c;
-const OP_PUSH_DATA_2: u8 = 0x4d;
-const OP_PUSH_DATA_4: u8 = 0x4e;
-const OP_1_NEGATE: u8 = 0x4f;
-const OP_1: u8 = 0x51;
-const OP_16: u8 = 0x60;
-const OP_1_NEGATE_VALUE: u8 = 0x81;
-
 pub type CodecResult<T> = std::result::Result<T, CodecError>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -224,6 +222,8 @@ pub enum CodecError {
     InvalidNumber { value: i64, size: usize },
     #[error("invalid hex: {0}")]
     InvalidHex(#[from] faster_hex::Error),
+    #[error("script builder error: {0}")]
+    ScriptBuilder(#[from] ScriptBuilderError),
     #[error("invalid push-only script: {0}")]
     InvalidPush(String),
     #[error("state script has {len} trailing bytes at offset {offset}")]
@@ -265,14 +265,14 @@ pub fn encode_entry_sig_script(
     }
 
     let ctx = TypeContext::new(abi);
-    let mut out = Vec::new();
+    let mut builder = script_builder();
     for ((name, ty), value) in params.iter().zip(args) {
-        push_sig_arg(&mut out, &ctx, name, ty, value)?;
+        push_sig_arg(&mut builder, &ctx, name, ty, value)?;
     }
     if let Some(selector) = entry.selector {
-        push_i64(&mut out, selector)?;
+        push_i64(&mut builder, selector)?;
     }
-    Ok(out)
+    Ok(builder.drain())
 }
 
 pub fn encode_runtime_state_script(
@@ -285,13 +285,13 @@ pub fn encode_runtime_state_script(
         }
     }
 
-    let mut out = Vec::new();
+    let mut builder = script_builder();
     for field in &runtime_state.fields {
         let value = values.get(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
         let payload = encode_state_payload(&field.name, &field.ty, value)?;
-        push_data_explicit(&mut out, &payload);
+        builder.add_data_with_push_opcode(&payload)?;
     }
-    Ok(out)
+    Ok(builder.drain())
 }
 
 pub fn decode_runtime_state_script(
@@ -344,51 +344,61 @@ impl<'a> TypeContext<'a> {
     }
 }
 
-fn push_sig_arg(out: &mut Vec<u8>, ctx: &TypeContext<'_>, name: &str, ty: &TypeArtifact, value: &ArtifactValue) -> CodecResult<()> {
+fn script_builder() -> ScriptBuilder {
+    ScriptBuilder::with_flags(EngineFlags { covenants_enabled: true, ..Default::default() })
+}
+
+fn push_sig_arg(
+    builder: &mut ScriptBuilder,
+    ctx: &TypeContext<'_>,
+    name: &str,
+    ty: &TypeArtifact,
+    value: &ArtifactValue,
+) -> CodecResult<()> {
     match ty {
         TypeArtifact::Struct { name: struct_name } => {
             let fields = object_fields(value)?;
-            push_struct_fields(out, ctx, ctx.state(struct_name)?, fields)
+            push_struct_fields(builder, ctx, ctx.state(struct_name)?, fields)
         }
         TypeArtifact::FixedArray { item, len } if matches!(item.as_ref(), TypeArtifact::Struct { .. }) => {
-            push_struct_array_fields(out, ctx, item, Some(*len), value)
+            push_struct_array_fields(builder, ctx, item, Some(*len), value)
         }
         TypeArtifact::DynamicArray { item } if matches!(item.as_ref(), TypeArtifact::Struct { .. }) => {
-            push_struct_array_fields(out, ctx, item, None, value)
+            push_struct_array_fields(builder, ctx, item, None, value)
         }
-        TypeArtifact::Int => push_i64(out, expect_int(value)?),
-        TypeArtifact::Bool => push_i64(out, i64::from(expect_bool(value)?)),
+        TypeArtifact::Int => push_i64(builder, expect_int(value)?),
+        TypeArtifact::Bool => push_i64(builder, i64::from(expect_bool(value)?)),
         TypeArtifact::Byte => {
-            push_data_canonical(out, &[expect_byte(value)?]);
+            push_data(builder, &[expect_byte(value)?])?;
             Ok(())
         }
         TypeArtifact::Bytes => {
-            push_data_canonical(out, expect_bytes(value)?);
+            push_data(builder, expect_bytes(value)?)?;
             Ok(())
         }
         TypeArtifact::Text => {
-            push_data_canonical(out, expect_text(value)?.as_bytes());
+            push_data(builder, expect_text(value)?.as_bytes())?;
             Ok(())
         }
-        TypeArtifact::Pubkey => push_fixed_bytes(out, name, value, 32),
-        TypeArtifact::Sig => push_fixed_bytes(out, name, value, 65),
-        TypeArtifact::Datasig => push_fixed_bytes(out, name, value, 64),
-        TypeArtifact::FixedBytes { len } => push_fixed_bytes(out, name, value, *len),
+        TypeArtifact::Pubkey => push_fixed_bytes(builder, name, value, 32),
+        TypeArtifact::Sig => push_fixed_bytes(builder, name, value, 65),
+        TypeArtifact::Datasig => push_fixed_bytes(builder, name, value, 64),
+        TypeArtifact::FixedBytes { len } => push_fixed_bytes(builder, name, value, *len),
         TypeArtifact::FixedArray { item, len } => {
             let payload = encode_array_payload(name, item, Some(*len), value)?;
-            push_data_canonical(out, &payload);
+            push_data(builder, &payload)?;
             Ok(())
         }
         TypeArtifact::DynamicArray { item } => {
             let payload = encode_array_payload(name, item, None, value)?;
-            push_data_canonical(out, &payload);
+            push_data(builder, &payload)?;
             Ok(())
         }
     }
 }
 
 fn push_struct_fields(
-    out: &mut Vec<u8>,
+    builder: &mut ScriptBuilder,
     ctx: &TypeContext<'_>,
     state: &StateArtifact,
     fields: &BTreeMap<String, ArtifactValue>,
@@ -396,13 +406,13 @@ fn push_struct_fields(
     assert_no_extra_fields(fields, &state.fields)?;
     for field in &state.fields {
         let value = fields.get(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
-        push_sig_arg(out, ctx, &field.name, &field.ty, value)?;
+        push_sig_arg(builder, ctx, &field.name, &field.ty, value)?;
     }
     Ok(())
 }
 
 fn push_struct_array_fields(
-    out: &mut Vec<u8>,
+    builder: &mut ScriptBuilder,
     ctx: &TypeContext<'_>,
     item: &TypeArtifact,
     expected_len: Option<usize>,
@@ -430,7 +440,7 @@ fn push_struct_array_fields(
             field_values.push(object.get(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?.clone());
         }
         push_sig_arg(
-            out,
+            builder,
             ctx,
             &field.name,
             &TypeArtifact::DynamicArray { item: Box::new(field.ty.clone()) },
@@ -453,7 +463,7 @@ fn decode_state_payload(name: &str, ty: &TypeArtifact, payload: &[u8]) -> CodecR
     match ty {
         TypeArtifact::Int => {
             require_len(name, 8, payload.len())?;
-            Ok(ArtifactValue::Int(deserialize_i64(payload)?))
+            Ok(ArtifactValue::Int(deserialize_fixed_i64(payload)?))
         }
         TypeArtifact::Bool => {
             require_len(name, 1, payload.len())?;
@@ -519,7 +529,7 @@ fn encode_array_payload(name: &str, item: &TypeArtifact, expected_len: Option<us
 
 fn encode_fixed_payload(name: &str, ty: &TypeArtifact, value: &ArtifactValue) -> CodecResult<Vec<u8>> {
     match ty {
-        TypeArtifact::Int => serialize_i64(expect_int(value)?, Some(8)),
+        TypeArtifact::Int => serialize_fixed_i64(expect_int(value)?, 8),
         TypeArtifact::Bool => Ok(vec![u8::from(expect_bool(value)?)]),
         TypeArtifact::Byte => Ok(vec![expect_byte(value)?]),
         TypeArtifact::Pubkey => fixed_bytes(name, value, 32),
@@ -547,9 +557,9 @@ fn fixed_payload_len(ty: &TypeArtifact) -> Option<usize> {
     }
 }
 
-fn push_fixed_bytes(out: &mut Vec<u8>, name: &str, value: &ArtifactValue, expected: usize) -> CodecResult<()> {
+fn push_fixed_bytes(builder: &mut ScriptBuilder, name: &str, value: &ArtifactValue, expected: usize) -> CodecResult<()> {
     let bytes = fixed_bytes(name, value, expected)?;
-    push_data_canonical(out, &bytes);
+    push_data(builder, &bytes)?;
     Ok(())
 }
 
@@ -559,53 +569,17 @@ fn fixed_bytes(name: &str, value: &ArtifactValue, expected: usize) -> CodecResul
     Ok(bytes.to_vec())
 }
 
-fn push_i64(out: &mut Vec<u8>, value: i64) -> CodecResult<()> {
-    if value == 0 {
-        out.push(OP_0);
-        return Ok(());
-    }
-    if value == -1 {
-        out.push(OP_1_NEGATE);
-        return Ok(());
-    }
-    if (1..=16).contains(&value) {
-        out.push((OP_1 as i64 - 1 + value) as u8);
-        return Ok(());
-    }
-    let bytes = serialize_i64(value, None)?;
-    if bytes.len() > 8 {
+fn push_i64(builder: &mut ScriptBuilder, value: i64) -> CodecResult<()> {
+    if value == i64::MIN {
         return Err(CodecError::InvalidNumber { value, size: 8 });
     }
-    push_data_canonical(out, &bytes);
+    builder.add_i64(value)?;
     Ok(())
 }
 
-fn push_data_canonical(out: &mut Vec<u8>, data: &[u8]) {
-    match data {
-        [] => out.push(OP_0),
-        [OP_1_NEGATE_VALUE] => out.push(OP_1_NEGATE),
-        [1..=16] => out.push((OP_1 - 1) + data[0]),
-        _ => push_data_explicit(out, data),
-    }
-}
-
-fn push_data_explicit(out: &mut Vec<u8>, data: &[u8]) {
-    let len = data.len();
-    if len == 0 {
-        out.push(OP_0);
-    } else if len <= OP_DATA_75 as usize {
-        out.push((OP_DATA_1 - 1) + len as u8);
-    } else if len <= u8::MAX as usize {
-        out.push(OP_PUSH_DATA_1);
-        out.push(len as u8);
-    } else if len <= u16::MAX as usize {
-        out.push(OP_PUSH_DATA_2);
-        out.extend_from_slice(&(len as u16).to_le_bytes());
-    } else {
-        out.push(OP_PUSH_DATA_4);
-        out.extend_from_slice(&(len as u32).to_le_bytes());
-    }
-    out.extend_from_slice(data);
+fn push_data(builder: &mut ScriptBuilder, data: &[u8]) -> CodecResult<()> {
+    builder.add_data(data)?;
+    Ok(())
 }
 
 fn parse_pushes(script: &[u8]) -> CodecResult<Vec<(usize, Vec<u8>)>> {
@@ -659,50 +633,12 @@ fn read_len<'a>(script: &'a [u8], offset: &mut usize, len: usize) -> CodecResult
     Ok(bytes)
 }
 
-fn serialize_i64(value: i64, size: Option<usize>) -> CodecResult<Vec<u8>> {
-    let sign = value.signum();
-    let mut positive = value.unsigned_abs();
-    let mut last_saturated = false;
-    let mut bytes = Vec::with_capacity(size.unwrap_or(8));
-    while positive != 0 || last_saturated {
-        if positive == 0 {
-            bytes.push(0);
-            last_saturated = false;
-        } else {
-            let byte = (positive & 0xff) as u8;
-            last_saturated = (byte & 0x80) != 0;
-            positive >>= 8;
-            bytes.push(byte);
-        }
-    }
-
-    if let Some(size) = size {
-        if bytes.len() > size {
-            return Err(CodecError::InvalidNumber { value, size });
-        }
-        bytes.resize(size, 0);
-    }
-
-    if sign == -1 {
-        match bytes.last_mut() {
-            Some(byte) => *byte |= 0x80,
-            None => return Err(CodecError::InvalidNumber { value, size: size.unwrap_or(0) }),
-        }
-    }
-    Ok(bytes)
+fn serialize_fixed_i64(value: i64, size: usize) -> CodecResult<Vec<u8>> {
+    serialize_script_i64(value, Some(size)).map(|bytes| bytes.into_vec()).map_err(|_| CodecError::InvalidNumber { value, size })
 }
 
-fn deserialize_i64(bytes: &[u8]) -> CodecResult<i64> {
-    if bytes.len() > 8 {
-        return Err(CodecError::InvalidLength { name: "int".to_string(), expected: 8, actual: bytes.len() });
-    }
-    if bytes.is_empty() {
-        return Ok(0);
-    }
-    let msb = bytes[bytes.len() - 1];
-    let sign = 1 - 2 * ((msb >> 7) as i64);
-    let first_byte = (msb & 0x7f) as i64;
-    Ok(bytes[..bytes.len() - 1].iter().rev().map(|byte| *byte as i64).fold(first_byte, |accum, byte| (accum << 8) + byte) * sign)
+fn deserialize_fixed_i64(bytes: &[u8]) -> CodecResult<i64> {
+    deserialize_script_i64(bytes, false).map_err(|err| CodecError::InvalidPush(err.to_string()))
 }
 
 fn expect_int(value: &ArtifactValue) -> CodecResult<i64> {
@@ -907,6 +843,7 @@ mod tests {
         let encoded = encode_runtime_state_script(&runtime_state, &values).expect("state encodes");
         let decoded = decode_runtime_state_script(&runtime_state, &encoded).expect("state decodes");
 
+        assert_eq!(encode_hex(&encoded), format!("20{}0805000000000000800101", "07".repeat(32)));
         assert_eq!(decoded, values);
         assert_eq!(encode_runtime_state_script(&runtime_state, &decoded).expect("state re-encodes"), encoded);
 
