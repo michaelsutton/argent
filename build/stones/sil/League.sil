@@ -104,7 +104,7 @@ contract League(
         int gen__player_suffix_len = gen__player_suffix.length;
 
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int gen__lane_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output lane: League
+        int gen__league_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output league: League
         int gen__player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
 
         require(checkSig(owner_sig, owner_pk));
@@ -123,9 +123,9 @@ contract League(
             wins: 0,
             losses: 0,
         };
-        require(tx.outputs[gen__lane_output_idx].value == tx.inputs[this.activeInputIndex].value);
+        require(tx.outputs[gen__league_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__player_output_idx].value > 0);
-        State gen__state_lane_state = {
+        State gen__state_league_state = {
             gen__template_league: gen__template_league,
             gen__template_player: gen__template_player,
             gen__template_stones_game: gen__template_stones_game,
@@ -135,7 +135,7 @@ contract League(
             default_pile: default_pile,
             default_max_take: default_max_take,
         };
-        validateOutputStateWithTemplate(gen__lane_output_idx, gen__state_lane_state, gen__league_prefix, gen__league_suffix, gen__template_league);
+        validateOutputStateWithTemplate(gen__league_output_idx, gen__state_league_state, gen__league_prefix, gen__league_suffix, gen__template_league);
         validateOutputStateWithTemplate(gen__player_output_idx, next_player, gen__player_prefix, gen__player_suffix, gen__template_player);
     }
 

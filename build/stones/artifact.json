@@ -311,7 +311,7 @@
             "kind": "outputs",
             "outputs": [
               {
-                "name": "lane",
+                "name": "league",
                 "auth_index": 0,
                 "actors": [
                   "League"
@@ -328,7 +328,7 @@
           },
           "routes": [
             {
-              "output": "lane",
+              "output": "league",
               "actor": "League",
               "state_expr": "self.state"
             },
@@ -342,7 +342,7 @@
             {
               "routes": [
                 {
-                  "output": "lane",
+                  "output": "league",
                   "actor": "League",
                   "state_expr": "self.state"
                 },

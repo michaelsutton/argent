@@ -24,9 +24,9 @@
         {
           "name": "register_player",
           "kind": "leader",
-          "emits": { "kind": "outputs", "outputs": [{ "name": "lane", "auth_index": 0, "actors": ["League"] }, { "name": "player", "auth_index": 1, "actors": ["Player"] }] },
+          "emits": { "kind": "outputs", "outputs": [{ "name": "league", "auth_index": 0, "actors": ["League"] }, { "name": "player", "auth_index": 1, "actors": ["Player"] }] },
           "consumes": [],
-          "routes": [{ "output": "lane", "actor": "League", "state": "self.state" }, { "output": "player", "actor": "Player", "state": "next_player" }]
+          "routes": [{ "output": "league", "actor": "League", "state": "self.state" }, { "output": "player", "actor": "Player", "state": "next_player" }]
         }
       ]
     },

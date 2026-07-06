@@ -1,4 +1,4 @@
-// Syntax sketch only: observed foreign covenant lanes are not compiled yet.
+// Syntax sketch only: observed foreign covenants are not compiled yet.
 //
 // This file sketches two separate apps:
 // - KCC20Asset: the asset covenant family.
@@ -73,7 +73,7 @@ app KCC20Asset {
 
 actor Minter owns MinterState {
     entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
-    // `observes` declares a foreign covenant id lane for this transition.
+    // `observes` declares a foreign covenant id for this transition.
     observes asset by self.kcc20_covid {
         // Named handles are exhaustive over the observed covenant inputs.
         inputs {
