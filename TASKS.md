@@ -28,7 +28,7 @@ contains only runtime facts:
 - template prefix, suffix, state span, and template hash;
 - actor, state, field, entrypoint, and route metadata;
 - structural type descriptors, not raw Silverscript type strings;
-- hidden witness recipes for template proofs, observed lanes, generic actor
+- hidden witness recipes for template proofs, observed covenants, generic actor
   witnesses, and expanded digest state;
 - enough metadata for a small builder library to construct transactions without
   linking compiler crates.
@@ -70,7 +70,7 @@ fixture generator. The builder code under test must not depend on it.
   derived from the same compiler model in one pass.
 - Do not expose hidden compiler machinery as user entrypoint arguments.
 - Prefer explicit failure tests for wrong template hash, wrong output order,
-  wrong covenant id lane, wrong hidden witness, bad digest preimage, and swapped
+  wrong observed covenant id, wrong hidden witness, bad digest preimage, and swapped
   generic actor template.
 
 ## Task List
@@ -254,22 +254,43 @@ Obstacle to handle:
 - Route metadata must be emitted from the same validated model that emits
   Silverscript. Avoid a second ad hoc route parser in the builder.
 
-### 8. Add Same-Template Output Shortcut
+### 8. Add Same-Template And Exact-Continuation Output Shortcuts
 
 Generate the cheaper same-template validation path where the output is known to
 preserve the active actor template. Keep the conservative
 `validateOutputStateWithTemplate` path for foreign actors and peers.
+
+Also generate an exact-continuation shortcut where the output is known to keep
+both the same template and the same state. For example,
+`examples/stones/league.ag` preserves the league actor exactly while emitting a
+new player. Future examples should prefer semantic output handle names:
+
+```argent
+become {
+    league <- League(self.state);
+    player <- Player(next_player);
+}
+```
+
+The exact-continuation output can be checked by comparing its script public key
+with the input script public key, while value policy remains ordinary user code.
 
 End-to-end test:
 
 - Add a self-transition fixture.
 - Verify the generated Silverscript uses the same-template path.
 - Verify the valid tx passes and a changed-template output fails.
+- Add a fixture like `League(self.state)` and verify the generated Silverscript
+  uses exact script-public-key equality for that output.
 
 Obstacle to handle:
 
-- Same actor name is not always enough. For observed or generic lanes, preserve
-  the concrete runtime template identity, not just the source-level interface.
+- Same actor name is not always enough. For observed actors or generic handles,
+  preserve the concrete runtime template identity, not just the source-level
+  interface.
+- Script-public-key equality proves exact template and state preservation, but
+  it does not prove value preservation. Amount rules must stay explicit in user
+  code.
 
 ### 9. Introduce Template Plan Receipts
 
@@ -289,7 +310,7 @@ Obstacle to handle:
   transaction builder's public shape. Design the receipt as a plan, not as a dump
   of current implementation details.
 
-### 10. Implement Concrete `observes` Lanes
+### 10. Implement Concrete `observes` Blocks
 
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
@@ -300,26 +321,26 @@ observes asset by self.kcc20_covid {
 }
 ```
 
-The compiler should lower this to covenant-id lane reads and output checks
+The compiler should lower this to covenant-id reads and output checks
 without requiring the observing actor to own the foreign app.
 
 End-to-end test:
 
 - Compile the minter/proxy observer sketch.
-- Build a mint transaction where `Minter` observes the asset lane.
+- Build a mint transaction where `Minter` observes the asset covenant.
 - Valid tx passes.
 - Wrong `kcc20_covid`, missing proxy input, or wrong recipient output fails.
 
 Obstacle to handle:
 
-- Observed lane output order must be deterministic and artifact-visible. Do not
+- Observed output order must be deterministic and artifact-visible. Do not
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
-### 11. Hide Template Witnesses For Observed Lanes
+### 11. Hide Template Witnesses For `observes` Blocks
 
-Make the builder fill observed-lane prefix/suffix/template witnesses from the
-artifact and live UTXOs. User code should provide semantic state transitions,
-not template plumbing.
+Make the builder fill observed-covenant prefix/suffix/template witnesses from
+the artifact and live UTXOs. User code should provide semantic state
+transitions, not template plumbing.
 
 End-to-end test:
 
@@ -333,13 +354,69 @@ Obstacle to handle:
   actual prefix and suffix bytes. The artifact must say which witness shape each
   generated call expects.
 
-### 12. Implement Open Actor Interface Syntax
+### 12. Introduce Typed Template Handles
+
+Model runtime-selected actor templates as typed handles instead of raw
+`byte[32]` hashes. This covers both closed multiplex routing and open-agent
+locks.
+
+Conceptually:
+
+```text
+TemplateHandle<StateView>
+  template_hash
+  Sil ABI / state layout class
+  template cut or prefix/suffix opening requirement
+  source-level state view exposed to Argent
+```
+
+Closed-world mux example:
+
+```argent
+actor<ChessState> ac = Pawn;
+
+if selector == KNIGHT {
+    ac = Knight;
+}
+
+become {
+    next <- ac(next_state);
+}
+```
+
+Open-agent lock example:
+
+```argent
+byte[32] occupant_template_hash;
+```
+
+The stored state may remain a fixed `byte[32]`, but the compiler should treat
+it as a persisted `TemplateHandle<AgentCapsule>` commitment when it is used for
+observed/open actor transitions.
+
+End-to-end test:
+
+- Add a closed mux fixture with multiple actors sharing one source state.
+- Compile a runtime-selected `actor<State>` variable and `ac(next_state)`.
+- Verify every candidate actor in the handle group shares the same Sil ABI state
+  layout/cut class.
+- Build one valid transition for two different selected targets.
+- Reject a candidate whose source state or compiled state ABI shape differs.
+
+Obstacle to handle:
+
+- A raw template hash is not enough to build or verify a transition. The handle
+  must be paired with the ABI/cut class and the hidden witness recipe needed to
+  open or preserve that template. Closed mux handles can be table-driven;
+  open-agent handles must be bound to the co-spent input/template witness.
+
+### 13. Implement Open Actor Interface Syntax
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
 
 ```text
-observes agent_lane by self.occupant_agent_covid {
+observes agent_cov by self.occupant_agent_covid {
     inputs {
         agent: actor<AgentCapsule> as T;
     }
@@ -368,12 +445,12 @@ Obstacle to handle:
   arbitrary foreign strategy determinism. Keep this distinction visible in docs
   and diagnostics.
 
-### 13. Implement Generic `T(next_state)` Become
+### 14. Implement Generic `T(next_state)` Become
 
 Lower:
 
 ```text
-require agent_lane.outputs become {
+require agent_cov.outputs become {
     agent <- T(next_agent);
 };
 ```
@@ -393,7 +470,7 @@ Obstacle to handle:
   layout information. The builder must bind this bundle to the observed input,
   not to a user-provided arbitrary template.
 
-### 14. Implement Fixed Capability Header Preservation
+### 15. Implement Fixed Capability Header Preservation
 
 Add a reusable way for observed/open actors to declare which header fields are
 immutable under a transition and which fields the observing physics may mutate.
@@ -421,11 +498,11 @@ End-to-end test:
 
 Obstacle to handle:
 
-- If an agent changes its template or capabilities outside the game lane, the
+- If an agent changes its template or capabilities outside the game transition, the
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 15. Implement `state extends` For Header Views
+### 16. Implement `state extends` For Header Views
 
 Allow concrete agent states to extend a shared header state:
 
@@ -449,7 +526,7 @@ Obstacle to handle:
 - Header offsets must be stable and artifact-visible. Do not rely on source
   field names alone; record byte/push positions and type descriptors.
 
-### 16. Implement `expand <digest_field> as <State>`
+### 17. Implement `expand <digest_field> as <State>`
 
 Support fixed digest-backed substate:
 
@@ -476,7 +553,7 @@ Obstacle to handle:
 - The digest preimage serialization must use the same artifact codec as state
   encoding. Otherwise expanded memory and stored state will drift.
 
-### 17. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
+### 18. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
 
 Keep a closed-world fixture that does not require open actor generics. It should
 exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
@@ -492,11 +569,11 @@ Obstacle to handle:
 
 - Current closed sketch uses placeholders where real covenant id/template data
   should be. Replace placeholders only when the artifact/builder can support the
-  actual lane identity cleanly.
+  actual observed actor identity cleanly.
 
-### 18. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
+### 19. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
 
-After observed lanes, generic actors, header views, and digest expansion exist,
+After `observes` blocks, generic actors, header views, and digest expansion exist,
 turn the sketch into a real compiler fixture.
 
 End-to-end test:
@@ -512,7 +589,7 @@ Obstacle to handle:
 - This fixture combines most hard features. Do not start here. It should be the
   integration proof that the smaller features were designed correctly.
 
-### 19. Add Chunk Or Cell-Birth Board Authority
+### 20. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -531,7 +608,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 20. Add Optional Intent UTXO Layer
+### 21. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
@@ -609,5 +686,5 @@ runtime types.
 The second milestone is tasks 7 through 11. That turns existing Argent routing
 and the minter observer sketch into artifact-driven ICC transactions.
 
-The third milestone is tasks 12 through 18. That unlocks the Open Lattice open-agent
+The third milestone is tasks 12 through 19. That unlocks the Open Lattice open-agent
 game pattern.
