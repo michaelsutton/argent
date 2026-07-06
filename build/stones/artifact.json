@@ -179,6 +179,145 @@
               "actor": "League",
               "entry": "register_player"
             },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "League",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "League",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "league",
+                  "auth_index": 0,
+                  "actors": [
+                    "League"
+                  ]
+                },
+                {
+                  "name": "player",
+                  "auth_index": 1,
+                  "actors": [
+                    "Player"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "league",
+                      "auth_index": 0,
+                      "actor": "League",
+                      "state_expr": "self.state",
+                      "witnesses": [
+                        {
+                          "param": "gen__league_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "League"
+                          }
+                        },
+                        {
+                          "param": "gen__league_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "League"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "output": "player",
+                      "auth_index": 1,
+                      "actor": "Player",
+                      "state_expr": "next_player",
+                      "witnesses": [
+                        {
+                          "param": "gen__player_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Player"
+                          }
+                        },
+                        {
+                          "param": "gen__player_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Player"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__league_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "League"
+                      }
+                    },
+                    {
+                      "param": "gen__league_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "League"
+                      }
+                    },
+                    {
+                      "param": "gen__player_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Player"
+                      }
+                    },
+                    {
+                      "param": "gen__player_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Player"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__league_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "League"
+                  }
+                },
+                {
+                  "param": "gen__league_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "League"
+                  }
+                },
+                {
+                  "param": "gen__player_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Player"
+                  }
+                },
+                {
+                  "param": "gen__player_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Player"
+                  }
+                }
+              ]
+            },
             "witnesses": [
               {
                 "param": "gen__league_prefix",
@@ -273,6 +412,180 @@
             "abi": {
               "actor": "Player",
               "entry": "start_game"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "consumes": [
+                {
+                  "name": "opponent",
+                  "actor": "Player",
+                  "cov_index": 1
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "self_out",
+                  "auth_index": 0,
+                  "actors": [
+                    "Player"
+                  ]
+                },
+                {
+                  "name": "opponent_out",
+                  "auth_index": 1,
+                  "actors": [
+                    "Player"
+                  ]
+                },
+                {
+                  "name": "game",
+                  "auth_index": 2,
+                  "actors": [
+                    "StonesGame"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "self_out",
+                      "auth_index": 0,
+                      "actor": "Player",
+                      "state_expr": "next_self",
+                      "witnesses": [
+                        {
+                          "param": "gen__player_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Player"
+                          }
+                        },
+                        {
+                          "param": "gen__player_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Player"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "output": "opponent_out",
+                      "auth_index": 1,
+                      "actor": "Player",
+                      "state_expr": "next_opponent",
+                      "witnesses": [
+                        {
+                          "param": "gen__player_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Player"
+                          }
+                        },
+                        {
+                          "param": "gen__player_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Player"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "output": "game",
+                      "auth_index": 2,
+                      "actor": "StonesGame",
+                      "state_expr": "next_game",
+                      "witnesses": [
+                        {
+                          "param": "gen__stones_game_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "StonesGame"
+                          }
+                        },
+                        {
+                          "param": "gen__stones_game_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "StonesGame"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__player_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Player"
+                      }
+                    },
+                    {
+                      "param": "gen__player_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Player"
+                      }
+                    },
+                    {
+                      "param": "gen__stones_game_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "StonesGame"
+                      }
+                    },
+                    {
+                      "param": "gen__stones_game_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "StonesGame"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__player_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Player"
+                  }
+                },
+                {
+                  "param": "gen__player_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Player"
+                  }
+                },
+                {
+                  "param": "gen__stones_game_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "StonesGame"
+                  }
+                },
+                {
+                  "param": "gen__stones_game_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "StonesGame"
+                  }
+                }
+              ]
             },
             "witnesses": [
               {
@@ -382,6 +695,43 @@
               "actor": "Player",
               "entry": "accept_start"
             },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": null
+              },
+              "leader_input": {
+                "name": "starter",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "consumes": [
+                {
+                  "name": "starter",
+                  "actor": "Player",
+                  "cov_index": 0
+                }
+              ],
+              "outputs": [],
+              "terminal_paths": [],
+              "witnesses": [
+                {
+                  "param": "gen__player_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Player"
+                  }
+                },
+                {
+                  "param": "gen__player_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Player"
+                  }
+                }
+              ]
+            },
             "witnesses": [
               {
                 "param": "gen__player_prefix",
@@ -416,6 +766,43 @@
             "abi": {
               "actor": "Player",
               "entry": "settle"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": null
+              },
+              "leader_input": {
+                "name": "settle",
+                "actor": "StonesSettle",
+                "cov_index": 0
+              },
+              "consumes": [
+                {
+                  "name": "settle",
+                  "actor": "StonesSettle",
+                  "cov_index": 0
+                }
+              ],
+              "outputs": [],
+              "terminal_paths": [],
+              "witnesses": [
+                {
+                  "param": "gen__stones_settle_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "StonesSettle"
+                  }
+                },
+                {
+                  "param": "gen__stones_settle_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "StonesSettle"
+                  }
+                }
+              ]
             },
             "witnesses": [
               {
@@ -452,6 +839,22 @@
               "actor": "Player",
               "entry": "retire"
             },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [],
+              "terminal_paths": [],
+              "witnesses": []
+            },
             "witnesses": [],
             "consumes": [],
             "emits": {
@@ -475,6 +878,145 @@
             "abi": {
               "actor": "StonesGame",
               "entry": "take"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "StonesGame",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "StonesGame",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "next",
+                  "auth_index": 0,
+                  "actors": [
+                    "StonesGame",
+                    "StonesSettle"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "next",
+                      "auth_index": 0,
+                      "actor": "StonesSettle",
+                      "state_expr": "ticket",
+                      "witnesses": [
+                        {
+                          "param": "gen__stones_settle_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "StonesSettle"
+                          }
+                        },
+                        {
+                          "param": "gen__stones_settle_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "StonesSettle"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__stones_settle_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "StonesSettle"
+                      }
+                    },
+                    {
+                      "param": "gen__stones_settle_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "StonesSettle"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "routes": [
+                    {
+                      "output": "next",
+                      "auth_index": 0,
+                      "actor": "StonesGame",
+                      "state_expr": "next_game",
+                      "witnesses": [
+                        {
+                          "param": "gen__stones_game_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "StonesGame"
+                          }
+                        },
+                        {
+                          "param": "gen__stones_game_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "StonesGame"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__stones_game_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "StonesGame"
+                      }
+                    },
+                    {
+                      "param": "gen__stones_game_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "StonesGame"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__stones_game_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "StonesGame"
+                  }
+                },
+                {
+                  "param": "gen__stones_game_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "StonesGame"
+                  }
+                },
+                {
+                  "param": "gen__stones_settle_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "StonesSettle"
+                  }
+                },
+                {
+                  "param": "gen__stones_settle_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "StonesSettle"
+                  }
+                }
+              ]
             },
             "witnesses": [
               {
@@ -560,6 +1102,88 @@
               "actor": "StonesGame",
               "entry": "concede"
             },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "StonesGame",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "StonesGame",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "settle",
+                  "auth_index": 0,
+                  "actors": [
+                    "StonesSettle"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "settle",
+                      "auth_index": 0,
+                      "actor": "StonesSettle",
+                      "state_expr": "ticket",
+                      "witnesses": [
+                        {
+                          "param": "gen__stones_settle_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "StonesSettle"
+                          }
+                        },
+                        {
+                          "param": "gen__stones_settle_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "StonesSettle"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__stones_settle_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "StonesSettle"
+                      }
+                    },
+                    {
+                      "param": "gen__stones_settle_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "StonesSettle"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__stones_settle_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "StonesSettle"
+                  }
+                },
+                {
+                  "param": "gen__stones_settle_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "StonesSettle"
+                  }
+                }
+              ]
+            },
             "witnesses": [
               {
                 "param": "gen__stones_settle_prefix",
@@ -623,6 +1247,128 @@
             "abi": {
               "actor": "StonesSettle",
               "entry": "settle"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "StonesSettle",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "StonesSettle",
+                "cov_index": 0
+              },
+              "consumes": [
+                {
+                  "name": "player_a_in",
+                  "actor": "Player",
+                  "cov_index": 1
+                },
+                {
+                  "name": "player_b_in",
+                  "actor": "Player",
+                  "cov_index": 2
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "player_a_out",
+                  "auth_index": 0,
+                  "actors": [
+                    "Player"
+                  ]
+                },
+                {
+                  "name": "player_b_out",
+                  "auth_index": 1,
+                  "actors": [
+                    "Player"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "player_a_out",
+                      "auth_index": 0,
+                      "actor": "Player",
+                      "state_expr": "next_player_a",
+                      "witnesses": [
+                        {
+                          "param": "gen__player_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Player"
+                          }
+                        },
+                        {
+                          "param": "gen__player_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Player"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "output": "player_b_out",
+                      "auth_index": 1,
+                      "actor": "Player",
+                      "state_expr": "next_player_b",
+                      "witnesses": [
+                        {
+                          "param": "gen__player_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Player"
+                          }
+                        },
+                        {
+                          "param": "gen__player_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Player"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__player_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Player"
+                      }
+                    },
+                    {
+                      "param": "gen__player_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Player"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__player_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Player"
+                  }
+                },
+                {
+                  "param": "gen__player_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Player"
+                  }
+                }
+              ]
             },
             "witnesses": [
               {

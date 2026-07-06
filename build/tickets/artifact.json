@@ -79,6 +79,145 @@
               "actor": "Issuer",
               "entry": "issue"
             },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Issuer",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Issuer",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "issuer",
+                  "auth_index": 0,
+                  "actors": [
+                    "Issuer"
+                  ]
+                },
+                {
+                  "name": "ticket",
+                  "auth_index": 1,
+                  "actors": [
+                    "Ticket"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "issuer",
+                      "auth_index": 0,
+                      "actor": "Issuer",
+                      "state_expr": "next_issuer",
+                      "witnesses": [
+                        {
+                          "param": "gen__issuer_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Issuer"
+                          }
+                        },
+                        {
+                          "param": "gen__issuer_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Issuer"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "output": "ticket",
+                      "auth_index": 1,
+                      "actor": "Ticket",
+                      "state_expr": "new_ticket",
+                      "witnesses": [
+                        {
+                          "param": "gen__ticket_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Ticket"
+                          }
+                        },
+                        {
+                          "param": "gen__ticket_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Ticket"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__issuer_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Issuer"
+                      }
+                    },
+                    {
+                      "param": "gen__issuer_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Issuer"
+                      }
+                    },
+                    {
+                      "param": "gen__ticket_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Ticket"
+                      }
+                    },
+                    {
+                      "param": "gen__ticket_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Ticket"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__issuer_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Issuer"
+                  }
+                },
+                {
+                  "param": "gen__issuer_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Issuer"
+                  }
+                },
+                {
+                  "param": "gen__ticket_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Ticket"
+                  }
+                },
+                {
+                  "param": "gen__ticket_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Ticket"
+                  }
+                }
+              ]
+            },
             "witnesses": [
               {
                 "param": "gen__issuer_prefix",
@@ -173,6 +312,88 @@
             "abi": {
               "actor": "Ticket",
               "entry": "redeem"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Ticket",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Ticket",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "next",
+                  "auth_index": 0,
+                  "actors": [
+                    "Ticket"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "next",
+                      "auth_index": 0,
+                      "actor": "Ticket",
+                      "state_expr": "redeemed_ticket",
+                      "witnesses": [
+                        {
+                          "param": "gen__ticket_prefix",
+                          "purpose": {
+                            "kind": "template_prefix",
+                            "actor": "Ticket"
+                          }
+                        },
+                        {
+                          "param": "gen__ticket_suffix",
+                          "purpose": {
+                            "kind": "template_suffix",
+                            "actor": "Ticket"
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "witnesses": [
+                    {
+                      "param": "gen__ticket_prefix",
+                      "purpose": {
+                        "kind": "template_prefix",
+                        "actor": "Ticket"
+                      }
+                    },
+                    {
+                      "param": "gen__ticket_suffix",
+                      "purpose": {
+                        "kind": "template_suffix",
+                        "actor": "Ticket"
+                      }
+                    }
+                  ]
+                }
+              ],
+              "witnesses": [
+                {
+                  "param": "gen__ticket_prefix",
+                  "purpose": {
+                    "kind": "template_prefix",
+                    "actor": "Ticket"
+                  }
+                },
+                {
+                  "param": "gen__ticket_suffix",
+                  "purpose": {
+                    "kind": "template_suffix",
+                    "actor": "Ticket"
+                  }
+                }
+              ]
             },
             "witnesses": [
               {

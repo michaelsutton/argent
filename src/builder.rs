@@ -16,7 +16,10 @@ use kaspa_txscript_errors::TxScriptError;
 use thiserror::Error;
 
 use crate::{
-    artifact::{Artifact, ArtifactVersionError, HiddenParamPurposeArtifact, RuntimeFieldRoleArtifact, SilActorArtifact},
+    artifact::{
+        ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, RuntimeFieldRoleArtifact,
+        SilActorArtifact,
+    },
     codec::{ArtifactValue, CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script},
 };
 
@@ -36,10 +39,30 @@ pub enum BuilderError {
     UnknownActor(String),
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
+    #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
+    UnknownTerminalPath { actor: String, entry: String, path_index: usize },
+    #[error("missing output `{0}`")]
+    MissingOutput(String),
+    #[error("unknown output `{0}`")]
+    UnknownOutput(String),
+    #[error("duplicate output `{0}`")]
+    DuplicateOutput(String),
+    #[error("unsupported route without a named output")]
+    UnnamedRouteOutput,
 }
 
 pub struct ArtifactTxBuilder<'a> {
     artifact: &'a Artifact,
+}
+
+pub struct TerminalPathOutputRequest<'a> {
+    pub actor_name: &'a str,
+    pub entry_name: &'a str,
+    pub path_index: usize,
+    pub output_states: BTreeMap<String, BTreeMap<String, ArtifactValue>>,
+    pub output_values: BTreeMap<String, u64>,
+    pub authorizing_input: u16,
+    pub covenant_id: Hash,
 }
 
 impl<'a> ArtifactTxBuilder<'a> {
@@ -125,6 +148,39 @@ impl<'a> ArtifactTxBuilder<'a> {
         Ok(UtxoEntry::new(value, self.script_public_key(actor_name, source_state)?, block_daa_score, is_coinbase, covenant_id))
     }
 
+    pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
+        let entry = self.entry(request.actor_name, request.entry_name)?;
+        let path = entry.route_plan.terminal_paths.get(request.path_index).ok_or_else(|| BuilderError::UnknownTerminalPath {
+            actor: request.actor_name.to_string(),
+            entry: request.entry_name.to_string(),
+            path_index: request.path_index,
+        })?;
+        for output in request.output_states.keys().chain(request.output_values.keys()) {
+            if path.routes.iter().all(|route| route.output.as_ref() != Some(output)) {
+                return Err(BuilderError::UnknownOutput(output.clone()));
+            }
+        }
+
+        let mut outputs = Vec::with_capacity(path.routes.len());
+        for route in &path.routes {
+            let output = route.output.as_ref().ok_or(BuilderError::UnnamedRouteOutput)?;
+            let state = request.output_states.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?.clone();
+            let value = *request.output_values.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?;
+            outputs.push((
+                route.auth_index,
+                output.clone(),
+                self.covenant_output(&route.actor, state, value, request.authorizing_input, request.covenant_id)?,
+            ));
+        }
+        outputs.sort_by_key(|(auth_index, _, _)| *auth_index);
+        for window in outputs.windows(2) {
+            if window[0].0 == window[1].0 {
+                return Err(BuilderError::DuplicateOutput(window[0].1.clone()));
+            }
+        }
+        Ok(outputs.into_iter().map(|(_, _, output)| output).collect())
+    }
+
     pub fn transaction_input(previous_outpoint: TransactionOutpoint, signature_script: Vec<u8>) -> TransactionInput {
         TransactionInput::new_with_compute_budget(previous_outpoint, signature_script, 0, 0)
     }
@@ -139,6 +195,18 @@ impl<'a> ArtifactTxBuilder<'a> {
 
     fn actor(&self, name: &str) -> BuilderResult<&'a SilActorArtifact> {
         self.artifact.sil_abi.actor(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    }
+
+    fn argent_actor(&self, name: &str) -> BuilderResult<&'a ActorArtifact> {
+        self.artifact.argent.actors.iter().find(|actor| actor.name == name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    }
+
+    fn entry(&self, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {
+        self.argent_actor(actor_name)?
+            .entries
+            .iter()
+            .find(|entry| entry.name == entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })
     }
 
     fn runtime_state_values(
@@ -329,14 +397,164 @@ mod tests {
         assert!(matches!(err, BuilderError::Codec(CodecError::WrongArgumentCount { .. })));
     }
 
+    #[test]
+    fn route_plan_builds_stones_start_game_and_rejects_bad_routes() {
+        let artifact = example_artifact("examples/stones/app.ag", "stones-route-plan");
+        let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
+        let entry = builder.entry("Player", "start_game").expect("start_game entry exists");
+        assert_eq!(
+            entry.route_plan.leader_input.as_ref().map(|input| (input.actor.as_str(), input.cov_index)),
+            Some(("Player", Some(0)))
+        );
+        assert_eq!(entry.route_plan.consumes[0].name, "opponent");
+        assert_eq!(entry.route_plan.consumes[0].actor, "Player");
+        assert_eq!(entry.route_plan.consumes[0].cov_index, Some(1));
+        assert_eq!(
+            entry.route_plan.outputs.iter().map(|output| (output.name.as_deref(), output.auth_index)).collect::<Vec<_>>(),
+            vec![(Some("self_out"), 0), (Some("opponent_out"), 1), (Some("game"), 2)]
+        );
+
+        let owner_a = keypair_from_byte(3);
+        let owner_b = keypair_from_byte(4);
+        let owner_a_pk = owner_a.x_only_public_key().0.serialize().to_vec();
+        let owner_b_pk = owner_b.x_only_public_key().0.serialize().to_vec();
+        let owner_a_hash = blake2b32(&owner_a_pk);
+        let owner_b_hash = blake2b32(&owner_b_pk);
+        let player_a_id = vec![0xa1; 32];
+        let player_b_id = vec![0xb2; 32];
+        let player_a_ref = player_ref(&owner_a_hash, &player_a_id);
+        let player_b_ref = player_ref(&owner_b_hash, &player_b_id);
+        let initial_a = player_state(owner_a_hash.clone(), player_a_id.clone(), 0, 0, 0, 0);
+        let initial_b = player_state(owner_b_hash.clone(), player_b_id.clone(), 0, 0, 0, 0);
+        let next_a = player_state(owner_a_hash.clone(), player_a_id.clone(), 1, 0, 0, 0);
+        let next_b = player_state(owner_b_hash.clone(), player_b_id.clone(), 1, 0, 0, 0);
+        let next_game = game_state(player_a_ref, player_b_ref, 7, 3, 0);
+        let covenant_id = Hash::from_bytes([5; 32]);
+        let outpoint_a = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xa; 32]), index: 0 };
+        let outpoint_b = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0xb; 32]), index: 0 };
+        let input_a_value = 1_000;
+        let input_b_value = 2_000;
+        let game_value = 500;
+        let player_a_utxo = builder
+            .covenant_utxo("Player", initial_a.clone(), input_a_value, 0, false, Some(covenant_id))
+            .expect("player A utxo builds");
+        let player_b_utxo = builder
+            .covenant_utxo("Player", initial_b.clone(), input_b_value, 0, false, Some(covenant_id))
+            .expect("player B utxo builds");
+        let entries = vec![player_a_utxo.clone(), player_b_utxo.clone()];
+        let output_states =
+            BTreeMap::from([("self_out".to_string(), next_a), ("opponent_out".to_string(), next_b), ("game".to_string(), next_game)]);
+        let output_values = BTreeMap::from([
+            ("self_out".to_string(), input_a_value),
+            ("opponent_out".to_string(), input_b_value),
+            ("game".to_string(), game_value),
+        ]);
+        let outputs = builder
+            .terminal_path_outputs(TerminalPathOutputRequest {
+                actor_name: "Player",
+                entry_name: "start_game",
+                path_index: 0,
+                output_states,
+                output_values,
+                authorizing_input: 0,
+                covenant_id,
+            })
+            .expect("route-plan outputs build");
+        let unsigned_tx = ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, Vec::new()),
+                ArtifactTxBuilder::transaction_input(outpoint_b, Vec::new()),
+            ],
+            outputs.clone(),
+        );
+        let tx = signed_start_game_tx(
+            &builder,
+            unsigned_tx,
+            entries.clone(),
+            outpoint_a,
+            outpoint_b,
+            &initial_a,
+            &initial_b,
+            &owner_a,
+            &owner_b,
+            &owner_a_pk,
+            &owner_b_pk,
+        );
+
+        execute_input_with_covenants(&tx, entries.clone(), 0).expect("leader input passes");
+        execute_input_with_covenants(&tx, entries.clone(), 1).expect("delegate input passes");
+
+        let swapped_outputs = vec![outputs[1].clone(), outputs[0].clone(), outputs[2].clone()];
+        let swapped_unsigned_tx = ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, Vec::new()),
+                ArtifactTxBuilder::transaction_input(outpoint_b, Vec::new()),
+            ],
+            swapped_outputs,
+        );
+        let swapped_tx = signed_start_game_tx(
+            &builder,
+            swapped_unsigned_tx,
+            entries.clone(),
+            outpoint_a,
+            outpoint_b,
+            &initial_a,
+            &initial_b,
+            &owner_a,
+            &owner_b,
+            &owner_a_pk,
+            &owner_b_pk,
+        );
+        assert!(execute_input_with_covenants(&swapped_tx, entries.clone(), 0).is_err());
+
+        let wrong_peer = builder
+            .covenant_utxo("League", league_state(vec![0; 32], 7, 3), input_b_value, 0, false, Some(covenant_id))
+            .expect("wrong-template peer utxo builds");
+        let wrong_entries = vec![player_a_utxo, wrong_peer];
+        let wrong_peer_unsigned_tx = ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, Vec::new()),
+                ArtifactTxBuilder::transaction_input(outpoint_b, Vec::new()),
+            ],
+            outputs,
+        );
+        let leader_sig = sign_input(&wrong_peer_unsigned_tx, wrong_entries.clone(), 0, &owner_a);
+        let leader_sigscript = builder
+            .p2sh_signature_script(
+                "Player",
+                "start_game",
+                initial_a,
+                vec![
+                    ArtifactValue::Bytes(leader_sig),
+                    ArtifactValue::Bytes(owner_a_pk),
+                    ArtifactValue::Int(0),
+                    ArtifactValue::Int(7),
+                    ArtifactValue::Int(3),
+                ],
+            )
+            .expect("leader sigscript builds");
+        let wrong_peer_tx = ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, leader_sigscript),
+                ArtifactTxBuilder::transaction_input(outpoint_b, Vec::new()),
+            ],
+            wrong_peer_unsigned_tx.outputs,
+        );
+        assert!(execute_input_with_covenants(&wrong_peer_tx, wrong_entries, 0).is_err());
+    }
+
     fn tickets_artifact() -> Artifact {
+        example_artifact("examples/tickets.ag", "tickets")
+    }
+
+    fn example_artifact(input: &str, name: &str) -> Artifact {
         let counter = ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let out_dir = std::env::temp_dir().join(format!("argent-task6-tickets-{}-{counter}", std::process::id()));
+        let out_dir = std::env::temp_dir().join(format!("argent-{name}-{}-{counter}", std::process::id()));
         if out_dir.exists() {
             std::fs::remove_dir_all(&out_dir).expect("old temp dir removed");
         }
-        let program = load_program("examples/tickets.ag").expect("tickets source loads");
-        emit_build(&program, &out_dir).expect("tickets artifact builds");
+        let program = load_program(input).expect("example source loads");
+        emit_build(&program, &out_dir).expect("example artifact builds");
         let json = std::fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
         serde_json::from_str(&json).expect("artifact deserializes")
     }
@@ -357,6 +575,97 @@ mod tests {
 
     fn blake2b32(data: &[u8]) -> Vec<u8> {
         blake2b_simd::Params::new().hash_length(32).to_state().update(data).finalize().as_bytes().to_vec()
+    }
+
+    fn player_ref(owner: &[u8], player_id: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(owner.len() + player_id.len());
+        bytes.extend_from_slice(owner);
+        bytes.extend_from_slice(player_id);
+        blake2b32(&bytes)
+    }
+
+    fn player_state(
+        owner: Vec<u8>,
+        player_id: Vec<u8>,
+        open_games: i64,
+        games: i64,
+        wins: i64,
+        losses: i64,
+    ) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("owner".to_string(), ArtifactValue::Bytes(owner)),
+            ("player_id".to_string(), ArtifactValue::Bytes(player_id)),
+            ("open_games".to_string(), ArtifactValue::Int(open_games)),
+            ("games".to_string(), ArtifactValue::Int(games)),
+            ("wins".to_string(), ArtifactValue::Int(wins)),
+            ("losses".to_string(), ArtifactValue::Int(losses)),
+        ])
+    }
+
+    fn game_state(player_a: Vec<u8>, player_b: Vec<u8>, pile: i64, max_take: i64, turn: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("player_a".to_string(), ArtifactValue::Bytes(player_a)),
+            ("player_b".to_string(), ArtifactValue::Bytes(player_b)),
+            ("pile".to_string(), ArtifactValue::Int(pile)),
+            ("max_take".to_string(), ArtifactValue::Int(max_take)),
+            ("turn".to_string(), ArtifactValue::Int(turn)),
+        ])
+    }
+
+    fn league_state(admin: Vec<u8>, default_pile: i64, default_max_take: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("admin".to_string(), ArtifactValue::Bytes(admin)),
+            ("default_pile".to_string(), ArtifactValue::Int(default_pile)),
+            ("default_max_take".to_string(), ArtifactValue::Int(default_max_take)),
+        ])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn signed_start_game_tx(
+        builder: &ArtifactTxBuilder<'_>,
+        unsigned_tx: Transaction,
+        entries: Vec<UtxoEntry>,
+        outpoint_a: TransactionOutpoint,
+        outpoint_b: TransactionOutpoint,
+        initial_a: &BTreeMap<String, ArtifactValue>,
+        initial_b: &BTreeMap<String, ArtifactValue>,
+        owner_a: &Keypair,
+        owner_b: &Keypair,
+        owner_a_pk: &[u8],
+        owner_b_pk: &[u8],
+    ) -> Transaction {
+        let leader_sig = sign_input(&unsigned_tx, entries.clone(), 0, owner_a);
+        let delegate_sig = sign_input(&unsigned_tx, entries, 1, owner_b);
+        let leader_sigscript = builder
+            .p2sh_signature_script(
+                "Player",
+                "start_game",
+                initial_a.clone(),
+                vec![
+                    ArtifactValue::Bytes(leader_sig),
+                    ArtifactValue::Bytes(owner_a_pk.to_vec()),
+                    ArtifactValue::Int(0),
+                    ArtifactValue::Int(7),
+                    ArtifactValue::Int(3),
+                ],
+            )
+            .expect("leader sigscript builds");
+        let delegate_sigscript = builder
+            .p2sh_signature_script(
+                "Player",
+                "accept_start",
+                initial_b.clone(),
+                vec![ArtifactValue::Bytes(delegate_sig), ArtifactValue::Bytes(owner_b_pk.to_vec())],
+            )
+            .expect("delegate sigscript builds");
+
+        ArtifactTxBuilder::transaction(
+            vec![
+                ArtifactTxBuilder::transaction_input(outpoint_a, leader_sigscript),
+                ArtifactTxBuilder::transaction_input(outpoint_b, delegate_sigscript),
+            ],
+            unsigned_tx.outputs,
+        )
     }
 
     fn sign_input(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {

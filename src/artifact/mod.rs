@@ -92,6 +92,8 @@ pub struct EntryArtifact {
     pub name: String,
     pub kind: EntryKindArtifact,
     pub abi: EntryAbiRefArtifact,
+    #[serde(default)]
+    pub route_plan: EntryRoutePlanArtifact,
     pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
@@ -159,6 +161,45 @@ pub struct EmitOutputArtifact {
     pub name: String,
     pub auth_index: usize,
     pub actors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct EntryRoutePlanArtifact {
+    pub active_input: Option<RouteInputArtifact>,
+    pub leader_input: Option<RouteInputArtifact>,
+    pub consumes: Vec<RouteInputArtifact>,
+    pub outputs: Vec<RouteOutputHandleArtifact>,
+    pub terminal_paths: Vec<PlannedTerminalPathArtifact>,
+    pub witnesses: Vec<WitnessArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteInputArtifact {
+    pub name: String,
+    pub actor: String,
+    pub cov_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteOutputHandleArtifact {
+    pub name: Option<String>,
+    pub auth_index: usize,
+    pub actors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedTerminalPathArtifact {
+    pub routes: Vec<PlannedRouteArtifact>,
+    pub witnesses: Vec<WitnessArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannedRouteArtifact {
+    pub output: Option<String>,
+    pub auth_index: usize,
+    pub actor: String,
+    pub state_expr: String,
+    pub witnesses: Vec<WitnessArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

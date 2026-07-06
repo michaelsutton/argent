@@ -1350,7 +1350,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         })
         .collect();
 
-    let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Vec<_>>();
+    let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
     let sil_actors = model.actors.iter().map(|actor| sil_actor_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
 
     Ok(Artifact {
@@ -1364,15 +1364,15 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
     })
 }
 
-fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> ActorArtifact {
-    let entries = actor.entries.iter().map(|entry| entry_artifact(actor, entry, model)).collect();
+fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
+    let entries = actor.entries.iter().map(|entry| entry_artifact(actor, entry, model)).collect::<Result<Vec<_>>>()?;
 
-    ActorArtifact {
+    Ok(ActorArtifact {
         name: actor.name.clone(),
         state: actor.state.clone(),
         abi: ActorAbiRefArtifact { actor: actor.name.clone() },
         entries,
-    }
+    })
 }
 
 fn sil_actor_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<SilActorArtifact> {
@@ -1506,18 +1506,19 @@ fn hidden_params_for_entry(entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenPa
     hidden_params
 }
 
-fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> EntryArtifact {
+fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryArtifact> {
     let witnesses = hidden_params_for_entry(entry, model)
         .into_iter()
         .map(|param| WitnessArtifact { param: param.name, purpose: param.purpose })
-        .collect();
-    EntryArtifact {
+        .collect::<Vec<_>>();
+    Ok(EntryArtifact {
         name: entry.name.clone(),
         kind: match entry.kind {
             EntryKind::Leader => EntryKindArtifact::Leader,
             EntryKind::Delegate => EntryKindArtifact::Delegate,
         },
         abi: EntryAbiRefArtifact { actor: actor.name.clone(), entry: entry.name.clone() },
+        route_plan: entry_route_plan_artifact(actor, entry, model, &witnesses)?,
         witnesses,
         consumes: entry
             .consumes
@@ -1531,6 +1532,139 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> En
             .iter()
             .map(|routes| TerminalPathArtifact { routes: routes.iter().map(route_artifact).collect() })
             .collect(),
+    })
+}
+
+fn entry_route_plan_artifact(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    witnesses: &[WitnessArtifact],
+) -> Result<EntryRoutePlanArtifact> {
+    let active_input = RouteInputArtifact {
+        name: "self".to_string(),
+        actor: actor.name.clone(),
+        cov_index: matches!(entry.kind, EntryKind::Leader).then_some(0),
+    };
+    let consumes = entry
+        .consumes
+        .iter()
+        .enumerate()
+        .map(|(idx, consume)| RouteInputArtifact {
+            name: consume.name.clone(),
+            actor: consume.actor.clone(),
+            cov_index: Some(consume_cov_index(entry.kind, idx)),
+        })
+        .collect::<Vec<_>>();
+    let leader_input = match entry.kind {
+        EntryKind::Leader => Some(active_input.clone()),
+        EntryKind::Delegate => consumes.first().cloned(),
+    };
+    let outputs = route_output_handles(&entry.emits);
+    let terminal_paths = entry
+        .terminal_route_sets
+        .iter()
+        .map(|routes| planned_terminal_path_artifact(routes, entry, model))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(EntryRoutePlanArtifact {
+        active_input: Some(active_input),
+        leader_input,
+        consumes,
+        outputs,
+        terminal_paths,
+        witnesses: witnesses.to_vec(),
+    })
+}
+
+fn consume_cov_index(kind: EntryKind, idx: usize) -> usize {
+    match kind {
+        EntryKind::Leader => idx + 1,
+        EntryKind::Delegate => idx,
+    }
+}
+
+fn route_output_handles(emits: &EmitSpec) -> Vec<RouteOutputHandleArtifact> {
+    match emits {
+        EmitSpec::None => Vec::new(),
+        EmitSpec::One { actors } => vec![RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }],
+        EmitSpec::Outputs(outputs) => outputs
+            .iter()
+            .map(|output| RouteOutputHandleArtifact {
+                name: Some(output.name.clone()),
+                auth_index: output.auth_index,
+                actors: output.actors.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn planned_terminal_path_artifact(routes: &[RouteCall], entry: &EntryDecl, model: &Model<'_>) -> Result<PlannedTerminalPathArtifact> {
+    let mut witness_actors = BTreeSet::new();
+    for consume in &entry.consumes {
+        witness_actors.insert(consume.actor.clone());
+    }
+    for route in routes {
+        witness_actors.insert(route.actor.clone());
+    }
+
+    let witnesses = witnesses_for_actors(model, witness_actors);
+    let routes = routes
+        .iter()
+        .map(|route| {
+            let output = route_output_handle(&entry.emits, route)?;
+            Ok(PlannedRouteArtifact {
+                output: output.name.clone(),
+                auth_index: output.auth_index,
+                actor: route.actor.clone(),
+                state_expr: compact_expr(&route.state),
+                witnesses: witnesses_for_actors(model, [route.actor.clone()].into_iter().collect()),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(PlannedTerminalPathArtifact { routes, witnesses })
+}
+
+fn witnesses_for_actors(model: &Model<'_>, mut actors: BTreeSet<String>) -> Vec<WitnessArtifact> {
+    let mut ordered = Vec::new();
+    for actor in &model.template_actors {
+        if actors.remove(actor) {
+            push_actor_witnesses(&mut ordered, actor);
+        }
+    }
+    for actor in actors {
+        push_actor_witnesses(&mut ordered, &actor);
+    }
+    ordered
+}
+
+fn push_actor_witnesses(out: &mut Vec<WitnessArtifact>, actor: &str) {
+    out.push(WitnessArtifact {
+        param: hidden_witness_prefix_name(actor),
+        purpose: HiddenParamPurposeArtifact::TemplatePrefix { actor: actor.to_string() },
+    });
+    out.push(WitnessArtifact {
+        param: hidden_witness_suffix_name(actor),
+        purpose: HiddenParamPurposeArtifact::TemplateSuffix { actor: actor.to_string() },
+    });
+}
+
+fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutputHandleArtifact> {
+    match (emits, &route.output) {
+        (EmitSpec::One { actors }, None) => Ok(RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }),
+        (EmitSpec::Outputs(outputs), Some(name)) => outputs
+            .iter()
+            .find(|output| &output.name == name)
+            .map(|output| RouteOutputHandleArtifact {
+                name: Some(output.name.clone()),
+                auth_index: output.auth_index,
+                actors: output.actors.clone(),
+            })
+            .ok_or_else(|| ArgentError::new(format!("route references unknown output `{name}`"))),
+        (EmitSpec::Outputs(_), None) => Err(ArgentError::new("named output route is missing an output handle")),
+        (EmitSpec::One { .. }, Some(name)) => Err(ArgentError::new(format!("single-output route unexpectedly named `{name}`"))),
+        (EmitSpec::None, _) => Err(ArgentError::new("route cannot target an entry that emits none")),
     }
 }
 
@@ -2102,6 +2236,18 @@ mod tests {
         assert_eq!(entry.routes[0].actor, "Foo");
         assert_eq!(entry.routes[0].state_expr, "self.state");
         assert_eq!(entry.terminal_paths[0].routes[0], entry.routes[0]);
+        assert_eq!(
+            entry.route_plan.active_input.as_ref().map(|input| (input.actor.as_str(), input.cov_index)),
+            Some(("Foo", Some(0)))
+        );
+        assert_eq!(entry.route_plan.outputs[0].auth_index, 0);
+        assert_eq!(entry.route_plan.outputs[0].name, None);
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].actor, "Foo");
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].auth_index, 0);
+        assert_eq!(
+            entry.route_plan.terminal_paths[0].witnesses.iter().map(|witness| witness.param.as_str()).collect::<Vec<_>>(),
+            ["gen__foo_prefix", "gen__foo_suffix"]
+        );
 
         let sil_entry = sil_actor.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
         assert_eq!(sil_entry.selector, None);

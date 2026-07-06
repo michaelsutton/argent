@@ -238,6 +238,8 @@ Obstacle to handle:
 
 ### 7. Represent Current `consumes` / `emits` / `become` Routes In Artifact
 
+Status: done.
+
 Promote the current route model into builder metadata. The artifact should know:
 
 - leader input actor;
@@ -258,7 +260,54 @@ Obstacle to handle:
 - Route metadata must be emitted from the same validated model that emits
   Silverscript. Avoid a second ad hoc route parser in the builder.
 
-### 8. Add Same-Template And Exact-Continuation Output Shortcuts
+### 8. Split Template Witness Bytes From Length Witnesses
+
+Separate template witness identity from witness form. The artifact should avoid
+encoding the actor inside each enum variant and should distinguish byte witnesses
+needed for output validation from length witnesses needed only for reading a
+foreign input state.
+
+Target shape:
+
+```rust
+pub struct HiddenParamArtifact {
+    pub name: String,
+    pub ty: TypeArtifact,
+    pub actor: String,
+    pub purpose: HiddenParamPurposeArtifact,
+}
+
+pub enum HiddenParamPurposeArtifact {
+    TemplatePrefixBytes,
+    TemplateSuffixBytes,
+    TemplatePrefixLen,
+    TemplateSuffixLen,
+}
+```
+
+Apply the same shape to `WitnessArtifact` or introduce a shared witness target
+type so hidden ABI params and route-plan witness recipes cannot drift.
+
+End-to-end test:
+
+- Use a delegate/read-only consume entry such as `Player::accept_start`.
+- Verify generated Silverscript receives only prefix/suffix length witnesses for
+  actors that are read but not emitted.
+- Verify an entry that emits the same actor still receives prefix/suffix bytes
+  and derives lengths locally when it also consumes that actor.
+- Build a valid tx through the artifact builder and assert a wrong length or
+  wrong byte witness fails in the appropriate path.
+
+Obstacle to handle:
+
+- Current generated Sil derives lengths from byte-array witnesses. Changing this
+  requires coordinated updates to generated Sil, Sil ABI artifact, route-plan
+  witnesses, and builder witness filling.
+- If an actor is both read and emitted in the same entry, bytes dominate lengths:
+  do not add redundant length params unless the generated script truly needs
+  them.
+
+### 9. Add Same-Template And Exact-Continuation Output Shortcuts
 
 Generate the cheaper same-template validation path where the output is known to
 preserve the active actor template. Keep the conservative
@@ -296,7 +345,7 @@ Obstacle to handle:
   it does not prove value preservation. Amount rules must stay explicit in user
   code.
 
-### 9. Introduce Template Plan Receipts
+### 10. Introduce Template Plan Receipts
 
 Produce a machine-checkable receipt for the template plan used by the generated
 contracts and artifact. The first version may be flat and unoptimized.
@@ -314,7 +363,7 @@ Obstacle to handle:
   transaction builder's public shape. Design the receipt as a plan, not as a dump
   of current implementation details.
 
-### 10. Add Basic Template Merklization
+### 11. Add Basic Template Merklization
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
@@ -357,7 +406,7 @@ Obstacle to handle:
   be introduced through the same template-plan receipt model, not as an ad hoc
   emitter rewrite.
 
-### 11. Implement Concrete `observes` Blocks
+### 12. Implement Concrete `observes` Blocks
 
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
@@ -383,7 +432,7 @@ Obstacle to handle:
 - Observed output order must be deterministic and artifact-visible. Do not
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
-### 12. Hide Template Witnesses For `observes` Blocks
+### 13. Hide Template Witnesses For `observes` Blocks
 
 Make the builder fill observed-covenant prefix/suffix/template witnesses from
 the artifact and live UTXOs. User code should provide semantic state
@@ -401,7 +450,7 @@ Obstacle to handle:
   actual prefix and suffix bytes. The artifact must say which witness shape each
   generated call expects.
 
-### 13. Support Artifact Bundles And External App Dependencies
+### 14. Support Artifact Bundles And External App Dependencies
 
 Allow one transaction builder invocation to compose multiple immutable artifacts.
 This is the open-agent deployment shape: the game publishes a core artifact, and
@@ -445,7 +494,7 @@ Obstacle to handle:
   interface views across artifacts without merging the artifacts into one mutable
   object.
 
-### 14. Introduce Typed Template Handles
+### 15. Introduce Typed Template Handles
 
 Model runtime-selected actor templates as typed handles instead of raw
 `byte[32]` hashes. This covers both closed multiplex routing and open-agent
@@ -501,7 +550,7 @@ Obstacle to handle:
   open or preserve that template. Closed mux handles can be table-driven;
   open-agent handles must be bound to the co-spent input/template witness.
 
-### 15. Implement Open Actor Interface Syntax
+### 16. Implement Open Actor Interface Syntax
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
@@ -536,7 +585,7 @@ Obstacle to handle:
   arbitrary foreign strategy determinism. Keep this distinction visible in docs
   and diagnostics.
 
-### 16. Implement Generic `T(next_state)` Become
+### 17. Implement Generic `T(next_state)` Become
 
 Lower:
 
@@ -561,7 +610,7 @@ Obstacle to handle:
   layout information. The builder must bind this bundle to the observed input,
   not to a user-provided arbitrary template.
 
-### 17. Implement Fixed Capability Header Preservation
+### 18. Implement Fixed Capability Header Preservation
 
 Add a reusable way for observed/open actors to declare which header fields are
 immutable under a transition and which fields the observing physics may mutate.
@@ -593,7 +642,7 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 18. Implement `state extends` For Header Views
+### 19. Implement `state extends` For Header Views
 
 Allow concrete agent states to extend a shared header state:
 
@@ -617,7 +666,7 @@ Obstacle to handle:
 - Header offsets must be stable and artifact-visible. Do not rely on source
   field names alone; record byte/push positions and type descriptors.
 
-### 19. Implement `expand <digest_field> as <State>`
+### 20. Implement `expand <digest_field> as <State>`
 
 Support fixed digest-backed substate:
 
@@ -644,7 +693,7 @@ Obstacle to handle:
 - The digest preimage serialization must use the same artifact codec as state
   encoding. Otherwise expanded memory and stored state will drift.
 
-### 20. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
+### 21. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
 
 Keep a closed-world fixture that does not require open actor generics. It should
 exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
@@ -662,7 +711,7 @@ Obstacle to handle:
   should be. Replace placeholders only when the artifact/builder can support the
   actual observed actor identity cleanly.
 
-### 21. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
+### 22. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
 
 After `observes` blocks, generic actors, header views, and digest expansion exist,
 turn the sketch into a real compiler fixture.
@@ -680,7 +729,7 @@ Obstacle to handle:
 - This fixture combines most hard features. Do not start here. It should be the
   integration proof that the smaller features were designed correctly.
 
-### 22. Add Chunk Or Cell-Birth Board Authority
+### 23. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -699,7 +748,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 23. Add Optional Intent UTXO Layer
+### 24. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
