@@ -28,9 +28,7 @@ contract Issuer(
     int next_serial = init_next_serial;
 
     // Entrypoints
-    entrypoint function issue(sig admin_sig, pubkey admin_pk, pubkey owner_pk, byte[] gen__issuer_prefix, byte[] gen__issuer_suffix, byte[] gen__ticket_prefix, byte[] gen__ticket_suffix) {
-        int gen__issuer_prefix_len = gen__issuer_prefix.length;
-        int gen__issuer_suffix_len = gen__issuer_suffix.length;
+    entrypoint function issue(sig admin_sig, pubkey admin_pk, pubkey owner_pk, byte[] gen__ticket_prefix, byte[] gen__ticket_suffix) {
         int gen__ticket_prefix_len = gen__ticket_prefix.length;
         int gen__ticket_suffix_len = gen__ticket_suffix.length;
 
@@ -59,7 +57,7 @@ contract Issuer(
         };
         require(tx.outputs[gen__issuer_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__ticket_output_idx].value > 0);
-        validateOutputStateWithTemplate(gen__issuer_output_idx, next_issuer, gen__issuer_prefix, gen__issuer_suffix, gen__template_issuer);
+        validateOutputState(gen__issuer_output_idx, next_issuer);
         validateOutputStateWithTemplate(gen__ticket_output_idx, new_ticket, gen__ticket_prefix, gen__ticket_suffix, gen__template_ticket);
     }
 

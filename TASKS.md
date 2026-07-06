@@ -311,6 +311,8 @@ Obstacle to handle:
 
 ### 9. Add Same-Template And Exact-Continuation Output Shortcuts
 
+Status: done.
+
 Generate the cheaper same-template validation path where the output is known to
 preserve the active actor template. Keep the conservative
 `validateOutputStateWithTemplate` path for foreign actors and peers.

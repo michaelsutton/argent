@@ -115,22 +115,7 @@
                       "auth_index": 0,
                       "actor": "Issuer",
                       "state_expr": "next_issuer",
-                      "witnesses": [
-                        {
-                          "param": "gen__issuer_prefix",
-                          "actor": "Issuer",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__issuer_suffix",
-                          "actor": "Issuer",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
-                      ]
+                      "witnesses": []
                     },
                     {
                       "output": "ticket",
@@ -157,20 +142,6 @@
                   ],
                   "witnesses": [
                     {
-                      "param": "gen__issuer_prefix",
-                      "actor": "Issuer",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__issuer_suffix",
-                      "actor": "Issuer",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    },
-                    {
                       "param": "gen__ticket_prefix",
                       "actor": "Ticket",
                       "purpose": {
@@ -189,20 +160,6 @@
               ],
               "witnesses": [
                 {
-                  "param": "gen__issuer_prefix",
-                  "actor": "Issuer",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__issuer_suffix",
-                  "actor": "Issuer",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                },
-                {
                   "param": "gen__ticket_prefix",
                   "actor": "Ticket",
                   "purpose": {
@@ -219,26 +176,6 @@
               ]
             },
             "hidden_params": [
-              {
-                "name": "gen__issuer_prefix",
-                "type": {
-                  "kind": "bytes"
-                },
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
-                }
-              },
-              {
-                "name": "gen__issuer_suffix",
-                "type": {
-                  "kind": "bytes"
-                },
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
-                }
-              },
               {
                 "name": "gen__ticket_prefix",
                 "type": {
@@ -261,20 +198,6 @@
               }
             ],
             "witnesses": [
-              {
-                "param": "gen__issuer_prefix",
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
-                }
-              },
-              {
-                "param": "gen__issuer_suffix",
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
-                }
-              },
               {
                 "param": "gen__ticket_prefix",
                 "actor": "Ticket",
@@ -384,97 +307,16 @@
                       "auth_index": 0,
                       "actor": "Ticket",
                       "state_expr": "redeemed_ticket",
-                      "witnesses": [
-                        {
-                          "param": "gen__ticket_prefix",
-                          "actor": "Ticket",
-                          "purpose": {
-                            "kind": "template_prefix_bytes"
-                          }
-                        },
-                        {
-                          "param": "gen__ticket_suffix",
-                          "actor": "Ticket",
-                          "purpose": {
-                            "kind": "template_suffix_bytes"
-                          }
-                        }
-                      ]
+                      "witnesses": []
                     }
                   ],
-                  "witnesses": [
-                    {
-                      "param": "gen__ticket_prefix",
-                      "actor": "Ticket",
-                      "purpose": {
-                        "kind": "template_prefix_bytes"
-                      }
-                    },
-                    {
-                      "param": "gen__ticket_suffix",
-                      "actor": "Ticket",
-                      "purpose": {
-                        "kind": "template_suffix_bytes"
-                      }
-                    }
-                  ]
+                  "witnesses": []
                 }
               ],
-              "witnesses": [
-                {
-                  "param": "gen__ticket_prefix",
-                  "actor": "Ticket",
-                  "purpose": {
-                    "kind": "template_prefix_bytes"
-                  }
-                },
-                {
-                  "param": "gen__ticket_suffix",
-                  "actor": "Ticket",
-                  "purpose": {
-                    "kind": "template_suffix_bytes"
-                  }
-                }
-              ]
+              "witnesses": []
             },
-            "hidden_params": [
-              {
-                "name": "gen__ticket_prefix",
-                "type": {
-                  "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
-                }
-              },
-              {
-                "name": "gen__ticket_suffix",
-                "type": {
-                  "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
-                }
-              }
-            ],
-            "witnesses": [
-              {
-                "param": "gen__ticket_prefix",
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
-                }
-              },
-              {
-                "param": "gen__ticket_suffix",
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
-                }
-              }
-            ],
+            "hidden_params": [],
+            "witnesses": [],
             "consumes": [],
             "emits": {
               "kind": "outputs",
@@ -631,18 +473,6 @@
                 }
               },
               {
-                "name": "gen__issuer_prefix",
-                "type": {
-                  "kind": "bytes"
-                }
-              },
-              {
-                "name": "gen__issuer_suffix",
-                "type": {
-                  "kind": "bytes"
-                }
-              },
-              {
                 "name": "gen__ticket_prefix",
                 "type": {
                   "kind": "bytes"
@@ -658,11 +488,11 @@
           }
         ],
         "compiled": {
-          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb529c69b900ccb951cc5b79aa547987695c795c79ac6978c2b9be9c6976c200a069597959797e56797caa8769557901207c7e557901207c7e557901207c7e5579519358cd01087c7e7e7e7e5a797c7e59797eaa02000001aa7e01207e7c7e01877e5279c38769577957797e55797caa8769557901207c7e557901207c7e5c79aa01207c7e557958cd01087c7e0058cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75757575757575757575757551",
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb529c69b900ccb951cc5979aa547987695a795a79ac6978c2b9be9c6976c200a069557901207c7e557901207c7e557901207c7e5579519358cd01087c7e7e7e7eb976c976022b0194016c937cbc7eaa02000001aa7e01207e7c7e01877e5279c38769577957797e55797caa8769557901207c7e557901207c7e5a79aa01207c7e557958cd01087c7e0058cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a7575757575757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "b9cb529c69b900ccb951cc5b79aa547987695c795c79ac6978c2b9be9c6976c200a069597959797e56797caa8769557901207c7e557901207c7e557901207c7e5579519358cd01087c7e7e7e7e5a797c7e59797eaa02000001aa7e01207e7c7e01877e5279c38769577957797e55797caa8769557901207c7e557901207c7e5c79aa01207c7e557958cd01087c7e0058cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a75757575757575757575757551",
-            "hash_hex": "ec6914616ff6a90665dddde5cf8d63add565f90d5f64ea6cd4400a8dad8ad2d9"
+            "suffix_hex": "b9cb529c69b900ccb951cc5979aa547987695a795a79ac6978c2b9be9c6976c200a069557901207c7e557901207c7e557901207c7e5579519358cd01087c7e7e7e7eb976c976022b0194016c937cbc7eaa02000001aa7e01207e7c7e01877e5279c38769577957797e55797caa8769557901207c7e557901207c7e5a79aa01207c7e557958cd01087c7e0058cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a75007a7575757575757575757551",
+            "hash_hex": "5404d6e8784964254e7639560c10b08d10ba4ff53f77d38c90128273e6f5c50d"
           },
           "state_span": {
             "offset": 0,
@@ -744,28 +574,16 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              },
-              {
-                "name": "gen__ticket_prefix",
-                "type": {
-                  "kind": "bytes"
-                }
-              },
-              {
-                "name": "gen__ticket_suffix",
-                "type": {
-                  "kind": "bytes"
-                }
               }
             ]
           }
         ],
         "compiled": {
-          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000080000000000000000b9cb519c69b900cc5879aa5479876959795979ac6978009c6976c2b9be9c69577957797e55797caa8769557901207c7e557901207c7e557901207c7e557958cd01087c7e5158cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a7575757575757575757551",
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000080000000000000000b9cb519c69b900cc5679aa5479876957795779ac6978009c6976c2b9be9c69557901207c7e557901207c7e557901207c7e557958cd01087c7e5158cd01087c7e7e7e7e7eb976c97602e500940175937cbc7eaa02000001aa7e01207e7c7e01877e78c38769007a757575757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "b9cb519c69b900cc5879aa5479876959795979ac6978009c6976c2b9be9c69577957797e55797caa8769557901207c7e557901207c7e557901207c7e557958cd01087c7e5158cd01087c7e7e7e7e7e58797c7e57797eaa02000001aa7e01207e7c7e01877e78c38769007a7575757575757575757551",
-            "hash_hex": "babefa0b96f878232ddddbf0ea8b0ca7b88e1fd8a6d51b9fddc289557228233e"
+            "suffix_hex": "b9cb519c69b900cc5679aa5479876957795779ac6978009c6976c2b9be9c69557901207c7e557901207c7e557901207c7e557958cd01087c7e5158cd01087c7e7e7e7e7eb976c97602e500940175937cbc7eaa02000001aa7e01207e7c7e01877e78c38769007a757575757575757551",
+            "hash_hex": "af2c2f57d547110b19467ceea32a3a34e947649b03893b222ed8da5fc57f6324"
           },
           "state_span": {
             "offset": 0,

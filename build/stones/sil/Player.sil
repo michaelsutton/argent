@@ -100,9 +100,7 @@ contract Player(
     int losses = init_losses;
 
     // Entrypoints
-    entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, byte[] gen__player_prefix, byte[] gen__player_suffix, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix) {
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
+    entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix) {
         int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
         int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
 
@@ -165,8 +163,8 @@ contract Player(
         require(tx.outputs[gen__self_out_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__opponent_out_output_idx].value == tx.inputs[gen__opponent_input_idx].value);
         require(tx.outputs[gen__game_output_idx].value > 0);
-        validateOutputStateWithTemplate(gen__self_out_output_idx, next_self, gen__player_prefix, gen__player_suffix, gen__template_player);
-        validateOutputStateWithTemplate(gen__opponent_out_output_idx, next_opponent, gen__player_prefix, gen__player_suffix, gen__template_player);
+        validateOutputState(gen__self_out_output_idx, next_self);
+        validateOutputState(gen__opponent_out_output_idx, next_opponent);
         validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
     }
 

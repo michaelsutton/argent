@@ -269,7 +269,11 @@ fn covenant_engine_flags() -> EngineFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::atomic::{AtomicUsize, Ordering},
+    };
 
     use kaspa_consensus_core::{
         hashing::{
@@ -429,8 +433,8 @@ mod tests {
                 .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
                 .collect::<Vec<_>>(),
             vec![
-                ("gen__player_prefix", "Player", HiddenParamPurposeArtifact::TemplatePrefixBytes),
-                ("gen__player_suffix", "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                ("gen__player_prefix_len", "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
+                ("gen__player_suffix_len", "Player", HiddenParamPurposeArtifact::TemplateSuffixLen),
                 ("gen__stones_game_prefix", "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
                 ("gen__stones_game_suffix", "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
             ]
@@ -446,6 +450,19 @@ mod tests {
                 .iter()
                 .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
                 .collect::<Vec<_>>()
+        );
+        assert!(entry.route_plan.terminal_paths[0].routes[0].witnesses.is_empty());
+        assert!(entry.route_plan.terminal_paths[0].routes[1].witnesses.is_empty());
+        assert_eq!(
+            entry.route_plan.terminal_paths[0].routes[2]
+                .witnesses
+                .iter()
+                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__stones_game_prefix", "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__stones_game_suffix", "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
         );
 
         let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
@@ -628,17 +645,178 @@ mod tests {
         assert!(execute_input_with_covenants(&wrong_peer_tx, wrong_entries, 0).is_err());
     }
 
+    #[test]
+    fn same_template_shortcut_redeems_self_transition_and_rejects_changed_template() {
+        let artifact = inline_artifact(
+            "same-template-shortcut",
+            r#"
+            state FooState {
+                int count;
+            }
+
+            actor Foo owns FooState {
+                entry bump(amount: int) emits one Foo {
+                    State next_state = {
+                        count: count + amount,
+                    };
+                    become Foo(next_state);
+                }
+            }
+
+            actor Bar owns FooState {
+                entry noop() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Foo;
+                actor Bar;
+            }
+            "#,
+        );
+        let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
+        let foo_bump = builder.entry("Foo", "bump").expect("bump entry exists");
+        assert!(foo_bump.hidden_params.is_empty(), "same-template route should not need hidden template witnesses");
+
+        let initial = count_state(4);
+        let next = count_state(9);
+        let covenant_id = Hash::from_bytes([0x51; 32]);
+        let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x52; 32]), index: 0 };
+        let input_value = 1_000;
+
+        let input_utxo =
+            builder.covenant_utxo("Foo", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("foo utxo builds");
+        let output = builder.covenant_output("Foo", next.clone(), input_value, 0, covenant_id).expect("foo output builds");
+        let sigscript =
+            builder.p2sh_signature_script("Foo", "bump", initial.clone(), vec![ArtifactValue::Int(5)]).expect("bump sigscript builds");
+        let tx = ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, sigscript.clone())], vec![output]);
+
+        execute_input_with_covenants(&tx, vec![input_utxo.clone()], 0).expect("same-template transition passes");
+
+        let wrong_template_output =
+            builder.covenant_output("Bar", next, input_value, 0, covenant_id).expect("bar output builds with same source state");
+        let wrong_template_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(outpoint, sigscript)],
+            vec![wrong_template_output],
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_template_tx, vec![input_utxo], 0).is_err(),
+            "same-template validation must reject a different actor template"
+        );
+    }
+
+    #[test]
+    fn exact_continuation_shortcut_redeems_register_player_and_rejects_changed_state() {
+        let artifact = example_artifact("examples/stones/app.ag", "stones-exact-continuation");
+        let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
+        let register_player = builder.entry("League", "register_player").expect("register_player entry exists");
+        assert_eq!(
+            register_player.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            ["gen__player_prefix", "gen__player_suffix"],
+            "exact league continuation should not need League template witnesses"
+        );
+
+        let owner = keypair_from_byte(8);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let owner_hash = blake2b32(&owner_pk);
+        let covenant_id = Hash::from_bytes([0x53; 32]);
+        let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x54; 32]), index: 0 };
+        let league_initial = league_state(vec![0x55; 32], 7, 3);
+        let player_id = stones_player_id(&outpoint);
+        let player_next = player_state(owner_hash, player_id, 0, 0, 0, 0);
+        let input_value = 10_000;
+        let player_value = 500;
+
+        let league_utxo = builder
+            .covenant_utxo("League", league_initial.clone(), input_value, 0, false, Some(covenant_id))
+            .expect("league utxo builds");
+        let entries = vec![league_utxo.clone()];
+        let outputs = builder
+            .terminal_path_outputs(TerminalPathOutputRequest {
+                actor_name: "League",
+                entry_name: "register_player",
+                path_index: 0,
+                output_states: BTreeMap::from([
+                    ("league".to_string(), league_initial.clone()),
+                    ("player".to_string(), player_next.clone()),
+                ]),
+                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
+                authorizing_input: 0,
+                covenant_id,
+            })
+            .expect("register outputs build");
+        let unsigned_tx =
+            ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, Vec::new())], outputs.clone());
+        let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
+        let sigscript = builder
+            .p2sh_signature_script(
+                "League",
+                "register_player",
+                league_initial.clone(),
+                vec![ArtifactValue::Bytes(signature), ArtifactValue::Bytes(owner_pk.clone())],
+            )
+            .expect("register sigscript builds");
+        let tx = ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, sigscript)], outputs);
+
+        execute_input_with_covenants(&tx, entries.clone(), 0).expect("exact continuation register_player passes");
+
+        let changed_league_state = league_state(vec![0x56; 32], 7, 3);
+        let bad_outputs = builder
+            .terminal_path_outputs(TerminalPathOutputRequest {
+                actor_name: "League",
+                entry_name: "register_player",
+                path_index: 0,
+                output_states: BTreeMap::from([("league".to_string(), changed_league_state), ("player".to_string(), player_next)]),
+                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
+                authorizing_input: 0,
+                covenant_id,
+            })
+            .expect("bad register outputs build");
+        let bad_unsigned_tx =
+            ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, Vec::new())], bad_outputs.clone());
+        let bad_signature = sign_input(&bad_unsigned_tx, entries.clone(), 0, &owner);
+        let bad_sigscript = builder
+            .p2sh_signature_script(
+                "League",
+                "register_player",
+                league_initial,
+                vec![ArtifactValue::Bytes(bad_signature), ArtifactValue::Bytes(owner_pk)],
+            )
+            .expect("bad register sigscript builds");
+        let bad_tx = ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, bad_sigscript)], bad_outputs);
+        assert!(execute_input_with_covenants(&bad_tx, entries, 0).is_err(), "exact continuation must reject a changed League state");
+    }
+
     fn tickets_artifact() -> Artifact {
         example_artifact("examples/tickets.ag", "tickets")
     }
 
+    fn inline_artifact(name: &str, source: &str) -> Artifact {
+        let counter = ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let out_dir = std::env::temp_dir().join(format!("argent-{name}-{}-{counter}", std::process::id()));
+        let root = out_dir.join("app.ag");
+        if out_dir.exists() {
+            fs::remove_dir_all(&out_dir).expect("old temp dir removed");
+        }
+        fs::create_dir_all(&out_dir).expect("temp source dir created");
+        fs::write(&root, source).expect("temp Argent source written");
+        let artifact = example_artifact_from_path(root, name);
+        fs::remove_dir_all(out_dir).expect("temp source dir removed");
+        artifact
+    }
+
     fn example_artifact(input: &str, name: &str) -> Artifact {
+        example_artifact_from_path(PathBuf::from(input), name)
+    }
+
+    fn example_artifact_from_path(input: PathBuf, name: &str) -> Artifact {
         let counter = ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
         let out_dir = std::env::temp_dir().join(format!("argent-{name}-{}-{counter}", std::process::id()));
         if out_dir.exists() {
             std::fs::remove_dir_all(&out_dir).expect("old temp dir removed");
         }
-        let program = load_program(input).expect("example source loads");
+        let program = load_program(&input).expect("example source loads");
         emit_build(&program, &out_dir).expect("example artifact builds");
         let json = std::fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
         serde_json::from_str(&json).expect("artifact deserializes")
@@ -703,6 +881,18 @@ mod tests {
             ("default_pile".to_string(), ArtifactValue::Int(default_pile)),
             ("default_max_take".to_string(), ArtifactValue::Int(default_max_take)),
         ])
+    }
+
+    fn count_state(count: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("count".to_string(), ArtifactValue::Int(count))])
+    }
+
+    fn stones_player_id(outpoint: &TransactionOutpoint) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"StonesPlayer");
+        bytes.extend_from_slice(&outpoint.transaction_id.as_bytes());
+        bytes.extend_from_slice(&outpoint.index.to_le_bytes());
+        blake2b32(&bytes)
     }
 
     #[allow(clippy::too_many_arguments)]

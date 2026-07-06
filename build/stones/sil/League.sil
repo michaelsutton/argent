@@ -97,9 +97,7 @@ contract League(
     int default_max_take = init_default_max_take;
 
     // Entrypoints
-    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__league_prefix, byte[] gen__league_suffix, byte[] gen__player_prefix, byte[] gen__player_suffix) {
-        int gen__league_prefix_len = gen__league_prefix.length;
-        int gen__league_suffix_len = gen__league_suffix.length;
+    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix) {
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
 
@@ -125,17 +123,7 @@ contract League(
         };
         require(tx.outputs[gen__league_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__player_output_idx].value > 0);
-        State gen__state_league_state = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
-            admin: admin,
-            default_pile: default_pile,
-            default_max_take: default_max_take,
-        };
-        validateOutputStateWithTemplate(gen__league_output_idx, gen__state_league_state, gen__league_prefix, gen__league_suffix, gen__template_league);
+        require(tx.outputs[gen__league_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
         validateOutputStateWithTemplate(gen__player_output_idx, next_player, gen__player_prefix, gen__player_suffix, gen__template_player);
     }
 
