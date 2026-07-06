@@ -6,6 +6,8 @@ use crate::artifact::*;
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
+use silverscript_lang::ast::Expr as SilExpr;
+use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
@@ -13,16 +15,18 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(out_dir, err.to_string()))?;
 
     let model = Model::from_program(program)?;
+    let mut actor_sil = BTreeMap::new();
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
-        fs::write(sil_dir.join(format!("{}.sil", actor.name)), sil)
+        fs::write(sil_dir.join(format!("{}.sil", actor.name)), &sil)
             .map_err(|err| ArgentError::at(sil_dir.join(format!("{}.sil", actor.name)), err.to_string()))?;
+        actor_sil.insert(actor.name.clone(), sil);
     }
 
     fs::write(out_dir.join("manifest.json"), emit_manifest(program, &model))
         .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
 
-    fs::write(out_dir.join("artifact.json"), emit_artifact_json(program, &model)?)
+    fs::write(out_dir.join("artifact.json"), emit_artifact_json(program, &model, &actor_sil)?)
         .map_err(|err| ArgentError::at(out_dir.join("artifact.json"), err.to_string()))?;
     Ok(())
 }
@@ -1318,14 +1322,14 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     out
 }
 
-fn emit_artifact_json(program: &Program, model: &Model<'_>) -> Result<String> {
-    let artifact = emit_artifact(program, model)?;
+fn emit_artifact_json(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<String> {
+    let artifact = emit_artifact(program, model, actor_sil)?;
     let mut json = serde_json::to_string_pretty(&artifact).map_err(|err| ArgentError::new(err.to_string()))?;
     json.push('\n');
     Ok(json)
 }
 
-fn emit_artifact(program: &Program, model: &Model<'_>) -> Result<Artifact> {
+fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<Artifact> {
     let templates = model
         .template_actors
         .iter()
@@ -1345,7 +1349,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>) -> Result<Artifact> {
         })
         .collect();
 
-    let actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+    let actors = model.actors.iter().map(|actor| actor_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
 
     Ok(Artifact {
         schema_version: ARTIFACT_SCHEMA_VERSION,
@@ -1359,9 +1363,12 @@ fn emit_artifact(program: &Program, model: &Model<'_>) -> Result<Artifact> {
     })
 }
 
-fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
+fn actor_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<ActorArtifact> {
     let state = model.state(&actor.state)?;
     let entries = actor.entries.iter().map(|entry| entry_artifact(entry, model)).collect();
+    let sil = actor_sil
+        .get(&actor.name)
+        .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
 
     Ok(ActorArtifact {
         name: actor.name.clone(),
@@ -1369,7 +1376,85 @@ fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact>
         sil: format!("sil/{}.sil", actor.name),
         runtime_state: RuntimeStateArtifact { source: state.name.clone(), fields: runtime_state_fields(state, model) },
         entries,
-        compiled: None,
+        compiled: Some(compile_actor_artifact(sil, actor, model)?),
+    })
+}
+
+fn compile_actor_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<'_>) -> Result<CompiledActorArtifact> {
+    let args: Vec<SilExpr<'i>> = constructor_args_for_actor(actor, model)?;
+    let compiled = compile_contract(sil, &args, CompileOptions::default())
+        .map_err(|err| ArgentError::new(format!("generated Silverscript for actor `{}` failed to compile: {err}", actor.name)))?;
+    compiled_actor_artifact(&compiled)
+}
+
+fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
+    let state = model.state(&actor.state)?;
+    let mut args = Vec::with_capacity(model.template_actors.len() + state.fields.len());
+
+    // These placeholders are valid because Argent-generated constructor
+    // arguments are state initializers: hidden template hashes and source state
+    // fields. If a constructor argument affects code shape outside the compiled
+    // state span, the template hash changes and the contract must be recompiled
+    // for that value.
+    for _ in &model.template_actors {
+        args.push(SilExpr::bytes(vec![0; 32]));
+    }
+    for field in &state.fields {
+        args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
+            ArgentError::new(format!(
+                "cannot build placeholder constructor argument for actor `{}` field `{}`: {err}",
+                actor.name, field.name
+            ))
+        })?);
+    }
+
+    Ok(args)
+}
+
+fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
+    match (&ty.name[..], ty.array) {
+        ("byte", Some(len)) => Ok(SilExpr::bytes(vec![0; len])),
+        (_, Some(len)) => {
+            let item = TypeRef::new(ty.name.clone());
+            let values = (0..len).map(|_| placeholder_expr_for_type(&item)).collect::<Result<Vec<_>>>()?;
+            Ok(values.into())
+        }
+        ("int", None) => Ok(SilExpr::int(0)),
+        ("bool", None) => Ok(SilExpr::bool(false)),
+        ("byte", None) => Ok(SilExpr::byte(0)),
+        ("string", None) => Ok(SilExpr::string("")),
+        ("pubkey", None) => Ok(SilExpr::bytes(vec![0; 32])),
+        ("sig", None) => Ok(SilExpr::bytes(vec![0; 65])),
+        ("datasig", None) => Ok(SilExpr::bytes(vec![0; 64])),
+        (name, None) => Err(ArgentError::new(format!("unsupported constructor placeholder type `{name}`"))),
+    }
+}
+
+fn compiled_actor_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledActorArtifact> {
+    let layout = compiled.state_layout;
+    let suffix_start = layout.start + layout.len;
+    if layout.start > compiled.script.len() || suffix_start > compiled.script.len() {
+        return Err(ArgentError::new(format!(
+            "compiled contract `{}` reported invalid state span start={} len={} for script len={}",
+            compiled.contract_name,
+            layout.start,
+            layout.len,
+            compiled.script.len()
+        )));
+    }
+
+    let prefix = &compiled.script[..layout.start];
+    let suffix = &compiled.script[suffix_start..];
+    let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(prefix).update(suffix).finalize();
+
+    Ok(CompiledActorArtifact {
+        script_hex: hex_encode(&compiled.script),
+        template: CompiledTemplateArtifact {
+            prefix_hex: hex_encode(prefix),
+            suffix_hex: hex_encode(suffix),
+            hash_hex: hex_encode(template_hash.as_bytes()),
+        },
+        state_span: StateSpanArtifact { offset: layout.start, len: layout.len },
     })
 }
 
@@ -1458,6 +1543,16 @@ fn route_artifact(route: &RouteCall) -> RouteArtifact {
 
 fn type_artifact(ty: &TypeRef) -> TypeArtifact {
     TypeArtifact::from_parts(&ty.name, ty.array)
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
@@ -1633,7 +1728,10 @@ fn json_escape(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
 
@@ -1933,8 +2031,9 @@ mod tests {
         .expect("source parses");
         let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
         let model = Model::from_program(&program).expect("model validates");
+        let actor_sil = actor_sil_for_model(&model);
 
-        let artifact = emit_artifact(&program, &model).expect("artifact emits");
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
         artifact.check_schema_version().expect("schema version is current");
         let json = serde_json::to_string(&artifact).expect("artifact serializes");
         let artifact: crate::artifact::Artifact = serde_json::from_str(&json).expect("artifact deserializes");
@@ -1951,7 +2050,11 @@ mod tests {
 
         let actor = artifact.actors.iter().find(|actor| actor.name == "Foo").expect("actor is present");
         assert_eq!(actor.sil, "sil/Foo.sil");
-        assert_eq!(actor.compiled, None);
+        let compiled = actor.compiled.as_ref().expect("actor should compile");
+        assert!(!compiled.script_hex.is_empty());
+        assert_eq!(compiled.template.hash_hex.len(), 64);
+        assert_eq!(compiled.state_span.offset * 2, compiled.template.prefix_hex.len());
+        assert!(compiled.state_span.len > 0);
         assert_eq!(actor.runtime_state.fields[0].name, "gen__template_foo");
         assert_eq!(actor.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { actor: "Foo".to_string() });
         assert_eq!(actor.runtime_state.fields[1].name, "owner");
@@ -1969,6 +2072,19 @@ mod tests {
         assert_eq!(entry.routes[0].actor, "Foo");
         assert_eq!(entry.routes[0].state_expr, "self.state");
         assert_eq!(entry.terminal_paths[0].routes[0], entry.routes[0]);
+    }
+
+    #[test]
+    fn builds_examples_with_compiled_artifacts() {
+        assert_example_build_artifact(
+            "examples/tickets.ag",
+            "tickets",
+            &[
+                ("Issuer", "ec6914616ff6a90665dddde5cf8d63add565f90d5f64ea6cd4400a8dad8ad2d9"),
+                ("Ticket", "babefa0b96f878232ddddbf0ea8b0ca7b88e1fd8a6d51b9fddc289557228233e"),
+            ],
+        );
+        assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
     }
 
     #[test]
@@ -2004,6 +2120,40 @@ mod tests {
             actors: Vec::new(),
             apps: Vec::new(),
         }
+    }
+
+    fn actor_sil_for_model(model: &Model<'_>) -> BTreeMap<String, String> {
+        model.actors.iter().map(|actor| (actor.name.clone(), emit_actor(actor, model).expect("actor emits"))).collect()
+    }
+
+    fn assert_example_build_artifact(input: &str, name: &str, expected_hashes: &[(&str, &str)]) {
+        let out_dir = std::env::temp_dir().join(format!("argent-{name}-artifact-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new(input)).expect("example loads");
+        emit_build(&program, &out_dir).expect("example builds");
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+        artifact.check_schema_version().expect("artifact schema version is supported");
+
+        let expected_hashes = expected_hashes.iter().copied().collect::<BTreeMap<_, _>>();
+        assert!(!artifact.actors.is_empty(), "artifact should contain actors");
+        for actor in &artifact.actors {
+            let compiled = actor.compiled.as_ref().unwrap_or_else(|| panic!("actor `{}` should compile", actor.name));
+            assert!(!compiled.script_hex.is_empty(), "actor `{}` should have script bytes", actor.name);
+            assert_eq!(compiled.template.hash_hex.len(), 64, "actor `{}` should have a 32-byte template hash", actor.name);
+            assert_eq!(
+                compiled.state_span.len * 2,
+                compiled.script_hex.len() - compiled.template.prefix_hex.len() - compiled.template.suffix_hex.len(),
+                "actor `{}` state span should match script/template lengths",
+                actor.name
+            );
+            if let Some(expected_hash) = expected_hashes.get(actor.name.as_str()) {
+                assert_eq!(&compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
+            }
+        }
+
+        let _ = fs::remove_dir_all(out_dir);
     }
 
     fn test_program() -> Program {
