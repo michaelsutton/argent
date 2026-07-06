@@ -318,6 +318,48 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__league_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "League",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__league_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "League",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "name": "gen__player_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__player_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__league_prefix",
@@ -587,6 +629,48 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__player_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__player_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_game_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesGame",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_game_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesGame",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__player_prefix",
@@ -732,6 +816,28 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__player_prefix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "name": "gen__player_suffix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__player_prefix_len",
@@ -804,6 +910,28 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__stones_settle_prefix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "name": "gen__stones_settle_suffix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__stones_settle_prefix_len",
@@ -855,6 +983,7 @@
               "terminal_paths": [],
               "witnesses": []
             },
+            "hidden_params": [],
             "witnesses": [],
             "consumes": [],
             "emits": {
@@ -1018,6 +1147,48 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__stones_game_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesGame",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_game_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesGame",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_settle_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_settle_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__stones_game_prefix",
@@ -1184,6 +1355,28 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__stones_settle_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__stones_settle_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "StonesSettle",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__stones_settle_prefix",
@@ -1370,6 +1563,28 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__player_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__player_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Player",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__player_prefix",
@@ -1581,7 +1796,7 @@
         ]
       }
     ],
-    "actors": [
+    "contracts": [
       {
         "name": "League",
         "source_path": "sil/League.sil",
@@ -1596,7 +1811,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "League"
+                "contract": "League"
               }
             },
             {
@@ -1607,7 +1822,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Player"
+                "contract": "Player"
               }
             },
             {
@@ -1618,7 +1833,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesGame"
+                "contract": "StonesGame"
               }
             },
             {
@@ -1629,7 +1844,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesSettle"
+                "contract": "StonesSettle"
               }
             },
             {
@@ -1666,7 +1881,7 @@
           {
             "name": "register_player",
             "selector": null,
-            "user_params": [
+            "params": [
               {
                 "name": "owner_sig",
                 "type": {
@@ -1678,47 +1893,29 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__league_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "League",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__league_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "League",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "name": "gen__player_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__player_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -1751,7 +1948,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "League"
+                "contract": "League"
               }
             },
             {
@@ -1762,7 +1959,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Player"
+                "contract": "Player"
               }
             },
             {
@@ -1773,7 +1970,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesGame"
+                "contract": "StonesGame"
               }
             },
             {
@@ -1784,7 +1981,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesSettle"
+                "contract": "StonesSettle"
               }
             },
             {
@@ -1849,7 +2046,7 @@
           {
             "name": "start_game",
             "selector": 0,
-            "user_params": [
+            "params": [
               {
                 "name": "owner_sig",
                 "type": {
@@ -1879,47 +2076,29 @@
                 "type": {
                   "kind": "int"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__player_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__player_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "name": "gen__stones_game_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesGame",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__stones_game_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesGame",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -1927,7 +2106,7 @@
           {
             "name": "accept_start",
             "selector": 1,
-            "user_params": [
+            "params": [
               {
                 "name": "owner_sig",
                 "type": {
@@ -1939,27 +2118,17 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__player_prefix_len",
                 "type": {
                   "kind": "int"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_prefix_len"
                 }
               },
               {
                 "name": "gen__player_suffix_len",
                 "type": {
                   "kind": "int"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_suffix_len"
                 }
               }
             ]
@@ -1967,26 +2136,17 @@
           {
             "name": "settle",
             "selector": 2,
-            "user_params": [],
-            "hidden_params": [
+            "params": [
               {
                 "name": "gen__stones_settle_prefix_len",
                 "type": {
                   "kind": "int"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_prefix_len"
                 }
               },
               {
                 "name": "gen__stones_settle_suffix_len",
                 "type": {
                   "kind": "int"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_suffix_len"
                 }
               }
             ]
@@ -1994,7 +2154,7 @@
           {
             "name": "retire",
             "selector": 3,
-            "user_params": [
+            "params": [
               {
                 "name": "owner_sig",
                 "type": {
@@ -2007,8 +2167,7 @@
                   "kind": "pubkey"
                 }
               }
-            ],
-            "hidden_params": []
+            ]
           }
         ],
         "compiled": {
@@ -2038,7 +2197,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "League"
+                "contract": "League"
               }
             },
             {
@@ -2049,7 +2208,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Player"
+                "contract": "Player"
               }
             },
             {
@@ -2060,7 +2219,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesGame"
+                "contract": "StonesGame"
               }
             },
             {
@@ -2071,7 +2230,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesSettle"
+                "contract": "StonesSettle"
               }
             },
             {
@@ -2127,7 +2286,7 @@
           {
             "name": "take",
             "selector": 0,
-            "user_params": [
+            "params": [
               {
                 "name": "amount",
                 "type": {
@@ -2152,47 +2311,29 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__stones_game_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesGame",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__stones_game_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesGame",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "name": "gen__stones_settle_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__stones_settle_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -2200,7 +2341,7 @@
           {
             "name": "concede",
             "selector": 1,
-            "user_params": [
+            "params": [
               {
                 "name": "player_id",
                 "type": {
@@ -2219,27 +2360,17 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__stones_settle_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__stones_settle_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "StonesSettle",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -2272,7 +2403,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "League"
+                "contract": "League"
               }
             },
             {
@@ -2283,7 +2414,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Player"
+                "contract": "Player"
               }
             },
             {
@@ -2294,7 +2425,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesGame"
+                "contract": "StonesGame"
               }
             },
             {
@@ -2305,7 +2436,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "StonesSettle"
+                "contract": "StonesSettle"
               }
             },
             {
@@ -2343,26 +2474,17 @@
           {
             "name": "settle",
             "selector": null,
-            "user_params": [],
-            "hidden_params": [
+            "params": [
               {
                 "name": "gen__player_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__player_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Player",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]

@@ -114,16 +114,25 @@ dependencies = [
 name = "argent"
 version = "0.1.0"
 dependencies = [
+ "argent-artifact",
  "blake2b_simd",
- "faster-hex 0.10.0",
  "kaspa-consensus-core",
  "kaspa-txscript",
  "kaspa-txscript-errors",
  "secp256k1",
- "serde",
  "serde_json",
+ "silverscript-abi",
  "silverscript-lang",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "argent-artifact"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "silverscript-abi",
 ]
 
 [[package]]
@@ -2925,6 +2934,16 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "silverscript-abi"
+version = "0.1.0"
+dependencies = [
+ "faster-hex 0.10.0",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "silverscript-lang"

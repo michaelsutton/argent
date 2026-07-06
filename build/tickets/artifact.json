@@ -218,6 +218,48 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__issuer_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Issuer",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__issuer_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Issuer",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "name": "gen__ticket_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Ticket",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__ticket_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Ticket",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__issuer_prefix",
@@ -395,6 +437,28 @@
                 }
               ]
             },
+            "hidden_params": [
+              {
+                "name": "gen__ticket_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Ticket",
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "name": "gen__ticket_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "actor": "Ticket",
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
             "witnesses": [
               {
                 "param": "gen__ticket_prefix",
@@ -493,7 +557,7 @@
         ]
       }
     ],
-    "actors": [
+    "contracts": [
       {
         "name": "Issuer",
         "source_path": "sil/Issuer.sil",
@@ -508,7 +572,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Issuer"
+                "contract": "Issuer"
               }
             },
             {
@@ -519,7 +583,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Ticket"
+                "contract": "Ticket"
               }
             },
             {
@@ -547,7 +611,7 @@
           {
             "name": "issue",
             "selector": null,
-            "user_params": [
+            "params": [
               {
                 "name": "admin_sig",
                 "type": {
@@ -565,47 +629,29 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__issuer_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__issuer_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Issuer",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               },
               {
                 "name": "gen__ticket_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__ticket_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]
@@ -638,7 +684,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Issuer"
+                "contract": "Issuer"
               }
             },
             {
@@ -649,7 +695,7 @@
               },
               "role": {
                 "kind": "template",
-                "actor": "Ticket"
+                "contract": "Ticket"
               }
             },
             {
@@ -686,7 +732,7 @@
           {
             "name": "redeem",
             "selector": null,
-            "user_params": [
+            "params": [
               {
                 "name": "owner_sig",
                 "type": {
@@ -698,27 +744,17 @@
                 "type": {
                   "kind": "pubkey"
                 }
-              }
-            ],
-            "hidden_params": [
+              },
               {
                 "name": "gen__ticket_prefix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_prefix_bytes"
                 }
               },
               {
                 "name": "gen__ticket_suffix",
                 "type": {
                   "kind": "bytes"
-                },
-                "actor": "Ticket",
-                "purpose": {
-                  "kind": "template_suffix_bytes"
                 }
               }
             ]

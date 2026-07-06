@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::{
     artifact::{
         ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, RuntimeFieldRoleArtifact,
-        SilActorArtifact,
+        SilContractArtifact,
     },
     codec::{ArtifactValue, CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script},
 };
@@ -72,7 +72,7 @@ impl<'a> ArtifactTxBuilder<'a> {
     }
 
     pub fn redeem_script(&self, actor_name: &str, source_state: BTreeMap<String, ArtifactValue>) -> BuilderResult<Vec<u8>> {
-        let actor = self.actor(actor_name)?;
+        let actor = self.contract(actor_name)?;
         let state = self.runtime_state_values(actor, source_state)?;
         let state_script = encode_runtime_state_script(&actor.runtime_state, &state)?;
 
@@ -97,29 +97,30 @@ impl<'a> ArtifactTxBuilder<'a> {
         input_source_state: BTreeMap<String, ArtifactValue>,
         user_args: Vec<ArtifactValue>,
     ) -> BuilderResult<Vec<u8>> {
-        let actor = self.actor(actor_name)?;
-        let entry = actor
+        let contract = self.contract(actor_name)?;
+        let sil_entry = contract
             .entry(entry_name)
             .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
+        let argent_entry = self.entry(actor_name, entry_name)?;
         let mut args = user_args;
-        for hidden in &entry.hidden_params {
+        for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    ArtifactValue::Bytes(decode_hex(&self.actor(&hidden.actor)?.compiled.template.prefix_hex)?)
+                    ArtifactValue::Bytes(decode_hex(&self.contract(&hidden.actor)?.compiled.template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    ArtifactValue::Bytes(decode_hex(&self.actor(&hidden.actor)?.compiled.template.suffix_hex)?)
+                    ArtifactValue::Bytes(decode_hex(&self.contract(&hidden.actor)?.compiled.template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    ArtifactValue::Int(decode_hex(&self.actor(&hidden.actor)?.compiled.template.prefix_hex)?.len() as i64)
+                    ArtifactValue::Int(decode_hex(&self.contract(&hidden.actor)?.compiled.template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    ArtifactValue::Int(decode_hex(&self.actor(&hidden.actor)?.compiled.template.suffix_hex)?.len() as i64)
+                    ArtifactValue::Int(decode_hex(&self.contract(&hidden.actor)?.compiled.template.suffix_hex)?.len() as i64)
                 }
             });
         }
 
-        let sigscript = encode_entry_sig_script(&self.artifact.sil_abi, actor, entry, &args)?;
+        let sigscript = encode_entry_sig_script(&self.artifact.sil_abi, contract, sil_entry, &args)?;
         Ok(pay_to_script_hash_signature_script_with_flags(
             self.redeem_script(actor_name, input_source_state)?,
             sigscript,
@@ -199,8 +200,8 @@ impl<'a> ArtifactTxBuilder<'a> {
         PopulatedTransaction::new(tx, entries)
     }
 
-    fn actor(&self, name: &str) -> BuilderResult<&'a SilActorArtifact> {
-        self.artifact.sil_abi.actor(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    fn contract(&self, name: &str) -> BuilderResult<&'a SilContractArtifact> {
+        self.artifact.sil_abi.contract(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
     }
 
     fn argent_actor(&self, name: &str) -> BuilderResult<&'a ActorArtifact> {
@@ -217,19 +218,21 @@ impl<'a> ArtifactTxBuilder<'a> {
 
     fn runtime_state_values(
         &self,
-        actor: &SilActorArtifact,
+        contract: &SilContractArtifact,
         mut source_state: BTreeMap<String, ArtifactValue>,
     ) -> BuilderResult<BTreeMap<String, ArtifactValue>> {
         let mut values = BTreeMap::new();
-        for field in &actor.runtime_state.fields {
+        for field in &contract.runtime_state.fields {
             match &field.role {
                 RuntimeFieldRoleArtifact::Source => {
                     let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
                     values.insert(field.name.clone(), value);
                 }
-                RuntimeFieldRoleArtifact::Template { actor } => {
-                    values
-                        .insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&self.actor(actor)?.compiled.template.hash_hex)?));
+                RuntimeFieldRoleArtifact::Template { contract } => {
+                    values.insert(
+                        field.name.clone(),
+                        ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
+                    );
                 }
             }
         }
@@ -359,7 +362,7 @@ mod tests {
     fn redeem_script_fills_hidden_template_state_from_artifact() {
         let artifact = tickets_artifact();
         let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
-        let actor = builder.actor("Ticket").expect("ticket actor exists");
+        let actor = builder.contract("Ticket").expect("ticket contract exists");
         let source_state = ticket_state(vec![3; 32], 11, 0);
 
         let redeem_script = builder.redeem_script("Ticket", source_state.clone()).expect("redeem script builds");
@@ -370,11 +373,11 @@ mod tests {
         assert_eq!(decoded.get("owner"), source_state.get("owner"));
         assert_eq!(
             decoded.get("gen__template_ticket"),
-            Some(&ArtifactValue::Bytes(decode_hex(&builder.actor("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
+            Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
         assert_eq!(
             decoded.get("gen__template_issuer"),
-            Some(&ArtifactValue::Bytes(decode_hex(&builder.actor("Issuer").unwrap().compiled.template.hash_hex).unwrap()))
+            Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Issuer").unwrap().compiled.template.hash_hex).unwrap()))
         );
     }
 
@@ -445,7 +448,7 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        let accept_start = builder.actor("Player").expect("Player actor exists").entry("accept_start").expect("accept_start exists");
+        let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
         assert_eq!(
             accept_start
                 .hidden_params
@@ -528,16 +531,16 @@ mod tests {
         execute_input_with_covenants(&tx, entries.clone(), 0).expect("leader input passes");
         execute_input_with_covenants(&tx, entries.clone(), 1).expect("delegate input passes");
 
-        let player_template = &builder.actor("Player").expect("Player actor exists").compiled.template;
+        let player_template = &builder.contract("Player").expect("Player contract exists").compiled.template;
         let wrong_delegate_sigscript = {
             let delegate_sig = sign_input(&unsigned_tx, entries.clone(), 1, &owner_b);
             let prefix_len = decode_hex(&player_template.prefix_hex).expect("prefix hex decodes").len() as i64;
             let suffix_len = decode_hex(&player_template.suffix_hex).expect("suffix hex decodes").len() as i64;
             let accept_entry =
-                builder.actor("Player").expect("Player actor exists").entry("accept_start").expect("accept_start exists");
+                builder.contract("Player").expect("Player contract exists").entry("accept_start").expect("accept_start exists");
             let sigscript = encode_entry_sig_script(
                 &artifact.sil_abi,
-                builder.actor("Player").expect("Player actor exists"),
+                builder.contract("Player").expect("Player contract exists"),
                 accept_entry,
                 &[
                     ArtifactValue::Bytes(delegate_sig),

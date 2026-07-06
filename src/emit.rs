@@ -4,8 +4,8 @@ use std::path::Path;
 
 use crate::artifact::*;
 use crate::ast::*;
+use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
-use crate::hex::encode as encode_hex;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
@@ -1370,7 +1370,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         .collect();
 
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
-    let sil_actors = model.actors.iter().map(|actor| sil_actor_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
+    let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
 
     Ok(Artifact {
         schema_version: ARTIFACT_SCHEMA_VERSION,
@@ -1379,7 +1379,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         root: manifest_path(&program.root),
         modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
         argent: ArgentArtifact { templates, states: states.clone(), actors: argent_actors },
-        sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, actors: sil_actors },
+        sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
     })
 }
 
@@ -1394,27 +1394,27 @@ fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact>
     })
 }
 
-fn sil_actor_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<SilActorArtifact> {
+fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<SilContractArtifact> {
     let state = model.state(&actor.state)?;
     let entries = actor.entries.iter().enumerate().map(|(idx, entry)| sil_entry_artifact(actor, idx, entry, model)).collect();
     let sil = actor_sil
         .get(&actor.name)
         .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
 
-    Ok(SilActorArtifact {
+    Ok(SilContractArtifact {
         name: actor.name.clone(),
         source_path: format!("sil/{}.sil", actor.name),
         runtime_state: RuntimeStateArtifact { source: state.name.clone(), fields: runtime_state_fields(state, model) },
         entries,
-        compiled: compile_actor_artifact(sil, actor, model)?,
+        compiled: compile_contract_artifact(sil, actor, model)?,
     })
 }
 
-fn compile_actor_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<'_>) -> Result<CompiledActorArtifact> {
+fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<'_>) -> Result<CompiledContractArtifact> {
     let args: Vec<SilExpr<'i>> = constructor_args_for_actor(actor, model)?;
     let compiled = compile_contract(sil, &args, CompileOptions::default())
         .map_err(|err| ArgentError::new(format!("generated Silverscript for actor `{}` failed to compile: {err}", actor.name)))?;
-    compiled_actor_artifact(&compiled)
+    compiled_contract_artifact(&compiled)
 }
 
 fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
@@ -1460,7 +1460,7 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
     }
 }
 
-fn compiled_actor_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledActorArtifact> {
+fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledContractArtifact> {
     let layout = compiled.state_layout;
     let suffix_start = layout.start + layout.len;
     if layout.start > compiled.script.len() || suffix_start > compiled.script.len() {
@@ -1477,7 +1477,7 @@ fn compiled_actor_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledAc
     let suffix = &compiled.script[suffix_start..];
     let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(prefix).update(suffix).finalize();
 
-    Ok(CompiledActorArtifact {
+    Ok(CompiledContractArtifact {
         script_hex: encode_hex(&compiled.script),
         template: CompiledTemplateArtifact {
             prefix_hex: encode_hex(prefix),
@@ -1494,7 +1494,7 @@ fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFiel
         fields.push(RuntimeFieldArtifact {
             name: hidden_template_name(actor),
             ty: TypeArtifact::from_parts("byte", Some(32)),
-            role: RuntimeFieldRoleArtifact::Template { actor: actor.clone() },
+            role: RuntimeFieldRoleArtifact::Template { contract: actor.clone() },
         });
     }
     for field in &state.fields {
@@ -1546,9 +1546,10 @@ fn hidden_params_for_entry(entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenPa
 }
 
 fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryArtifact> {
-    let witnesses = hidden_params_for_entry(entry, model)
-        .into_iter()
-        .map(|param| WitnessArtifact { param: param.name, actor: param.actor, purpose: param.purpose })
+    let hidden_params = hidden_params_for_entry(entry, model);
+    let witnesses = hidden_params
+        .iter()
+        .map(|param| WitnessArtifact { param: param.name.clone(), actor: param.actor.clone(), purpose: param.purpose })
         .collect::<Vec<_>>();
     Ok(EntryArtifact {
         name: entry.name.clone(),
@@ -1558,6 +1559,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
         },
         abi: EntryAbiRefArtifact { actor: actor.name.clone(), entry: entry.name.clone() },
         route_plan: entry_route_plan_artifact(actor, entry, model, &witnesses)?,
+        hidden_params,
         witnesses,
         consumes: entry
             .consumes
@@ -1720,16 +1722,11 @@ fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutpu
 }
 
 fn sil_entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, model: &Model<'_>) -> SilEntryArtifact {
-    SilEntryArtifact {
-        name: entry.name.clone(),
-        selector: (actor.entries.len() > 1).then_some(entry_index as i64),
-        user_params: entry
-            .params
-            .iter()
-            .map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty) })
-            .collect(),
-        hidden_params: hidden_params_for_entry(entry, model),
-    }
+    let mut params =
+        entry.params.iter().map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty) }).collect::<Vec<_>>();
+    params.extend(hidden_params_for_entry(entry, model).into_iter().map(|param| ParamArtifact { name: param.name, ty: param.ty }));
+
+    SilEntryArtifact { name: entry.name.clone(), selector: (actor.entries.len() > 1).then_some(entry_index as i64), params }
 }
 
 fn emit_spec_artifact(emits: &EmitSpec) -> EmitArtifact {
@@ -2261,24 +2258,30 @@ mod tests {
 
         let actor = artifact.argent.actors.iter().find(|actor| actor.name == "Foo").expect("actor is present");
         assert_eq!(actor.abi.actor, "Foo");
-        let sil_actor = artifact.sil_abi.actor(&actor.abi.actor).expect("outer actor should point at Sil ABI actor");
-        assert_eq!(sil_actor.source_path, "sil/Foo.sil");
-        assert_compiled_projection(sil_actor.name.as_str(), &sil_actor.compiled);
+        let sil_contract = artifact.sil_abi.contract(&actor.abi.actor).expect("outer actor should point at Sil ABI contract");
+        assert_eq!(sil_contract.source_path, "sil/Foo.sil");
+        assert_compiled_projection(sil_contract.name.as_str(), &sil_contract.compiled);
         assert_eq!(
-            sil_actor.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            sil_contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
             ["gen__template_foo", "owner", "count"],
             "runtime state field order must match generated Silverscript state order"
         );
-        assert_eq!(sil_actor.runtime_state.fields[0].name, "gen__template_foo");
-        assert_eq!(sil_actor.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { actor: "Foo".to_string() });
-        assert_eq!(sil_actor.runtime_state.fields[1].name, "owner");
-        assert_eq!(sil_actor.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
-        assert_eq!(sil_actor.runtime_state.fields[2].role, RuntimeFieldRoleArtifact::Source);
+        assert_eq!(sil_contract.runtime_state.fields[0].name, "gen__template_foo");
+        assert_eq!(sil_contract.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { contract: "Foo".to_string() });
+        assert_eq!(sil_contract.runtime_state.fields[1].name, "owner");
+        assert_eq!(sil_contract.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
+        assert_eq!(sil_contract.runtime_state.fields[2].role, RuntimeFieldRoleArtifact::Source);
 
         let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
         assert_eq!(entry.kind, EntryKindArtifact::Leader);
         assert_eq!(entry.abi.actor, "Foo");
         assert_eq!(entry.abi.entry, "step");
+        assert_eq!(entry.hidden_params.len(), 2);
+        assert_eq!(entry.hidden_params[0].name, "gen__foo_prefix");
+        assert_eq!(entry.hidden_params[0].ty, TypeArtifact::Bytes);
+        assert_eq!(entry.hidden_params[0].actor, "Foo");
+        assert_eq!(entry.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixBytes);
+        assert_eq!(entry.hidden_params[1].name, "gen__foo_suffix");
         assert_eq!(entry.witnesses.len(), 2);
         assert_eq!(entry.witnesses[0].param, "gen__foo_prefix");
         assert_eq!(entry.witnesses[0].actor, "Foo");
@@ -2303,21 +2306,20 @@ mod tests {
             ["gen__foo_prefix", "gen__foo_suffix"]
         );
 
-        let sil_entry = sil_actor.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
+        let sil_entry = sil_contract.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
         assert_eq!(sil_entry.selector, None);
-        assert_eq!(sil_entry.user_params[0].name, "amount");
-        assert_eq!(sil_entry.user_params[0].ty, TypeArtifact::Int);
-        assert_eq!(sil_entry.hidden_params.len(), 2);
+        assert_eq!(sil_entry.params.len(), 3);
+        assert_eq!(sil_entry.params[0].name, "amount");
+        assert_eq!(sil_entry.params[0].ty, TypeArtifact::Int);
+        assert_eq!(sil_entry.params[1].name, "gen__foo_prefix");
+        assert_eq!(sil_entry.params[1].ty, TypeArtifact::Bytes);
+        assert_eq!(sil_entry.params[2].name, "gen__foo_suffix");
+        assert_eq!(sil_entry.params[2].ty, TypeArtifact::Bytes);
         assert_eq!(
             entry.witnesses.iter().map(|witness| (witness.param.clone(), witness.actor.clone(), witness.purpose)).collect::<Vec<_>>(),
-            sil_entry.hidden_params.iter().map(|param| (param.name.clone(), param.actor.clone(), param.purpose)).collect::<Vec<_>>(),
-            "outer witness recipes must correspond to inner hidden ABI params"
+            entry.hidden_params.iter().map(|param| (param.name.clone(), param.actor.clone(), param.purpose)).collect::<Vec<_>>(),
+            "outer witness recipes must correspond to outer hidden ABI params"
         );
-        assert_eq!(sil_entry.hidden_params[0].name, "gen__foo_prefix");
-        assert_eq!(sil_entry.hidden_params[0].ty, TypeArtifact::Bytes);
-        assert_eq!(sil_entry.hidden_params[0].actor, "Foo");
-        assert_eq!(sil_entry.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixBytes);
-        assert_eq!(sil_entry.hidden_params[1].name, "gen__foo_suffix");
     }
 
     #[test]
@@ -2359,8 +2361,8 @@ mod tests {
         );
         assert!(player_sil.contains("int gen__player_prefix_len = gen__player_prefix.length;"), "{player_sil}");
 
-        let player_actor = artifact.sil_abi.actor("Player").expect("Player Sil ABI exists");
-        let accept_start = player_actor.entry("accept_start").expect("accept_start ABI exists");
+        let player_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Player").expect("Player actor exists");
+        let accept_start = player_actor.entries.iter().find(|entry| entry.name == "accept_start").expect("accept_start ABI exists");
         assert_eq!(accept_start.hidden_params.len(), 2);
         assert_eq!(accept_start.hidden_params[0].name, "gen__player_prefix_len");
         assert_eq!(accept_start.hidden_params[0].ty, TypeArtifact::Int);
@@ -2371,7 +2373,7 @@ mod tests {
         assert_eq!(accept_start.hidden_params[1].actor, "Player");
         assert_eq!(accept_start.hidden_params[1].purpose, HiddenParamPurposeArtifact::TemplateSuffixLen);
 
-        let start_game = player_actor.entry("start_game").expect("start_game ABI exists");
+        let start_game = player_actor.entries.iter().find(|entry| entry.name == "start_game").expect("start_game ABI exists");
         assert_eq!(
             start_game
                 .hidden_params
@@ -2383,6 +2385,18 @@ mod tests {
                 ("gen__player_suffix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
                 ("gen__stones_game_prefix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
                 ("gen__stones_game_suffix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+
+        let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
+        let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
+        assert_eq!(
+            sil_accept_start.params.iter().map(|param| (param.name.as_str(), param.ty.clone())).collect::<Vec<_>>(),
+            vec![
+                ("owner_sig", TypeArtifact::Sig),
+                ("owner_pk", TypeArtifact::Pubkey),
+                ("gen__player_prefix_len", TypeArtifact::Int),
+                ("gen__player_suffix_len", TypeArtifact::Int),
             ]
         );
 
@@ -2429,13 +2443,13 @@ mod tests {
         let constructor_args = constructor_args_for_actor(actor, &model).expect("constructor args build");
         let compiled = compile_contract(sil, &constructor_args, CompileOptions::default()).expect("generated Sil compiles");
 
-        let sil_actor = sil_abi.actor("Foo").expect("Foo Sil ABI exists");
-        let bump = sil_actor.entries.iter().find(|entry| entry.name == "bump").expect("bump entry exists");
-        let done = sil_actor.entries.iter().find(|entry| entry.name == "done").expect("done entry exists");
+        let sil_contract = sil_abi.contract("Foo").expect("Foo Sil ABI exists");
+        let bump = sil_contract.entries.iter().find(|entry| entry.name == "bump").expect("bump entry exists");
+        let done = sil_contract.entries.iter().find(|entry| entry.name == "done").expect("done entry exists");
         assert_eq!(bump.selector, Some(0));
         assert_eq!(done.selector, Some(1));
 
-        let portable_bump = crate::codec::encode_actor_entry_sig_script(
+        let portable_bump = crate::codec::encode_contract_entry_sig_script(
             &sil_abi,
             "Foo",
             "bump",
@@ -2453,7 +2467,7 @@ mod tests {
         assert_eq!(portable_bump, sil_bump);
 
         let portable_done =
-            crate::codec::encode_actor_entry_sig_script(&sil_abi, "Foo", "done", &[]).expect("portable done sigscript builds");
+            crate::codec::encode_contract_entry_sig_script(&sil_abi, "Foo", "done", &[]).expect("portable done sigscript builds");
         let sil_done = compiled.build_sig_script("done", vec![]).expect("Sil done sigscript builds");
         assert_eq!(portable_done, sil_done);
     }
@@ -2510,21 +2524,21 @@ mod tests {
         let expected_hashes = expected_hashes.iter().copied().collect::<BTreeMap<_, _>>();
         assert!(!artifact.argent.actors.is_empty(), "artifact should contain Argent actors");
         for actor in &artifact.argent.actors {
-            let sil_actor = artifact
+            let sil_contract = artifact
                 .sil_abi
-                .actor(&actor.abi.actor)
-                .unwrap_or_else(|| panic!("actor `{}` should reference a Sil ABI actor", actor.name));
-            assert_compiled_projection(sil_actor.name.as_str(), &sil_actor.compiled);
-            assert_runtime_state_round_trip(sil_actor, &sil_actor.compiled);
-            if let Some(expected_hash) = expected_hashes.get(sil_actor.name.as_str()) {
-                assert_eq!(&sil_actor.compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
+                .contract(&actor.abi.actor)
+                .unwrap_or_else(|| panic!("actor `{}` should reference a Sil ABI contract", actor.name));
+            assert_compiled_projection(sil_contract.name.as_str(), &sil_contract.compiled);
+            assert_runtime_state_round_trip(sil_contract, &sil_contract.compiled);
+            if let Some(expected_hash) = expected_hashes.get(sil_contract.name.as_str()) {
+                assert_eq!(&sil_contract.compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
             }
         }
 
         let _ = fs::remove_dir_all(out_dir);
     }
 
-    fn assert_runtime_state_round_trip(actor: &SilActorArtifact, compiled: &CompiledActorArtifact) {
+    fn assert_runtime_state_round_trip(actor: &SilContractArtifact, compiled: &CompiledContractArtifact) {
         let script = crate::codec::decode_hex(&compiled.script_hex).expect("script hex decodes");
         let state_start = compiled.state_span.offset;
         let state_end = state_start + compiled.state_span.len;
@@ -2536,7 +2550,7 @@ mod tests {
         assert_eq!(reencoded, state_script, "actor `{}` runtime state must re-encode byte-for-byte", actor.name);
     }
 
-    fn assert_compiled_projection(actor: &str, compiled: &CompiledActorArtifact) {
+    fn assert_compiled_projection(actor: &str, compiled: &CompiledContractArtifact) {
         assert!(!compiled.script_hex.is_empty(), "actor `{actor}` should have script bytes");
         assert!(compiled.state_span.len > 0, "actor `{actor}` should have a non-empty state span");
         assert_eq!(compiled.template.hash_hex.len(), 64, "actor `{actor}` should have a 32-byte template hash");
