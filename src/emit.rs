@@ -5,6 +5,7 @@ use std::path::Path;
 use crate::artifact::*;
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
+use crate::hex::encode as encode_hex;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
@@ -1458,11 +1459,11 @@ fn compiled_actor_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledAc
     let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(prefix).update(suffix).finalize();
 
     Ok(CompiledActorArtifact {
-        script_hex: hex_encode(&compiled.script),
+        script_hex: encode_hex(&compiled.script),
         template: CompiledTemplateArtifact {
-            prefix_hex: hex_encode(prefix),
-            suffix_hex: hex_encode(suffix),
-            hash_hex: hex_encode(template_hash.as_bytes()),
+            prefix_hex: encode_hex(prefix),
+            suffix_hex: encode_hex(suffix),
+            hash_hex: encode_hex(template_hash.as_bytes()),
         },
         state_span: StateSpanArtifact { offset: layout.start, len: layout.len },
     })
@@ -1569,16 +1570,6 @@ fn route_artifact(route: &RouteCall) -> RouteArtifact {
 
 fn type_artifact(ty: &TypeRef) -> TypeArtifact {
     TypeArtifact::from_parts(&ty.name, ty.array)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
 }
 
 fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
@@ -2314,35 +2305,14 @@ mod tests {
             "actor `{actor}` script must reconstruct from prefix, initial state, and suffix"
         );
 
-        let prefix = decode_hex(&compiled.template.prefix_hex);
-        let suffix = decode_hex(&compiled.template.suffix_hex);
+        let prefix = crate::codec::decode_hex(&compiled.template.prefix_hex).expect("prefix hex decodes");
+        let suffix = crate::codec::decode_hex(&compiled.template.suffix_hex).expect("suffix hex decodes");
         let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
         assert_eq!(
-            hex_encode(template_hash.as_bytes()),
+            encode_hex(template_hash.as_bytes()),
             compiled.template.hash_hex,
             "actor `{actor}` template hash must be blake2b(prefix || suffix)"
         );
-    }
-
-    fn decode_hex(hex: &str) -> Vec<u8> {
-        assert_eq!(hex.len() % 2, 0, "hex input should have even length");
-        hex.as_bytes()
-            .chunks_exact(2)
-            .map(|chunk| {
-                let hi = hex_nibble(chunk[0]);
-                let lo = hex_nibble(chunk[1]);
-                (hi << 4) | lo
-            })
-            .collect()
-    }
-
-    fn hex_nibble(byte: u8) -> u8 {
-        match byte {
-            b'0'..=b'9' => byte - b'0',
-            b'a'..=b'f' => byte - b'a' + 10,
-            b'A'..=b'F' => byte - b'A' + 10,
-            _ => panic!("invalid hex digit `{}`", byte as char),
-        }
     }
 
     fn test_program() -> Program {

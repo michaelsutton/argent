@@ -1,6 +1,5 @@
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 pub mod sil_abi;
 
@@ -42,20 +41,13 @@ impl Artifact {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unsupported {artifact} schema version {found}; expected {supported}")]
 pub struct ArtifactVersionError {
     pub artifact: &'static str,
     pub supported: u32,
     pub found: u32,
 }
-
-impl fmt::Display for ArtifactVersionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unsupported {} schema version {}; expected {}", self.artifact, self.found, self.supported)
-    }
-}
-
-impl std::error::Error for ArtifactVersionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GeneratorArtifact {

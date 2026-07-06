@@ -1,6 +1,7 @@
-use std::{collections::BTreeMap, fmt};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::artifact::{
     FieldArtifact, RuntimeStateArtifact, SilAbiArtifact, SilActorArtifact, SilEntryArtifact, StateArtifact, TypeArtifact,
@@ -31,52 +32,37 @@ pub enum ArtifactValue {
     Object(BTreeMap<String, ArtifactValue>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Error, Clone, PartialEq)]
 pub enum CodecError {
+    #[error("unknown actor `{0}`")]
     UnknownActor(String),
+    #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
+    #[error("unknown struct `{0}`")]
     UnknownStruct(String),
+    #[error("entry `{entry}` expects {expected} arguments, got {actual}")]
     WrongArgumentCount { entry: String, expected: usize, actual: usize },
+    #[error("missing field `{0}`")]
     MissingField(String),
+    #[error("unknown field `{0}`")]
     UnknownField(String),
+    #[error("duplicate field `{0}`")]
     DuplicateField(String),
+    #[error("expected {expected}, got {actual}")]
     TypeMismatch { expected: String, actual: String },
+    #[error("unsupported artifact type `{0}`")]
     UnsupportedType(String),
+    #[error("`{name}` expects {expected} bytes, got {actual}")]
     InvalidLength { name: String, expected: usize, actual: usize },
+    #[error("number {value} does not fit in {size} bytes")]
     InvalidNumber { value: i64, size: usize },
-    InvalidHex(String),
+    #[error("invalid hex: {0}")]
+    InvalidHex(#[from] faster_hex::Error),
+    #[error("invalid push-only script: {0}")]
     InvalidPush(String),
+    #[error("state script has {len} trailing bytes at offset {offset}")]
     TrailingStateBytes { offset: usize, len: usize },
 }
-
-impl fmt::Display for CodecError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnknownActor(actor) => write!(f, "unknown actor `{actor}`"),
-            Self::UnknownEntry { actor, entry } => write!(f, "unknown entry `{actor}::{entry}`"),
-            Self::UnknownStruct(name) => write!(f, "unknown struct `{name}`"),
-            Self::WrongArgumentCount { entry, expected, actual } => {
-                write!(f, "entry `{entry}` expects {expected} arguments, got {actual}")
-            }
-            Self::MissingField(field) => write!(f, "missing field `{field}`"),
-            Self::UnknownField(field) => write!(f, "unknown field `{field}`"),
-            Self::DuplicateField(field) => write!(f, "duplicate field `{field}`"),
-            Self::TypeMismatch { expected, actual } => write!(f, "expected {expected}, got {actual}"),
-            Self::UnsupportedType(ty) => write!(f, "unsupported artifact type `{ty}`"),
-            Self::InvalidLength { name, expected, actual } => {
-                write!(f, "`{name}` expects {expected} bytes, got {actual}")
-            }
-            Self::InvalidNumber { value, size } => write!(f, "number {value} does not fit in {size} bytes"),
-            Self::InvalidHex(message) => write!(f, "invalid hex: {message}"),
-            Self::InvalidPush(message) => write!(f, "invalid push-only script: {message}"),
-            Self::TrailingStateBytes { offset, len } => {
-                write!(f, "state script has {len} trailing bytes at offset {offset}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for CodecError {}
 
 pub fn encode_actor_entry_sig_script(
     abi: &SilAbiArtifact,
@@ -160,20 +146,11 @@ pub fn decode_runtime_state_script(
 }
 
 pub fn decode_hex(hex: &str) -> CodecResult<Vec<u8>> {
-    if !hex.len().is_multiple_of(2) {
-        return Err(CodecError::InvalidHex("odd length".to_string()));
-    }
-    hex.as_bytes().chunks_exact(2).map(|chunk| Ok((hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?)).collect()
+    crate::hex::decode(hex).map_err(Into::into)
 }
 
 pub fn encode_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
+    crate::hex::encode(bytes)
 }
 
 fn entry_params(entry: &SilEntryArtifact) -> Vec<(&str, &TypeArtifact)> {
@@ -655,15 +632,6 @@ fn type_name(ty: &TypeArtifact) -> String {
     }
 }
 
-fn hex_nibble(byte: u8) -> CodecResult<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(CodecError::InvalidHex(format!("invalid digit `{}`", byte as char))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -684,6 +652,13 @@ mod tests {
         .expect("sigscript encodes");
 
         assert_eq!(encode_hex(&sigscript), "01110401020304515100");
+    }
+
+    #[test]
+    fn hex_helpers_use_faster_hex_and_report_invalid_input() {
+        assert_eq!(decode_hex("01110401020304515100").expect("hex decodes"), vec![1, 17, 4, 1, 2, 3, 4, 81, 81, 0]);
+        assert!(matches!(decode_hex("abc"), Err(CodecError::InvalidHex(_))));
+        assert!(matches!(decode_hex("zz"), Err(CodecError::InvalidHex(_))));
     }
 
     #[test]

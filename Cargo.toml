@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 blake2b_simd = "1.0.2"
+faster-hex = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 silverscript-lang = { git = "https://github.com/kaspanet/silverscript", rev = "d25bd3427a093c17327ca3d6b9e1aa5f7688c863", package = "silverscript-lang" }
+thiserror = "2"
