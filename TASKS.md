@@ -77,6 +77,8 @@ fixture generator. The builder code under test must not depend on it.
 
 ### 1. Define Portable Artifact Schema
 
+Status: done.
+
 Create a versioned artifact model in Argent, separate from compiler internals.
 This can start as one module and later move to a small crate.
 
@@ -110,6 +112,8 @@ Obstacle to handle:
 
 ### 2. Compile Generated Silverscript During Argent Build
 
+Status: done.
+
 Teach `argentc build` to optionally compile each generated `.sil` actor through
 `silverscript-lang` at compile time. The output should still include the plain
 generated `.sil` files for audit.
@@ -128,6 +132,8 @@ Obstacle to handle:
   hidden template inputs.
 
 ### 3. Project `CompiledContract` Into Portable Artifact
+
+Status: done.
 
 Add a projection layer:
 

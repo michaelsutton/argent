@@ -2045,19 +2045,28 @@ mod tests {
         assert_eq!(artifact.templates[0].symbol, "gen__template_foo");
 
         let state = artifact.states.iter().find(|state| state.name == "FooState").expect("source state is present");
+        assert_eq!(
+            state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            ["owner", "count"],
+            "source state field order must stay stable"
+        );
         assert_eq!(state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
         assert_eq!(state.fields[1].ty, TypeArtifact::Int);
 
         let actor = artifact.actors.iter().find(|actor| actor.name == "Foo").expect("actor is present");
         assert_eq!(actor.sil, "sil/Foo.sil");
         let compiled = actor.compiled.as_ref().expect("actor should compile");
-        assert!(!compiled.script_hex.is_empty());
-        assert_eq!(compiled.template.hash_hex.len(), 64);
-        assert_eq!(compiled.state_span.offset * 2, compiled.template.prefix_hex.len());
-        assert!(compiled.state_span.len > 0);
+        assert_compiled_projection(actor.name.as_str(), compiled);
+        assert_eq!(
+            actor.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            ["gen__template_foo", "owner", "count"],
+            "runtime state field order must match generated Silverscript state order"
+        );
         assert_eq!(actor.runtime_state.fields[0].name, "gen__template_foo");
         assert_eq!(actor.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { actor: "Foo".to_string() });
         assert_eq!(actor.runtime_state.fields[1].name, "owner");
+        assert_eq!(actor.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
+        assert_eq!(actor.runtime_state.fields[2].role, RuntimeFieldRoleArtifact::Source);
 
         let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
         assert_eq!(entry.kind, EntryKindArtifact::Leader);
@@ -2140,20 +2149,70 @@ mod tests {
         assert!(!artifact.actors.is_empty(), "artifact should contain actors");
         for actor in &artifact.actors {
             let compiled = actor.compiled.as_ref().unwrap_or_else(|| panic!("actor `{}` should compile", actor.name));
-            assert!(!compiled.script_hex.is_empty(), "actor `{}` should have script bytes", actor.name);
-            assert_eq!(compiled.template.hash_hex.len(), 64, "actor `{}` should have a 32-byte template hash", actor.name);
-            assert_eq!(
-                compiled.state_span.len * 2,
-                compiled.script_hex.len() - compiled.template.prefix_hex.len() - compiled.template.suffix_hex.len(),
-                "actor `{}` state span should match script/template lengths",
-                actor.name
-            );
+            assert_compiled_projection(actor.name.as_str(), compiled);
             if let Some(expected_hash) = expected_hashes.get(actor.name.as_str()) {
                 assert_eq!(&compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
             }
         }
 
         let _ = fs::remove_dir_all(out_dir);
+    }
+
+    fn assert_compiled_projection(actor: &str, compiled: &CompiledActorArtifact) {
+        assert!(!compiled.script_hex.is_empty(), "actor `{actor}` should have script bytes");
+        assert!(compiled.state_span.len > 0, "actor `{actor}` should have a non-empty state span");
+        assert_eq!(compiled.template.hash_hex.len(), 64, "actor `{actor}` should have a 32-byte template hash");
+
+        let state_start = compiled.state_span.offset * 2;
+        let state_end = state_start + compiled.state_span.len * 2;
+        assert!(state_end <= compiled.script_hex.len(), "actor `{actor}` state span should fit inside script hex");
+        assert_eq!(
+            &compiled.script_hex[..state_start],
+            compiled.template.prefix_hex,
+            "actor `{actor}` prefix must be the bytes before the state span"
+        );
+        assert_eq!(
+            &compiled.script_hex[state_end..],
+            compiled.template.suffix_hex,
+            "actor `{actor}` suffix must be the bytes after the state span"
+        );
+
+        let state_hex = &compiled.script_hex[state_start..state_end];
+        assert_eq!(
+            format!("{}{}{}", compiled.template.prefix_hex, state_hex, compiled.template.suffix_hex),
+            compiled.script_hex,
+            "actor `{actor}` script must reconstruct from prefix, initial state, and suffix"
+        );
+
+        let prefix = decode_hex(&compiled.template.prefix_hex);
+        let suffix = decode_hex(&compiled.template.suffix_hex);
+        let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
+        assert_eq!(
+            hex_encode(template_hash.as_bytes()),
+            compiled.template.hash_hex,
+            "actor `{actor}` template hash must be blake2b(prefix || suffix)"
+        );
+    }
+
+    fn decode_hex(hex: &str) -> Vec<u8> {
+        assert_eq!(hex.len() % 2, 0, "hex input should have even length");
+        hex.as_bytes()
+            .chunks_exact(2)
+            .map(|chunk| {
+                let hi = hex_nibble(chunk[0]);
+                let lo = hex_nibble(chunk[1]);
+                (hi << 4) | lo
+            })
+            .collect()
+    }
+
+    fn hex_nibble(byte: u8) -> u8 {
+        match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => panic!("invalid hex digit `{}`", byte as char),
+        }
     }
 
     fn test_program() -> Program {
