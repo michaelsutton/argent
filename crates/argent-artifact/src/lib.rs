@@ -66,6 +66,8 @@ pub struct TemplatePlanArtifact {
     pub route_tables: Vec<RouteTemplateTableArtifact>,
     #[serde(default)]
     pub route_trees: Vec<RouteTemplateTreeArtifact>,
+    #[serde(default)]
+    pub route_families: Vec<RouteTemplateFamilyArtifact>,
     pub witness_recipes: Vec<TemplateWitnessRecipeArtifact>,
 }
 
@@ -112,6 +114,13 @@ pub struct RouteTemplateTreeLeafArtifact {
     pub template_id: String,
     pub hash_hex: String,
     pub opening: Vec<RouteTemplateTreeOpeningStepArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateFamilyArtifact {
+    pub id: String,
+    pub state: String,
+    pub actors: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,6 +348,16 @@ pub enum TemplatePlanError {
     RouteTreeRootMismatch { id: String, expected: String, found: String },
     #[error("route template tree `{id}` leaf {index} opening resolves to `{found}`, expected root `{expected}`")]
     RouteTreeOpeningMismatch { id: String, index: usize, expected: String, found: String },
+    #[error("duplicate route template family receipt `{0}`")]
+    DuplicateRouteFamilyId(String),
+    #[error("route template family `{id}` must contain at least two actors")]
+    RouteFamilyTooSmall { id: String },
+    #[error("route template family `{id}` repeats actor `{actor}`")]
+    DuplicateRouteFamilyActor { id: String, actor: String },
+    #[error("route template family `{id}` references unknown actor `{actor}`")]
+    MissingRouteFamilyActor { id: String, actor: String },
+    #[error("route template family `{id}` actor `{actor}` owns state `{found}`, expected `{expected}`")]
+    RouteFamilyStateMismatch { id: String, actor: String, expected: String, found: String },
     #[error("witness recipe `{id}` references missing template receipt `{template_id}`")]
     MissingWitnessTemplate { id: String, template_id: String },
     #[error("witness recipe `{id}` references missing route tree receipt `{route_tree_id}`")]
@@ -520,6 +539,35 @@ impl TemplatePlanArtifact {
             let expected_tree_id = route_template_tree_receipt_id(&table.state, &table.field);
             if !route_tree_ids.contains(expected_tree_id.as_str()) {
                 return Err(TemplatePlanError::MissingRouteTree { table_id: table.id.clone() });
+            }
+        }
+
+        let actor_states =
+            artifact.argent.actors.iter().map(|actor| (actor.name.as_str(), actor.state.as_str())).collect::<BTreeMap<_, _>>();
+        let mut route_family_ids = BTreeSet::new();
+        for family in &self.route_families {
+            if !route_family_ids.insert(family.id.as_str()) {
+                return Err(TemplatePlanError::DuplicateRouteFamilyId(family.id.clone()));
+            }
+            if family.actors.len() < 2 {
+                return Err(TemplatePlanError::RouteFamilyTooSmall { id: family.id.clone() });
+            }
+            let mut family_actors = BTreeSet::new();
+            for actor in &family.actors {
+                if !family_actors.insert(actor.as_str()) {
+                    return Err(TemplatePlanError::DuplicateRouteFamilyActor { id: family.id.clone(), actor: actor.clone() });
+                }
+                let Some(found_state) = actor_states.get(actor.as_str()) else {
+                    return Err(TemplatePlanError::MissingRouteFamilyActor { id: family.id.clone(), actor: actor.clone() });
+                };
+                if *found_state != family.state {
+                    return Err(TemplatePlanError::RouteFamilyStateMismatch {
+                        id: family.id.clone(),
+                        actor: actor.clone(),
+                        expected: family.state.clone(),
+                        found: (*found_state).to_string(),
+                    });
+                }
             }
         }
 
@@ -1023,5 +1071,70 @@ mod tests {
         let err = artifact.check_schema_version().expect_err("future Sil ABI schema must be rejected");
         assert_eq!(err.artifact, "Sil ABI artifact");
         assert_eq!(err.found, SIL_ABI_SCHEMA_VERSION + 1);
+    }
+
+    #[test]
+    fn rejects_duplicate_actor_in_route_family_receipt() {
+        let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
+            id: "route_family/BoardState/mux".to_string(),
+            state: "BoardState".to_string(),
+            actors: vec!["Mux".to_string(), "Mux".to_string()],
+        }]);
+
+        let err = artifact.verify_template_plan().expect_err("duplicate actor must be rejected");
+        assert_eq!(
+            err,
+            TemplatePlanError::DuplicateRouteFamilyActor { id: "route_family/BoardState/mux".to_string(), actor: "Mux".to_string() }
+        );
+    }
+
+    #[test]
+    fn rejects_route_family_state_mismatch() {
+        let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
+            id: "route_family/BoardState/mux".to_string(),
+            state: "BoardState".to_string(),
+            actors: vec!["Mux".to_string(), "Player".to_string()],
+        }]);
+
+        let err = artifact.verify_template_plan().expect_err("state mismatch must be rejected");
+        assert_eq!(
+            err,
+            TemplatePlanError::RouteFamilyStateMismatch {
+                id: "route_family/BoardState/mux".to_string(),
+                actor: "Player".to_string(),
+                expected: "BoardState".to_string(),
+                found: "PlayerState".to_string()
+            }
+        );
+    }
+
+    fn artifact_with_route_families(route_families: Vec<RouteTemplateFamilyArtifact>) -> Artifact {
+        Artifact {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
+            app: "Tiny".to_string(),
+            root: "tiny.ag".to_string(),
+            modules: Vec::new(),
+            argent: ArgentArtifact {
+                templates: Vec::new(),
+                template_plan: TemplatePlanArtifact { route_families, ..TemplatePlanArtifact::default() },
+                states: Vec::new(),
+                actors: vec![
+                    ActorArtifact {
+                        name: "Mux".to_string(),
+                        state: "BoardState".to_string(),
+                        abi: ActorAbiRefArtifact { actor: "Mux".to_string() },
+                        entries: Vec::new(),
+                    },
+                    ActorArtifact {
+                        name: "Player".to_string(),
+                        state: "PlayerState".to_string(),
+                        abi: ActorAbiRefArtifact { actor: "Player".to_string() },
+                        entries: Vec::new(),
+                    },
+                ],
+            },
+            sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states: Vec::new(), contracts: Vec::new() },
+        }
     }
 }

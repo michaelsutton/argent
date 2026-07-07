@@ -371,17 +371,12 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
-Status: done. First step implemented route-family-scoped packed template
-tables (`byte[32 * N]`) so contracts can carry a deterministic capability table
-without exposing every template as an independent state field. Second step records those
-packed route tables in the template-plan receipt, including state field,
-byte-length, entry order, offsets, and referenced template ids. Third step
-records canonical route tree receipts over each packed table, including roots,
-leaves, and deterministic openings. Fourth step replaced runtime packed tables
-with route roots and wired generated opening witnesses through Sil, the artifact,
-and the tx builder. Final step added app-level `route_group` hints and a
-chess-like mux fixture that hides worker templates from upper layers while
-leaving mux-level worker openings available.
+Status: in progress. Completed route-root receipts, canonical route tree
+receipts, generated opening witnesses, and tx-builder witness filling. Current
+step records direct route families inferred from shared owned state plus direct
+`become` edges, using `examples/toy_chess/app.ag` as the tracked fixture. Next
+step should use those families for one-level expansion/packing so upper layers
+can carry a family commitment without exposing every worker template.
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
@@ -393,11 +388,14 @@ The first version should support:
 - stable leaf identities based on artifact ids and actor ids;
 - generated proof/opening witnesses for the leaves each entrypoint needs;
 - artifact-visible tree metadata and witness recipes;
-- one minimal hint form for grouping related template refs.
+- inferred direct route-family metadata for actors that share owned state and
+  route to each other directly.
 
-Hints should affect layout only, not meaning. The compiler still owns dependency
-analysis, validates every referenced template, and emits a receipt proving the
-final tree.
+Family inference should affect layout only, not meaning. The compiler still owns
+dependency analysis, validates every referenced template, and emits a receipt
+proving the final tree. If manual tuning is needed later, prefer a narrow
+attribute such as `infrequent` on a `become` edge over source-level group
+declarations.
 
 End-to-end test:
 
@@ -406,11 +404,10 @@ End-to-end test:
   requirements.
 - Build a valid tx using generated openings instead of flat template fields.
 - Corrupt one opening or substitute a wrong leaf and assert rejection.
-- Add one grouping hint and verify it changes the tree receipt without changing
-  source-level behavior.
 - Add a chess-like fixture with `League`, `Player`, `Mux`, and a family of move
-  workers. Use developer grouping/nesting hints so the compiler can hide the mux
-  family behind a route-family commitment from the `League`/`Player` layers.
+  workers. Infer the worker family from direct same-state route edges so the
+  compiler can hide the mux family behind a route-family commitment from the
+  `League`/`Player` layers.
 - Verify `League` and `Player` artifacts do not expose individual worker
   template leaves or openings, while `Mux` and worker entrypoints still receive
   the openings needed for selected routes.

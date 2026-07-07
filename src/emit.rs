@@ -36,12 +36,19 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
 struct Model<'a> {
     app_name: String,
     template_actors: Vec<String>,
+    route_families: Vec<RouteFamily>,
     consts: Vec<&'a ConstDecl>,
     functions: Vec<&'a FunctionDecl>,
     states: BTreeMap<String, &'a StateDecl>,
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
     actors: Vec<&'a ActorDecl>,
     state_template_deps: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RouteFamily {
+    state: String,
+    actors: Vec<String>,
 }
 
 impl<'a> Model<'a> {
@@ -53,10 +60,10 @@ impl<'a> Model<'a> {
         let all_actors = collect_actors(program)?;
 
         let app = program.apps().next();
-        let (app_name, template_actors, route_groups) = if let Some(app) = app {
-            (app.name.clone(), app.actors.clone(), app.route_groups.clone())
+        let (app_name, template_actors) = if let Some(app) = app {
+            (app.name.clone(), app.actors.clone())
         } else {
-            ("ArgentApp".to_string(), all_actors.keys().cloned().collect(), Vec::new())
+            ("ArgentApp".to_string(), all_actors.keys().cloned().collect())
         };
 
         let mut actors = Vec::new();
@@ -69,10 +76,19 @@ impl<'a> Model<'a> {
             actors.push(actor);
         }
 
-        validate_route_groups(&route_groups, &template_actors)?;
-        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors, &route_groups)?;
-        let model =
-            Self { app_name, template_actors, consts, functions, states, actors_by_name: all_actors, actors, state_template_deps };
+        let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors)?;
+        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors)?;
+        let model = Self {
+            app_name,
+            template_actors,
+            route_families,
+            consts,
+            functions,
+            states,
+            actors_by_name: all_actors,
+            actors,
+            state_template_deps,
+        };
         model.validate()?;
         Ok(model)
     }
@@ -436,44 +452,18 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
     Ok(())
 }
 
-fn validate_route_groups(route_groups: &[RouteGroupDecl], template_actors: &[String]) -> Result<()> {
-    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
-    let mut group_names = BTreeSet::new();
-    for group in route_groups {
-        if !group_names.insert(group.name.as_str()) {
-            return Err(ArgentError::new(format!("duplicate route group `{}`", group.name)));
-        }
-        if group.actors.len() < 2 {
-            return Err(ArgentError::new(format!("route group `{}` must contain a gateway and at least one member", group.name)));
-        }
-        let mut actors = BTreeSet::new();
-        for actor in &group.actors {
-            if !actors.insert(actor.as_str()) {
-                return Err(ArgentError::new(format!("route group `{}` repeats actor `{actor}`", group.name)));
-            }
-            if !template_actor_set.contains(actor) {
-                return Err(ArgentError::new(format!("route group `{}` references non-app actor `{actor}`", group.name)));
-            }
-        }
-    }
-    Ok(())
-}
-
 fn compute_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
-    route_groups: &[RouteGroupDecl],
 ) -> Result<BTreeMap<String, Vec<String>>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
     let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
-    let mut state_actors = BTreeMap::<String, BTreeSet<String>>::new();
 
     for actor in actors {
         direct.entry(actor.state.clone()).or_default();
         adjacency.entry(actor.state.clone()).or_default();
-        state_actors.entry(actor.state.clone()).or_default().insert(actor.name.clone());
 
         for entry in &actor.entries {
             for consume in &entry.consumes {
@@ -523,8 +513,7 @@ fn compute_state_template_deps<'a>(
             }
         }
         for component_state in component {
-            let deps = visible_route_deps_for_state(&component_state, &component_deps, &direct, &state_actors, route_groups);
-            let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
+            let ordered = template_actors.iter().filter(|actor| component_deps.contains(*actor)).cloned().collect::<Vec<_>>();
             result.insert(component_state, ordered.clone());
         }
     }
@@ -532,29 +521,69 @@ fn compute_state_template_deps<'a>(
     Ok(result)
 }
 
-fn visible_route_deps_for_state(
-    state: &str,
-    component_deps: &BTreeSet<String>,
-    direct: &BTreeMap<String, BTreeSet<String>>,
-    state_actors: &BTreeMap<String, BTreeSet<String>>,
-    route_groups: &[RouteGroupDecl],
-) -> BTreeSet<String> {
-    let mut deps = component_deps.clone();
-    let direct_deps = direct.get(state);
-    let owners = state_actors.get(state);
-    for group in route_groups {
-        let is_group_state = owners.is_some_and(|owners| group.actors.iter().any(|actor| owners.contains(actor)));
-        if is_group_state {
-            continue;
-        }
-        for member in group.actors.iter().skip(1) {
-            let is_direct = direct_deps.is_some_and(|deps| deps.contains(member));
-            if !is_direct {
-                deps.remove(member);
+fn infer_direct_route_families<'a>(
+    actors: &[&'a ActorDecl],
+    actors_by_name: &BTreeMap<String, &'a ActorDecl>,
+    template_actors: &[String],
+) -> Result<Vec<RouteFamily>> {
+    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let mut edges_by_state = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
+
+    for actor in actors {
+        for entry in &actor.entries {
+            for route in &entry.routes {
+                let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
+                    ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
+                })?;
+                if actor.name == target.name || actor.state != target.state {
+                    continue;
+                }
+                if !template_actor_set.contains(&actor.name) || !template_actor_set.contains(&target.name) {
+                    continue;
+                }
+                edges_by_state
+                    .entry(actor.state.clone())
+                    .or_default()
+                    .entry(actor.name.clone())
+                    .or_default()
+                    .insert(target.name.clone());
+                edges_by_state
+                    .entry(actor.state.clone())
+                    .or_default()
+                    .entry(target.name.clone())
+                    .or_default()
+                    .insert(actor.name.clone());
             }
         }
     }
-    deps
+
+    let mut families = Vec::new();
+    for (state, edges) in edges_by_state {
+        let mut visited = BTreeSet::new();
+        for actor in edges.keys() {
+            if visited.contains(actor) {
+                continue;
+            }
+            let mut stack = vec![actor.clone()];
+            let mut component = BTreeSet::new();
+            while let Some(next) = stack.pop() {
+                if !visited.insert(next.clone()) {
+                    continue;
+                }
+                component.insert(next.clone());
+                if let Some(neighbors) = edges.get(&next) {
+                    stack.extend(neighbors.iter().filter(|neighbor| !visited.contains(*neighbor)).cloned());
+                }
+            }
+            if component.len() < 2 {
+                continue;
+            }
+            let actors = template_actors.iter().filter(|actor| component.contains(*actor)).cloned().collect::<Vec<_>>();
+            families.push(RouteFamily { state: state.clone(), actors });
+        }
+    }
+
+    Ok(families)
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -1642,7 +1671,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
 
     let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
-    let template_plan = template_plan_artifact(&templates, &argent_actors, &sil_contracts)?;
+    let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts)?;
 
     let artifact = Artifact {
         schema_version: ARTIFACT_SCHEMA_VERSION,
@@ -1662,6 +1691,7 @@ fn template_ref_artifact(actor: &str) -> TemplateRefArtifact {
 }
 
 fn template_plan_artifact(
+    model: &Model<'_>,
     templates: &[TemplateRefArtifact],
     actors: &[ActorArtifact],
     sil_contracts: &[SilContractArtifact],
@@ -1685,6 +1715,7 @@ fn template_plan_artifact(
 
     let route_tables = route_template_tables_artifact(sil_contracts)?;
     let route_trees = route_template_trees_artifact(&route_tables, &templates)?;
+    let route_families = route_template_families_artifact(model);
 
     let mut seen = BTreeSet::new();
     let mut witness_recipes = Vec::new();
@@ -1705,7 +1736,19 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, route_tables, route_trees, witness_recipes })
+    Ok(TemplatePlanArtifact { templates, route_tables, route_trees, route_families, witness_recipes })
+}
+
+fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamilyArtifact> {
+    model
+        .route_families
+        .iter()
+        .map(|family| RouteTemplateFamilyArtifact {
+            id: route_template_family_receipt_id(&family.state, &family.actors),
+            state: family.state.clone(),
+            actors: family.actors.clone(),
+        })
+        .collect()
 }
 
 fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Result<Vec<RouteTemplateTableArtifact>> {
@@ -2389,6 +2432,11 @@ fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) 
     format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
 
+fn route_template_family_receipt_id(state: &str, actors: &[String]) -> String {
+    let first = actors.first().map(|actor| hidden_actor_suffix(actor)).unwrap_or_else(|| "empty".to_string());
+    format!("route_family/{state}/{first}")
+}
+
 fn route_template_witness_recipe_id(route_tree_id: &str, actor: &str, purpose: HiddenParamPurposeArtifact) -> String {
     format!("witness/{route_tree_id}/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
@@ -2458,11 +2506,7 @@ fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String>
 
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let target_state = model.actor(actor)?.state.as_str();
-    if target_state == current_actor.state {
-        Ok("State".to_string())
-    } else {
-        state_struct_name_for_actor(actor, model)
-    }
+    if target_state == current_actor.state { Ok("State".to_string()) } else { state_struct_name_for_actor(actor, model) }
 }
 
 fn compact_expr(input: &str) -> String {
@@ -2667,7 +2711,7 @@ mod tests {
     fn rejects_duplicate_app_declarations() {
         let mut program = test_program();
         let mut duplicate = empty_module("second.ag");
-        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()], route_groups: Vec::new() });
+        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()] });
         program.modules.push(duplicate);
 
         let err = Model::from_program(&program).expect_err("duplicate app declaration must be rejected");
@@ -3176,60 +3220,15 @@ mod tests {
     }
 
     #[test]
-    fn route_group_hint_hides_mux_workers_from_upper_layers() {
-        let source_without_hint = chess_like_mux_source("");
-        let without_hint = inline_artifact("chess-like-mux-without-hint", &source_without_hint);
-        let source_with_hint = chess_like_mux_source("    route_group Moves: Mux, Pawn, Knight;\n");
-        let with_hint = inline_artifact("chess-like-mux-with-hint", &source_with_hint);
+    fn direct_route_families_are_inferred_without_hints() {
+        let artifact = inline_artifact("toy-chess-family", &toy_chess_source());
+        let families =
+            artifact.argent.template_plan.route_families.iter().map(|family| {
+                (family.id.as_str(), family.state.as_str(), family.actors.iter().map(String::as_str).collect::<Vec<_>>())
+            });
 
-        let player_without_hint = route_tree_leaf_actors(&without_hint, "PlayerState");
-        assert_eq!(player_without_hint, vec!["Player", "Mux", "Pawn", "Knight"]);
-
-        let league_with_hint = route_tree_leaf_actors(&with_hint, "LeagueState");
-        let player_with_hint = route_tree_leaf_actors(&with_hint, "PlayerState");
-        assert_eq!(league_with_hint, vec!["Player", "Mux"]);
-        assert_eq!(player_with_hint, vec!["Player", "Mux"]);
-
-        let mux_with_hint = route_tree_leaf_actors(&with_hint, "MuxState");
-        assert_eq!(mux_with_hint, vec!["Player", "Mux", "Pawn", "Knight"]);
-
-        let player = with_hint.sil_abi.contract("Player").expect("Player contract exists");
-        assert_eq!(
-            player.runtime_state.fields[0].role,
-            RuntimeFieldRoleArtifact::TemplateRoot { contracts: vec!["Player".to_string(), "Mux".to_string()] }
-        );
-        let player_route = with_hint
-            .argent
-            .actors
-            .iter()
-            .find(|actor| actor.name == "Player")
-            .expect("Player actor exists")
-            .entries
-            .iter()
-            .find(|entry| entry.name == "enter_mux")
-            .expect("enter_mux entry exists");
-        assert!(
-            player_route.hidden_params.iter().all(|param| param.actor != "Pawn" && param.actor != "Knight"),
-            "upper Player entry should not expose worker openings: {player_route:?}"
-        );
-
-        let mux_route = with_hint
-            .argent
-            .actors
-            .iter()
-            .find(|actor| actor.name == "Mux")
-            .expect("Mux actor exists")
-            .entries
-            .iter()
-            .find(|entry| entry.name == "choose_pawn")
-            .expect("choose_pawn entry exists");
-        assert!(
-            mux_route
-                .hidden_params
-                .iter()
-                .any(|param| param.actor == "Pawn" && param.purpose == HiddenParamPurposeArtifact::RouteTemplateOpening),
-            "Mux entry should still receive the selected worker opening"
-        );
+        assert_eq!(families.collect::<Vec<_>>(), vec![("route_family/BoardState/mux", "BoardState", vec!["Mux", "Pawn", "Knight"])]);
+        artifact.verify_template_plan().expect("template plan receipt verifies inferred route family");
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -3241,104 +3240,87 @@ mod tests {
         emit_artifact(&program, &model, &actor_sil).expect("artifact emits")
     }
 
-    fn route_tree_leaf_actors(artifact: &Artifact, state: &str) -> Vec<String> {
-        artifact
-            .argent
-            .template_plan
-            .route_trees
-            .iter()
-            .find(|tree| tree.id == route_template_tree_receipt_id(state, "gen__template_root"))
-            .expect("route tree exists")
-            .leaves
-            .iter()
-            .map(|leaf| leaf.actor.clone())
-            .collect()
-    }
-
-    fn chess_like_mux_source(route_group: &str) -> String {
-        format!(
-            r#"
-            state LeagueState {{
+    fn toy_chess_source() -> String {
+        r#"
+            state LeagueState {
                 int nonce;
-            }}
+            }
 
-            state PlayerState {{
+            state PlayerState {
                 int nonce;
-            }}
+            }
 
-            state MuxState {{
+            state BoardState {
                 int selector;
-            }}
+                int ply;
+            }
 
-            state PawnState {{
-                int selector;
-            }}
-
-            state KnightState {{
-                int selector;
-            }}
-
-            actor League owns LeagueState {{
-                entry register() emits one Player {{
-                    PlayerState next_player = {{
+            actor League owns LeagueState {
+                entry register() emits one Player {
+                    PlayerState next_player = {
                         nonce: nonce,
-                    }};
+                    };
                     become Player(next_player);
-                }}
-            }}
+                }
+            }
 
-            actor Player owns PlayerState {{
-                entry enter_mux() emits one Mux {{
-                    MuxState next_mux = {{
+            actor Player owns PlayerState {
+                entry enter_mux() emits one Mux {
+                    BoardState next_board = {
                         selector: nonce,
-                    }};
-                    become Mux(next_mux);
-                }}
-            }}
+                        ply: 0,
+                    };
+                    become Mux(next_board);
+                }
+            }
 
-            actor Mux owns MuxState {{
-                entry choose_pawn() emits one Pawn {{
-                    PawnState next_pawn = {{
+            actor Mux owns BoardState {
+                entry choose_pawn() emits one Pawn {
+                    BoardState next_board = {
                         selector: selector,
-                    }};
-                    become Pawn(next_pawn);
-                }}
+                        ply: ply + 1,
+                    };
+                    become Pawn(next_board);
+                }
 
-                entry choose_knight() emits one Knight {{
-                    KnightState next_knight = {{
+                entry choose_knight() emits one Knight {
+                    BoardState next_board = {
                         selector: selector,
-                    }};
-                    become Knight(next_knight);
-                }}
-            }}
+                        ply: ply + 1,
+                    };
+                    become Knight(next_board);
+                }
+            }
 
-            actor Pawn owns PawnState {{
-                entry back() emits one Mux {{
-                    MuxState next_mux = {{
+            actor Pawn owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
                         selector: selector,
-                    }};
-                    become Mux(next_mux);
-                }}
-            }}
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
 
-            actor Knight owns KnightState {{
-                entry back() emits one Mux {{
-                    MuxState next_mux = {{
+            actor Knight owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
                         selector: selector,
-                    }};
-                    become Mux(next_mux);
-                }}
-            }}
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
 
-            app ChessLike {{
+            app ToyChess {
                 actor League;
                 actor Player;
                 actor Mux;
                 actor Pawn;
                 actor Knight;
-{route_group}            }}
+            }
             "#
-        )
+        .to_string()
     }
 
     #[test]
@@ -3558,11 +3540,7 @@ mod tests {
                     },
                     ActorDecl { name: "Game".to_string(), state: "GameState".to_string(), entries: Vec::new() },
                 ],
-                apps: vec![AppDecl {
-                    name: "Test".to_string(),
-                    actors: vec!["Player".to_string(), "Game".to_string()],
-                    route_groups: Vec::new(),
-                }],
+                apps: vec![AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string(), "Game".to_string()] }],
             }],
         }
     }

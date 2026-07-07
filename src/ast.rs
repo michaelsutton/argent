@@ -105,13 +105,6 @@ pub struct EmitOutput {
 pub struct AppDecl {
     pub name: String,
     pub actors: Vec<String>,
-    pub route_groups: Vec<RouteGroupDecl>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RouteGroupDecl {
-    pub name: String,
-    pub actors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

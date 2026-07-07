@@ -394,6 +394,17 @@
           ]
         }
       ],
+      "route_families": [
+        {
+          "id": "route_family/BoardState/mux",
+          "state": "BoardState",
+          "actors": [
+            "Mux",
+            "Pawn",
+            "Knight"
+          ]
+        }
+      ],
       "witness_recipes": [
         {
           "id": "witness/player/template_prefix_bytes",

@@ -404,6 +404,7 @@
           ]
         }
       ],
+      "route_families": [],
       "witness_recipes": [
         {
           "id": "witness/player/template_prefix_bytes",

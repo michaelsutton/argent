@@ -41,6 +41,7 @@
       ],
       "route_tables": [],
       "route_trees": [],
+      "route_families": [],
       "witness_recipes": [
         {
           "id": "witness/ticket/template_prefix_bytes",
