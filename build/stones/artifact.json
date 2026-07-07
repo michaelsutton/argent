@@ -68,6 +68,116 @@
           "hash_hex": "4bae3b1da2ddfec0e7fe740bd1969b076f1641fa25c52761ca77630432983859"
         }
       ],
+      "runtime_states": [
+        {
+          "contract": "League",
+          "source": "LeagueState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__stones_game_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_settle_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesSettle"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Player",
+          "source": "PlayerState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__stones_game_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_settle_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesSettle"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "StonesGame",
+          "source": "GameState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__stones_game_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_settle_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesSettle"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "StonesSettle",
+          "source": "SettleState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__stones_game_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesGame"
+              }
+            },
+            {
+              "name": "gen__stones_settle_template",
+              "role": {
+                "kind": "template",
+                "contract": "StonesSettle"
+              }
+            }
+          ]
+        }
+      ],
       "route_tables": [],
       "route_trees": [],
       "route_families": [],
@@ -1702,10 +1812,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -1713,10 +1819,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesGame"
               }
             },
             {
@@ -1724,10 +1826,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesSettle"
               }
             },
             {
@@ -1735,27 +1833,18 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "default_pile",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "default_max_take",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -1816,10 +1905,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -1827,10 +1912,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesGame"
               }
             },
             {
@@ -1838,10 +1919,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesSettle"
               }
             },
             {
@@ -1849,9 +1926,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
@@ -1859,45 +1933,30 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "open_games",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "games",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "wins",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "losses",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -2054,10 +2113,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -2065,10 +2120,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesGame"
               }
             },
             {
@@ -2076,10 +2127,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesSettle"
               }
             },
             {
@@ -2087,9 +2134,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
@@ -2097,36 +2141,24 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "pile",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "max_take",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "turn",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -2237,10 +2269,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -2248,10 +2276,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesGame"
               }
             },
             {
@@ -2259,10 +2283,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "StonesSettle"
               }
             },
             {
@@ -2270,9 +2290,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
@@ -2280,18 +2297,12 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "status",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]

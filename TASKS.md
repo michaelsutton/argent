@@ -793,6 +793,36 @@ Obstacle to handle:
 - Intent binding commits to one chosen action. It still does not prove the
   strategy contract could not have chosen another legal action.
 
+### 25. Prune Generated State Layouts
+
+Stop emitting every other actor state struct into every generated Silverscript
+contract. A contract should only contain foreign state layouts it can actually
+reference through consumes, foreign `become` routes, observed actors, or
+compiler-generated witness/state construction.
+
+Before pruning, fence off a confusing source-level escape hatch: top-level
+shared `fn` declarations should not accept or return actor-owned state types
+until Argent has an explicit public/source-only state view. Generated state
+structs include hidden template fields, so exposing them to arbitrary shared
+helper functions makes the hidden layout part of general user code.
+
+End-to-end test:
+
+- Build the toy-chess fixture.
+- Verify a family worker such as `Mux` no longer emits unrelated `LeagueState`
+  or `PlayerState` layouts.
+- Verify an actor that emits a foreign state still emits exactly that target
+  state layout.
+- Add a negative source fixture where a top-level `fn` takes or returns an
+  actor-owned state type and assert the compiler rejects it with a clear
+  diagnostic.
+
+Obstacle to handle:
+
+- Entry-local state construction is still allowed and compiler-controlled; only
+  shared top-level helper signatures/bodies need the restriction. Later,
+  `state extends` / public header views can reopen this in a deliberate way.
+
 ## Suggested Implementation Boundaries
 
 The first practical code split should be:

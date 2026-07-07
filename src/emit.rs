@@ -1854,7 +1854,13 @@ fn template_plan_artifact(
         })
         .collect::<Result<Vec<_>>>()?;
 
-    let route_tables = route_template_tables_artifact(sil_contracts)?;
+    let mut runtime_states = Vec::new();
+    for actor in &model.actors {
+        if let Some(runtime_state) = runtime_state_plan_artifact(actor, model)? {
+            runtime_states.push(runtime_state);
+        }
+    }
+    let route_tables = route_template_tables_artifact(&runtime_states, sil_contracts)?;
     let route_trees = route_template_trees_artifact(&route_tables, &templates)?;
     let route_families = route_template_families_artifact(model);
 
@@ -1880,7 +1886,7 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, route_tables, route_trees, route_families, witness_recipes })
+    Ok(TemplatePlanArtifact { templates, runtime_states, route_tables, route_trees, route_families, witness_recipes })
 }
 
 fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamilyArtifact> {
@@ -1898,19 +1904,37 @@ fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamil
         .collect()
 }
 
-fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Result<Vec<RouteTemplateTableArtifact>> {
+fn route_template_tables_artifact(
+    runtime_states: &[RuntimeStatePlanArtifact],
+    sil_contracts: &[SilContractArtifact],
+) -> Result<Vec<RouteTemplateTableArtifact>> {
     let mut tables = BTreeMap::<String, RouteTemplateTableArtifact>::new();
-    for contract in sil_contracts {
-        for field in &contract.runtime_state.fields {
-            let leaves = match &field.role {
+    let sil_by_name = sil_contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+    for runtime_state in runtime_states {
+        let contract = sil_by_name
+            .get(runtime_state.contract.as_str())
+            .ok_or_else(|| ArgentError::new(format!("missing Sil ABI contract for runtime state `{}`", runtime_state.contract)))?;
+        for field in &runtime_state.field_roles {
+            let sil_field = contract.runtime_state.fields.iter().find(|sil_field| sil_field.name == field.name).ok_or_else(|| {
+                ArgentError::new(format!(
+                    "runtime role for `{}::{}` points at a missing Sil ABI state field",
+                    runtime_state.contract, field.name
+                ))
+            })?;
+            let (leaves, expected_field_ty) = match &field.role {
                 RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
-                    contracts.iter().map(|actor| RuntimeRouteLeafArtifact::Contract { contract: actor.clone() }).collect::<Vec<_>>()
+                    let leaves = contracts
+                        .iter()
+                        .map(|actor| RuntimeRouteLeafArtifact::Contract { contract: actor.clone() })
+                        .collect::<Vec<_>>();
+                    let expected_ty = TypeArtifact::FixedBytes { len: leaves.len() * 32 };
+                    (leaves, expected_ty)
                 }
                 RuntimeFieldRoleArtifact::TemplateDigest { .. } => continue,
-                RuntimeFieldRoleArtifact::TemplateRoot { leaves } => leaves.clone(),
-                _ => continue,
+                RuntimeFieldRoleArtifact::TemplateRoot { leaves } => (leaves.clone(), TypeArtifact::FixedBytes { len: 32 }),
+                RuntimeFieldRoleArtifact::Template { .. } => continue,
             };
-            let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
+            let id = route_template_table_receipt_id(&runtime_state.source, &field.name);
             let byte_len = leaves.len() * 32;
             let entries = leaves
                 .iter()
@@ -1923,11 +1947,14 @@ fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Resu
                 .collect::<Vec<_>>();
             let table = RouteTemplateTableArtifact {
                 id: id.clone(),
-                state: contract.runtime_state.source.clone(),
+                state: runtime_state.source.clone(),
                 field: field.name.clone(),
                 byte_len,
                 entries,
             };
+            if sil_field.ty != expected_field_ty {
+                return Err(ArgentError::new(format!("runtime route template table `{id}` field type does not match generated role")));
+            }
             if let Some(existing) = tables.get(&id) {
                 if existing != &table {
                     return Err(ArgentError::new(format!("runtime route template table `{id}` is emitted with conflicting layouts")));
@@ -2090,49 +2117,61 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
     })
 }
 
-fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
+fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String, TypeArtifact, Option<RuntimeFieldRoleArtifact>)> {
     let mut fields = Vec::new();
     match route_field_kind(&state.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
-                fields.push(RuntimeFieldArtifact {
-                    name: hidden_template_name(actor),
-                    ty: TypeArtifact::from_parts("byte", Some(32)),
-                    role: RuntimeFieldRoleArtifact::Template { contract: actor.to_string() },
-                });
+                fields.push((
+                    hidden_template_name(actor),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::Template { contract: actor.to_string() }),
+                ));
             }
             for family in family_commitments {
-                fields.push(RuntimeFieldArtifact {
-                    name: hidden_route_family_commitment_name(family),
-                    ty: TypeArtifact::from_parts("byte", Some(32)),
-                    role: RuntimeFieldRoleArtifact::TemplateDigest { id: family.id.clone() },
-                });
+                fields.push((
+                    hidden_route_family_commitment_name(family),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::TemplateDigest { id: family.id.clone() }),
+                ));
             }
         }
         RouteFieldKind::FamilyTable { family } => {
             for actor in family.direct_template_actors() {
-                fields.push(RuntimeFieldArtifact {
-                    name: hidden_template_name(actor),
-                    ty: TypeArtifact::from_parts("byte", Some(32)),
-                    role: RuntimeFieldRoleArtifact::Template { contract: actor.to_string() },
-                });
+                fields.push((
+                    hidden_template_name(actor),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::Template { contract: actor.to_string() }),
+                ));
             }
-            fields.push(RuntimeFieldArtifact {
-                name: hidden_route_family_table_name(family),
-                ty: TypeArtifact::from_parts("byte", Some(family.table_byte_len())),
-                role: RuntimeFieldRoleArtifact::TemplateTable { contracts: family.table_actors().to_vec() },
-            });
+            fields.push((
+                hidden_route_family_table_name(family),
+                TypeArtifact::from_parts("byte", Some(family.table_byte_len())),
+                Some(RuntimeFieldRoleArtifact::TemplateTable { contracts: family.table_actors().to_vec() }),
+            ));
         }
     }
     for field in &state.fields {
-        fields.push(RuntimeFieldArtifact {
-            name: field.name.clone(),
-            ty: type_artifact(&field.ty),
-            role: RuntimeFieldRoleArtifact::Source,
-        });
+        fields.push((field.name.clone(), type_artifact(&field.ty), None));
     }
     fields
+}
+
+fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
+    runtime_state_field_defs(state, model).into_iter().map(|(name, ty, _role)| RuntimeFieldArtifact { name, ty }).collect()
+}
+
+fn runtime_state_plan_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<Option<RuntimeStatePlanArtifact>> {
+    let state = model.state(&actor.state)?;
+    let field_roles = runtime_state_field_defs(state, model)
+        .into_iter()
+        .filter_map(|(name, _ty, role)| role.map(|role| RuntimeFieldRolePlanArtifact { name, role }))
+        .collect::<Vec<_>>();
+    if field_roles.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(RuntimeStatePlanArtifact { contract: actor.name.clone(), source: state.name.clone(), field_roles }))
 }
 
 fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenParamArtifact> {
@@ -3202,9 +3241,10 @@ mod tests {
             ["owner", "count"],
             "runtime state field order must match generated Silverscript state order"
         );
-        assert_eq!(sil_contract.runtime_state.fields[0].name, "owner");
-        assert_eq!(sil_contract.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Source);
-        assert_eq!(sil_contract.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
+        assert!(
+            runtime_state_plan(&artifact, "Foo").is_none(),
+            "pure source runtime state should not need an Argent field-role overlay"
+        );
 
         let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
         assert_eq!(entry.kind, EntryKindArtifact::Leader);
@@ -3349,20 +3389,15 @@ mod tests {
         );
 
         let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
+        let player_runtime_plan = runtime_state_plan(&artifact, "Player").expect("Player runtime role overlay exists");
         assert_eq!(player_contract.runtime_state.fields[0].name, "gen__player_template");
         assert_eq!(player_contract.runtime_state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
-        assert_eq!(
-            player_contract.runtime_state.fields[0].role,
-            RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() }
-        );
+        assert_eq!(player_runtime_plan.field_roles[0].role, RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() });
         assert_eq!(player_contract.runtime_state.fields[1].name, "gen__stones_game_template");
-        assert_eq!(
-            player_contract.runtime_state.fields[1].role,
-            RuntimeFieldRoleArtifact::Template { contract: "StonesGame".to_string() }
-        );
+        assert_eq!(player_runtime_plan.field_roles[1].role, RuntimeFieldRoleArtifact::Template { contract: "StonesGame".to_string() });
         assert_eq!(player_contract.runtime_state.fields[2].name, "gen__stones_settle_template");
         assert_eq!(
-            player_contract.runtime_state.fields[2].role,
+            player_runtime_plan.field_roles[2].role,
             RuntimeFieldRoleArtifact::Template { contract: "StonesSettle".to_string() }
         );
         assert!(artifact.argent.template_plan.route_tables.is_empty());
@@ -3442,9 +3477,8 @@ mod tests {
             ]
         );
 
-        let player_contract = artifact.sil_abi.contract("Player").expect("Player contract exists");
         assert_eq!(
-            player_contract.runtime_state.fields[..3]
+            runtime_state_plan(&artifact, "Player").expect("Player runtime role overlay exists").field_roles[..3]
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
@@ -3455,9 +3489,11 @@ mod tests {
             ]
         );
 
-        let mux_contract = artifact.sil_abi.contract("Mux").expect("Mux contract exists");
         assert_eq!(
-            mux_contract.runtime_state.fields[..2].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
+            runtime_state_plan(&artifact, "Mux").expect("Mux runtime role overlay exists").field_roles[..2]
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
             vec![
                 ("gen__mux_template", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
                 (
@@ -3527,9 +3563,11 @@ mod tests {
         assert_eq!(family.actors, vec!["A", "B"]);
         assert_eq!(family.table_id, "route_table/BoardState/gen__a_routes");
 
-        let contract = artifact.sil_abi.contract("A").expect("A contract exists");
         assert_eq!(
-            contract.runtime_state.fields[..2].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
+            runtime_state_plan(&artifact, "A").expect("A runtime role overlay exists").field_roles[..2]
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
             vec![
                 ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
                 ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string()] }),
@@ -3618,9 +3656,11 @@ mod tests {
         assert_eq!(family.actors, vec!["HubB", "HubA", "Leaf"]);
         assert_eq!(family.table_id, "route_table/BoardState/gen__hub_b_routes");
 
-        let contract = artifact.sil_abi.contract("HubB").expect("HubB contract exists");
         assert_eq!(
-            contract.runtime_state.fields[..3].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
+            runtime_state_plan(&artifact, "HubB").expect("HubB runtime role overlay exists").field_roles[..3]
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
             vec![
                 ("gen__hub_b_template", RuntimeFieldRoleArtifact::Template { contract: "HubB".to_string() }),
                 ("gen__hub_a_template", RuntimeFieldRoleArtifact::Template { contract: "HubA".to_string() }),
@@ -3904,6 +3944,10 @@ mod tests {
             compiled.template.hash_hex,
             "actor `{actor}` template hash must be blake2b(prefix || suffix)"
         );
+    }
+
+    fn runtime_state_plan<'a>(artifact: &'a Artifact, contract: &str) -> Option<&'a RuntimeStatePlanArtifact> {
+        artifact.argent.template_plan.runtime_states.iter().find(|state| state.contract == contract)
     }
 
     fn subject_label(subject: &HiddenParamSubjectArtifact) -> &str {

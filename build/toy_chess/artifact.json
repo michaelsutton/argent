@@ -75,6 +75,131 @@
           "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
         }
       ],
+      "runtime_states": [
+        {
+          "contract": "League",
+          "source": "LeagueState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "role": {
+                "kind": "template_digest",
+                "id": "route_family/BoardState/mux"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Player",
+          "source": "PlayerState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "role": {
+                "kind": "template_digest",
+                "id": "route_family/BoardState/mux"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Mux",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Pawn",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Knight",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        }
+      ],
       "route_tables": [
         {
           "id": "route_table/BoardState/gen__mux_routes",
@@ -1251,10 +1376,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -1262,10 +1383,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Mux"
               }
             },
             {
@@ -1273,19 +1390,12 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template_digest",
-                "id": "route_family/BoardState/mux"
               }
             },
             {
               "name": "nonce",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -1334,10 +1444,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Player"
               }
             },
             {
@@ -1345,10 +1451,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Mux"
               }
             },
             {
@@ -1356,19 +1458,12 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template_digest",
-                "id": "route_family/BoardState/mux"
               }
             },
             {
               "name": "nonce",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -1424,10 +1519,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Mux"
               }
             },
             {
@@ -1435,31 +1526,18 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64
-              },
-              "role": {
-                "kind": "template_table",
-                "contracts": [
-                  "Pawn",
-                  "Knight"
-                ]
               }
             },
             {
               "name": "selector",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "ply",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -1526,10 +1604,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Mux"
               }
             },
             {
@@ -1537,31 +1611,18 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64
-              },
-              "role": {
-                "kind": "template_table",
-                "contracts": [
-                  "Pawn",
-                  "Knight"
-                ]
               }
             },
             {
               "name": "selector",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "ply",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -1610,10 +1671,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Mux"
               }
             },
             {
@@ -1621,31 +1678,18 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64
-              },
-              "role": {
-                "kind": "template_table",
-                "contracts": [
-                  "Pawn",
-                  "Knight"
-                ]
               }
             },
             {
               "name": "selector",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "ply",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]

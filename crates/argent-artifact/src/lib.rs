@@ -1,10 +1,21 @@
+//! Argent coordination artifact layered around a portable Silverscript ABI.
+//!
+//! `silverscript-abi` describes how to call and serialize generated contracts.
+//! This crate describes why Argent generated particular fields and witnesses:
+//! actor/template identities, route plans, template receipts, runtime hidden
+//! field roles, observed covenant subjects, and builder witness recipes.
+//!
+//! Boundary rule: do not push Argent meanings such as template tables, route
+//! families, or hidden-field roles into `silverscript-abi`. Store them here as
+//! metadata that points at Sil ABI contract and field names.
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub use silverscript_abi::{
     ArtifactVersionError, CompiledContractArtifact, CompiledTemplateArtifact, FieldArtifact, ParamArtifact, RuntimeFieldArtifact,
-    RuntimeFieldRoleArtifact, RuntimeRouteLeafArtifact, RuntimeStateArtifact, SIL_ABI_SCHEMA_VERSION, SilAbiArtifact,
-    SilContractArtifact, SilEntryArtifact, StateArtifact, StateSpanArtifact, TypeArtifact,
+    RuntimeStateArtifact, SIL_ABI_SCHEMA_VERSION, SilAbiArtifact, SilContractArtifact, SilEntryArtifact, StateArtifact,
+    StateSpanArtifact, TypeArtifact,
 };
 
 pub const ARTIFACT_SCHEMA_VERSION: u32 = 1;
@@ -63,6 +74,8 @@ pub struct TemplateRefArtifact {
 pub struct TemplatePlanArtifact {
     pub templates: Vec<TemplatePlanTemplateArtifact>,
     #[serde(default)]
+    pub runtime_states: Vec<RuntimeStatePlanArtifact>,
+    #[serde(default)]
     pub route_tables: Vec<RouteTemplateTableArtifact>,
     #[serde(default)]
     pub route_trees: Vec<RouteTemplateTreeArtifact>,
@@ -78,6 +91,35 @@ pub struct TemplatePlanTemplateArtifact {
     pub contract: String,
     pub symbol: String,
     pub hash_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeStatePlanArtifact {
+    pub contract: String,
+    pub source: String,
+    pub field_roles: Vec<RuntimeFieldRolePlanArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeFieldRolePlanArtifact {
+    pub name: String,
+    pub role: RuntimeFieldRoleArtifact,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeFieldRoleArtifact {
+    Template { contract: String },
+    TemplateTable { contracts: Vec<String> },
+    TemplateDigest { id: String },
+    TemplateRoot { leaves: Vec<RuntimeRouteLeafArtifact> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeRouteLeafArtifact {
+    Contract { contract: String },
+    Digest { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -358,6 +400,10 @@ pub enum TemplatePlanError {
     MissingRuntimeRouteTable { contract: String, field: String, id: String },
     #[error("runtime state `{contract}` field `{field}` route table `{id}` has contracts that do not match the field role")]
     RuntimeRouteTableMismatch { contract: String, field: String, id: String },
+    #[error("duplicate runtime state plan for contract `{0}`")]
+    DuplicateRuntimeStatePlan(String),
+    #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
+    RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("route template table `{id}` is not referenced by any runtime state field")]
     UnreferencedRouteTable { id: String },
     #[error("route template tree `{id}` points at missing route template table `{table_id}`")]
@@ -530,6 +576,44 @@ impl TemplatePlanArtifact {
             route_families_by_id.insert(family.id.as_str(), family);
         }
 
+        let sil_contracts_by_name =
+            artifact.sil_abi.contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+        let mut runtime_states_by_contract = BTreeMap::new();
+        for runtime_state in &self.runtime_states {
+            if runtime_states_by_contract.insert(runtime_state.contract.as_str(), runtime_state).is_some() {
+                return Err(TemplatePlanError::DuplicateRuntimeStatePlan(runtime_state.contract.clone()));
+            }
+            let Some(contract) = sil_contracts_by_name.get(runtime_state.contract.as_str()) else {
+                return Err(TemplatePlanError::UnknownContract(runtime_state.contract.clone()));
+            };
+            if runtime_state.source != contract.runtime_state.source {
+                return Err(TemplatePlanError::RuntimeStatePlanMismatch {
+                    contract: runtime_state.contract.clone(),
+                    message: format!(
+                        "source `{}` does not match Sil ABI source `{}`",
+                        runtime_state.source, contract.runtime_state.source
+                    ),
+                });
+            }
+            let sil_fields_by_name =
+                contract.runtime_state.fields.iter().map(|field| (field.name.as_str(), field)).collect::<BTreeMap<_, _>>();
+            let mut field_role_names = BTreeSet::new();
+            for plan_field in &runtime_state.field_roles {
+                if !field_role_names.insert(plan_field.name.as_str()) {
+                    return Err(TemplatePlanError::RuntimeStatePlanMismatch {
+                        contract: runtime_state.contract.clone(),
+                        message: format!("field role `{}` is duplicated", plan_field.name),
+                    });
+                }
+                if !sil_fields_by_name.contains_key(plan_field.name.as_str()) {
+                    return Err(TemplatePlanError::RuntimeStatePlanMismatch {
+                        contract: runtime_state.contract.clone(),
+                        message: format!("field role `{}` does not match any Sil ABI runtime field", plan_field.name),
+                    });
+                }
+            }
+        }
+
         let mut route_table_ids = BTreeSet::new();
         let mut route_tables_by_id = BTreeMap::new();
         for table in &self.route_tables {
@@ -594,8 +678,16 @@ impl TemplatePlanArtifact {
         }
 
         let mut referenced_route_table_ids = BTreeSet::new();
-        for contract in &artifact.sil_abi.contracts {
-            for field in &contract.runtime_state.fields {
+        for runtime_state in &self.runtime_states {
+            let contract = sil_contracts_by_name
+                .get(runtime_state.contract.as_str())
+                .expect("runtime state contract existence was checked when indexing runtime plans");
+            let sil_fields_by_name =
+                contract.runtime_state.fields.iter().map(|field| (field.name.as_str(), field)).collect::<BTreeMap<_, _>>();
+            for field in &runtime_state.field_roles {
+                let sil_field = sil_fields_by_name
+                    .get(field.name.as_str())
+                    .expect("runtime state field role existence was checked when indexing runtime plans");
                 let (role_leaves, expected_field_ty) = match &field.role {
                     RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
                         let leaves = contracts
@@ -611,9 +703,9 @@ impl TemplatePlanArtifact {
                                 family_id: id.clone(),
                             });
                         }
-                        if field.ty != (TypeArtifact::FixedBytes { len: 32 }) {
+                        if sil_field.ty != (TypeArtifact::FixedBytes { len: 32 }) {
                             return Err(TemplatePlanError::RuntimeRouteTableMismatch {
-                                contract: contract.name.clone(),
+                                contract: runtime_state.contract.clone(),
                                 field: field.name.clone(),
                                 id: id.clone(),
                             });
@@ -621,26 +713,26 @@ impl TemplatePlanArtifact {
                         continue;
                     }
                     RuntimeFieldRoleArtifact::TemplateRoot { leaves } => (leaves.clone(), TypeArtifact::FixedBytes { len: 32 }),
-                    _ => continue,
+                    RuntimeFieldRoleArtifact::Template { .. } => continue,
                 };
-                let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
+                let id = route_template_table_receipt_id(&runtime_state.source, &field.name);
                 let Some(table) = route_tables_by_id.get(id.as_str()) else {
                     return Err(TemplatePlanError::MissingRuntimeRouteTable {
-                        contract: contract.name.clone(),
+                        contract: runtime_state.contract.clone(),
                         field: field.name.clone(),
                         id,
                     });
                 };
                 referenced_route_table_ids.insert(table.id.as_str());
                 let table_leaves = table.entries.iter().map(|entry| runtime_leaf_for_route_leaf(&entry.leaf)).collect::<Vec<_>>();
-                if table.state != contract.runtime_state.source
+                if table.state != runtime_state.source
                     || table.field != field.name
                     || table_leaves != role_leaves
                     || table.byte_len != role_leaves.len() * 32
-                    || field.ty != expected_field_ty
+                    || sil_field.ty != expected_field_ty
                 {
                     return Err(TemplatePlanError::RuntimeRouteTableMismatch {
-                        contract: contract.name.clone(),
+                        contract: runtime_state.contract.clone(),
                         field: field.name.clone(),
                         id: table.id.clone(),
                     });
@@ -1150,6 +1242,18 @@ mod tests {
             "templates": [{ "id": "template/foo", "actor": "Foo", "symbol": "gen__foo_template" }],
             "template_plan": {
               "templates": [],
+              "runtime_states": [
+                {
+                  "contract": "Foo",
+                  "source": "FooState",
+                  "field_roles": [
+                    {
+                      "name": "gen__foo_template",
+                      "role": { "kind": "template", "contract": "Foo" }
+                    }
+                  ]
+                }
+              ],
               "witness_recipes": []
             },
             "states": [
@@ -1184,13 +1288,11 @@ mod tests {
                   "fields": [
                     {
                       "name": "gen__foo_template",
-                      "type": { "kind": "fixed_bytes", "len": 32 },
-                      "role": { "kind": "template", "contract": "Foo" }
+                      "type": { "kind": "fixed_bytes", "len": 32 }
                     },
                     {
                       "name": "owner",
-                      "type": { "kind": "fixed_bytes", "len": 32 },
-                      "role": { "kind": "source" }
+                      "type": { "kind": "fixed_bytes", "len": 32 }
                     }
                   ]
                 },
@@ -1209,6 +1311,7 @@ mod tests {
         let artifact: Artifact = serde_json::from_str(json).expect("artifact should deserialize");
         artifact.check_schema_version().expect("schema version should be supported");
         assert_eq!(artifact.argent.actors[0].abi.actor, "Foo");
+        assert_eq!(artifact.argent.template_plan.runtime_states[0].field_roles[0].name, "gen__foo_template");
         assert_eq!(artifact.sil_abi.contracts[0].compiled.script_hex, "");
     }
 
@@ -1254,6 +1357,44 @@ mod tests {
         let err = artifact.check_schema_version().expect_err("future Sil ABI schema must be rejected");
         assert_eq!(err.artifact, "Sil ABI artifact");
         assert_eq!(err.found, SIL_ABI_SCHEMA_VERSION + 1);
+    }
+
+    #[test]
+    fn accepts_sil_contract_without_runtime_state_plan() {
+        let artifact = Artifact {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
+            app: "Tiny".to_string(),
+            root: "tiny.ag".to_string(),
+            modules: Vec::new(),
+            argent: ArgentArtifact {
+                templates: Vec::new(),
+                template_plan: TemplatePlanArtifact::default(),
+                states: Vec::new(),
+                actors: Vec::new(),
+            },
+            sil_abi: SilAbiArtifact {
+                schema_version: SIL_ABI_SCHEMA_VERSION,
+                states: Vec::new(),
+                contracts: vec![SilContractArtifact {
+                    name: "Foo".to_string(),
+                    source_path: "sil/Foo.sil".to_string(),
+                    runtime_state: RuntimeStateArtifact { source: "FooState".to_string(), fields: Vec::new() },
+                    entries: Vec::new(),
+                    compiled: CompiledContractArtifact {
+                        script_hex: String::new(),
+                        template: CompiledTemplateArtifact {
+                            prefix_hex: String::new(),
+                            suffix_hex: String::new(),
+                            hash_hex: String::new(),
+                        },
+                        state_span: StateSpanArtifact { offset: 0, len: 0 },
+                    },
+                }],
+            },
+        };
+
+        artifact.verify_template_plan().expect("missing runtime state plan means all fields are source");
     }
 
     #[test]

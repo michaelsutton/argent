@@ -18,7 +18,7 @@ use thiserror::Error;
 use crate::{
     artifact::{
         ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
-        RouteTemplateLeafArtifact, RuntimeFieldRoleArtifact, SilContractArtifact, TemplatePlanError,
+        RouteTemplateLeafArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, TemplatePlanError,
     },
     codec::{ArtifactValue, CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script},
 };
@@ -39,6 +39,8 @@ pub enum BuilderError {
     TxScript(#[from] TxScriptError),
     #[error("unknown actor `{0}`")]
     UnknownActor(String),
+    #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
+    RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("hidden param `{param}` is missing route tree metadata")]
     MissingHiddenRouteTree { param: String },
     #[error("unknown route tree `{0}`")]
@@ -255,6 +257,10 @@ impl<'a> ArtifactTxBuilder<'a> {
         self.artifact.sil_abi.contract(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
     }
 
+    fn runtime_state_plan(&self, contract_name: &str) -> Option<&'a RuntimeStatePlanArtifact> {
+        self.artifact.argent.template_plan.runtime_states.iter().find(|state| state.contract == contract_name)
+    }
+
     fn argent_actor(&self, name: &str) -> BuilderResult<&'a ActorArtifact> {
         self.artifact.argent.actors.iter().find(|actor| actor.name == name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
     }
@@ -272,31 +278,60 @@ impl<'a> ArtifactTxBuilder<'a> {
         contract: &SilContractArtifact,
         mut source_state: BTreeMap<String, ArtifactValue>,
     ) -> BuilderResult<BTreeMap<String, ArtifactValue>> {
+        let mut role_by_field = BTreeMap::new();
+        if let Some(runtime_plan) = self.runtime_state_plan(&contract.name) {
+            if runtime_plan.source != contract.runtime_state.source {
+                return Err(BuilderError::RuntimeStatePlanMismatch {
+                    contract: contract.name.clone(),
+                    message: format!(
+                        "source `{}` does not match Sil ABI source `{}`",
+                        runtime_plan.source, contract.runtime_state.source
+                    ),
+                });
+            }
+            let sil_fields_by_name =
+                contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<std::collections::BTreeSet<_>>();
+            for field_role in &runtime_plan.field_roles {
+                if !sil_fields_by_name.contains(field_role.name.as_str()) {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` does not match any Sil ABI runtime field", field_role.name),
+                    });
+                }
+                if role_by_field.insert(field_role.name.as_str(), &field_role.role).is_some() {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` is duplicated", field_role.name),
+                    });
+                }
+            }
+        }
+
         let mut values = BTreeMap::new();
         for field in &contract.runtime_state.fields {
-            match &field.role {
-                RuntimeFieldRoleArtifact::Source => {
+            match role_by_field.get(field.name.as_str()) {
+                None => {
                     let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
                     values.insert(field.name.clone(), value);
                 }
-                RuntimeFieldRoleArtifact::Template { contract } => {
+                Some(RuntimeFieldRoleArtifact::Template { contract }) => {
                     values.insert(
                         field.name.clone(),
                         ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
                     );
                 }
-                RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+                Some(RuntimeFieldRoleArtifact::TemplateTable { contracts }) => {
                     let mut table = Vec::with_capacity(contracts.len() * 32);
                     for contract in contracts {
                         table.extend_from_slice(&decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?);
                     }
                     values.insert(field.name.clone(), ArtifactValue::Bytes(table));
                 }
-                RuntimeFieldRoleArtifact::TemplateDigest { id } => {
+                Some(RuntimeFieldRoleArtifact::TemplateDigest { id }) => {
                     let table = self.route_family_table_bytes(id)?;
                     values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
                 }
-                RuntimeFieldRoleArtifact::TemplateRoot { .. } => {
+                Some(RuntimeFieldRoleArtifact::TemplateRoot { .. }) => {
                     let tree_id = crate::artifact::route_template_tree_receipt_id(&contract.runtime_state.source, &field.name);
                     let tree = self.route_template_tree(&tree_id)?;
                     values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&tree.root_hex)?));

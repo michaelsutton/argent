@@ -39,6 +39,34 @@
           "hash_hex": "be416b25f340479bb31b271c28cdd230764a8595bc1298270736449a1edb4575"
         }
       ],
+      "runtime_states": [
+        {
+          "contract": "Issuer",
+          "source": "IssuerState",
+          "field_roles": [
+            {
+              "name": "gen__ticket_template",
+              "role": {
+                "kind": "template",
+                "contract": "Ticket"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Ticket",
+          "source": "TicketState",
+          "field_roles": [
+            {
+              "name": "gen__ticket_template",
+              "role": {
+                "kind": "template",
+                "contract": "Ticket"
+              }
+            }
+          ]
+        }
+      ],
       "route_tables": [],
       "route_trees": [],
       "route_families": [],
@@ -449,10 +477,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Ticket"
               }
             },
             {
@@ -460,18 +484,12 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "next_serial",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
@@ -538,10 +556,6 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "template",
-                "contract": "Ticket"
               }
             },
             {
@@ -549,27 +563,18 @@
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "serial",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             },
             {
               "name": "redeemed",
               "type": {
                 "kind": "int"
-              },
-              "role": {
-                "kind": "source"
               }
             }
           ]
