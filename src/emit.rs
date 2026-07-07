@@ -2457,8 +2457,8 @@ fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String>
 }
 
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
-    if actor == current_actor.name {
-        model.actor_state(actor)?;
+    let target_state = model.actor(actor)?.state.as_str();
+    if target_state == current_actor.state {
         Ok("State".to_string())
     } else {
         state_struct_name_for_actor(actor, model)

@@ -1,0 +1,93 @@
+{
+  "app": "ToyChess",
+  "root": "examples/toy_chess/app.ag",
+  "modules": [
+    "examples/toy_chess/app.ag"
+  ],
+  "templates": [
+    { "actor": "League", "symbol": "gen__template_league", "hash": null },
+    { "actor": "Player", "symbol": "gen__template_player", "hash": null },
+    { "actor": "Mux", "symbol": "gen__template_mux", "hash": null },
+    { "actor": "Pawn", "symbol": "gen__template_pawn", "hash": null },
+    { "actor": "Knight", "symbol": "gen__template_knight", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "League",
+      "state": "LeagueState",
+      "sil": "sil/League.sil",
+      "entries": [
+        {
+          "name": "register",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Player"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Player", "state": "next_player" }]
+        }
+      ]
+    },
+    {
+      "name": "Player",
+      "state": "PlayerState",
+      "sil": "sil/Player.sil",
+      "entries": [
+        {
+          "name": "enter_mux",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Mux"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Mux", "state": "next_board" }]
+        }
+      ]
+    },
+    {
+      "name": "Mux",
+      "state": "BoardState",
+      "sil": "sil/Mux.sil",
+      "entries": [
+        {
+          "name": "choose_pawn",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Pawn"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Pawn", "state": "next_board" }]
+        },
+        {
+          "name": "choose_knight",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Knight"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Knight", "state": "next_board" }]
+        }
+      ]
+    },
+    {
+      "name": "Pawn",
+      "state": "BoardState",
+      "sil": "sil/Pawn.sil",
+      "entries": [
+        {
+          "name": "back_to_mux",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Mux"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Mux", "state": "next_board" }]
+        }
+      ]
+    },
+    {
+      "name": "Knight",
+      "state": "BoardState",
+      "sil": "sil/Knight.sil",
+      "entries": [
+        {
+          "name": "back_to_mux",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Mux"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Mux", "state": "next_board" }]
+        }
+      ]
+    }
+  ]
+}
