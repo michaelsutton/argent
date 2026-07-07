@@ -14,6 +14,7 @@ pub struct Module {
     pub states: Vec<StateDecl>,
     pub functions: Vec<FunctionDecl>,
     pub actors: Vec<ActorDecl>,
+    pub actor_enums: Vec<ActorEnumDecl>,
     pub apps: Vec<AppDecl>,
 }
 
@@ -55,6 +56,12 @@ pub struct ActorDecl {
     pub name: String,
     pub state: String,
     pub entries: Vec<EntryDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ActorEnumDecl {
+    pub name: String,
+    pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,6 +151,10 @@ impl Program {
 
     pub fn actors(&self) -> impl Iterator<Item = &ActorDecl> {
         self.modules.iter().flat_map(|module| module.actors.iter())
+    }
+
+    pub fn actor_enums(&self) -> impl Iterator<Item = &ActorEnumDecl> {
+        self.modules.iter().flat_map(|module| module.actor_enums.iter())
     }
 
     pub fn apps(&self) -> impl Iterator<Item = &AppDecl> {

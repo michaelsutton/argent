@@ -41,8 +41,32 @@ struct Model<'a> {
     functions: Vec<&'a FunctionDecl>,
     states: BTreeMap<String, &'a StateDecl>,
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
+    actor_enums: BTreeMap<String, ActorEnumInfo>,
     actors: Vec<&'a ActorDecl>,
     state_route_leaves: BTreeMap<String, Vec<RouteRootLeaf>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ActorEnumInfo {
+    name: String,
+    state: String,
+    variants: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TemplateSelector {
+    name: String,
+    actor_enum: String,
+    state: String,
+    variants: Vec<String>,
+    selector_expr: String,
+    fixed_actor: Option<String>,
+}
+
+impl TemplateSelector {
+    fn route_actors(&self) -> Vec<String> {
+        self.fixed_actor.as_ref().map_or_else(|| self.variants.clone(), |actor| vec![actor.clone()])
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +110,7 @@ impl<'a> Model<'a> {
         let functions = collect_functions(program)?;
         let states = collect_states(program)?;
         let all_actors = collect_actors(program)?;
+        let actor_enum_decls = collect_actor_enums(program)?;
 
         let app = program.apps().next();
         let (app_name, template_actors) = if let Some(app) = app {
@@ -104,9 +129,10 @@ impl<'a> Model<'a> {
             actors.push(actor);
         }
 
-        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors)?;
-        let direct_state_template_deps = compute_direct_state_template_deps(&actors, &all_actors, &template_actors)?;
-        let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors)?;
+        let actor_enums = build_actor_enums(&actor_enum_decls, &all_actors, &states, &template_actors)?;
+        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let direct_state_template_deps = compute_direct_state_template_deps(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors, &actor_enums)?;
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
             app_name,
@@ -116,6 +142,7 @@ impl<'a> Model<'a> {
             functions,
             states,
             actors_by_name: all_actors,
+            actor_enums,
             actors,
             state_route_leaves,
         };
@@ -148,6 +175,27 @@ impl<'a> Model<'a> {
         self.route_families.iter().filter(|family| family.state == state).collect()
     }
 
+    fn template_selectors_for_entry(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<BTreeMap<String, TemplateSelector>> {
+        template_selectors_for_entry(actor, entry, &self.actor_enums)
+    }
+
+    fn is_actor_enum_type(&self, ty: &TypeRef) -> bool {
+        ty.array.is_none() && self.actor_enums.contains_key(&ty.name)
+    }
+
+    fn expand_actor_refs(&self, refs: &[String]) -> Vec<String> {
+        refs.iter()
+            .flat_map(|actor| {
+                self.actor_enums.get(actor).map_or_else(|| vec![actor.clone()], |actor_enum| actor_enum.variants.clone())
+            })
+            .collect()
+    }
+
+    fn route_targets(&self, actor: &ActorDecl, entry: &EntryDecl, route: &RouteCall) -> Result<Vec<String>> {
+        let selectors = self.template_selectors_for_entry(actor, entry)?;
+        Ok(selectors.get(&route.actor).map_or_else(|| vec![route.actor.clone()], TemplateSelector::route_actors))
+    }
+
     fn validate(&self) -> Result<()> {
         self.validate_reserved_identifiers()?;
         self.validate_generated_actor_suffixes()?;
@@ -177,6 +225,9 @@ impl<'a> Model<'a> {
             for field in &state.fields {
                 reject_reserved_identifier(&format!("state `{}` field", state.name), &field.name)?;
             }
+        }
+        for actor_enum in self.actor_enums.values() {
+            reject_reserved_identifier("actor enum", &actor_enum.name)?;
         }
         for actor in self.actors_by_name.values() {
             reject_reserved_identifier("actor", &actor.name)?;
@@ -228,9 +279,9 @@ impl<'a> Model<'a> {
         match &entry.emits {
             EmitSpec::None => {}
             EmitSpec::One { actors } => {
-                for target in actors {
+                for target in self.expand_actor_refs(actors) {
                     self.require_template_actor(
-                        target,
+                        &target,
                         template_actor_set,
                         format!("entry `{}::{}` emits unknown actor `{target}`", actor.name, entry.name),
                     )?;
@@ -262,9 +313,9 @@ impl<'a> Model<'a> {
                             actor.name, entry.name, output.auth_index
                         )));
                     }
-                    for target in &output.actors {
+                    for target in self.expand_actor_refs(&output.actors) {
                         self.require_template_actor(
-                            target,
+                            &target,
                             template_actor_set,
                             format!("entry `{}::{}` output `{}` emits unknown actor `{target}`", actor.name, entry.name, output.name),
                         )?;
@@ -287,12 +338,14 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, route.actor
                 )));
             }
-            self.require_template_actor(
-                &route.actor,
-                template_actor_set,
-                format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor),
-            )?;
-            self.actor_state(&route.actor)?;
+            for target in self.route_targets(actor, entry, route)? {
+                self.require_template_actor(
+                    &target,
+                    template_actor_set,
+                    format!("entry `{}::{}` routes to unknown actor `{target}`", actor.name, entry.name),
+                )?;
+                self.actor_state(&target)?;
+            }
             self.validate_route_allowed(actor, entry, route)?;
         }
         self.validate_route_coverage(actor, entry)?;
@@ -320,7 +373,9 @@ impl<'a> Model<'a> {
                         actor.name, entry.name
                     )));
                 }
-                if actors.iter().any(|target| target == &route.actor) {
+                let allowed = self.expand_actor_refs(actors);
+                let targets = self.route_targets(actor, entry, route)?;
+                if targets.iter().all(|target| allowed.iter().any(|allowed| allowed == target)) {
                     Ok(())
                 } else {
                     Err(ArgentError::new(format!(
@@ -342,7 +397,9 @@ impl<'a> Model<'a> {
                 let output = outputs.iter().find(|output| &output.name == output_name).ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes through unknown output `{output_name}`", actor.name, entry.name))
                 })?;
-                if output.actors.iter().any(|target| target == &route.actor) {
+                let allowed = self.expand_actor_refs(&output.actors);
+                let targets = self.route_targets(actor, entry, route)?;
+                if targets.iter().all(|target| allowed.iter().any(|allowed| allowed == target)) {
                     Ok(())
                 } else {
                     Err(ArgentError::new(format!(
@@ -480,6 +537,380 @@ fn collect_actors(program: &Program) -> Result<BTreeMap<String, &ActorDecl>> {
     Ok(actors)
 }
 
+fn collect_actor_enums(program: &Program) -> Result<BTreeMap<String, &ActorEnumDecl>> {
+    let mut seen = BTreeMap::new();
+    let mut actor_enums = BTreeMap::new();
+    for module in &program.modules {
+        for actor_enum in &module.actor_enums {
+            reject_duplicate_top_level("actor enum", &actor_enum.name, &module.path, &mut seen)?;
+            actor_enums.insert(actor_enum.name.clone(), actor_enum);
+        }
+    }
+    Ok(actor_enums)
+}
+
+fn build_actor_enums(
+    actor_enum_decls: &BTreeMap<String, &ActorEnumDecl>,
+    actors_by_name: &BTreeMap<String, &ActorDecl>,
+    states: &BTreeMap<String, &StateDecl>,
+    template_actors: &[String],
+) -> Result<BTreeMap<String, ActorEnumInfo>> {
+    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let mut out = BTreeMap::new();
+    for actor_enum in actor_enum_decls.values() {
+        if actors_by_name.contains_key(&actor_enum.name) || states.contains_key(&actor_enum.name) {
+            return Err(ArgentError::new(format!("actor enum `{}` conflicts with an actor or state declaration", actor_enum.name)));
+        }
+        if actor_enum.variants.len() < 2 {
+            return Err(ArgentError::new(format!("actor enum `{}` must contain at least two variants", actor_enum.name)));
+        }
+        let mut seen = BTreeSet::new();
+        let mut state = None::<String>;
+        for variant in &actor_enum.variants {
+            if !seen.insert(variant.as_str()) {
+                return Err(ArgentError::new(format!("actor enum `{}` repeats variant `{variant}`", actor_enum.name)));
+            }
+            if !template_actor_set.contains(variant) {
+                return Err(ArgentError::new(format!(
+                    "actor enum `{}` references actor `{variant}` outside the app",
+                    actor_enum.name
+                )));
+            }
+            let actor = actors_by_name
+                .get(variant)
+                .copied()
+                .ok_or_else(|| ArgentError::new(format!("actor enum `{}` references unknown actor `{variant}`", actor_enum.name)))?;
+            if let Some(expected) = &state {
+                if expected != &actor.state {
+                    return Err(ArgentError::new(format!(
+                        "actor enum `{}` variant `{variant}` owns state `{}`, expected `{expected}`",
+                        actor_enum.name, actor.state
+                    )));
+                }
+            } else {
+                state = Some(actor.state.clone());
+            }
+        }
+        out.insert(
+            actor_enum.name.clone(),
+            ActorEnumInfo {
+                name: actor_enum.name.clone(),
+                state: state.expect("non-empty actor enum has a state"),
+                variants: actor_enum.variants.clone(),
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn template_selectors_for_entry(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
+) -> Result<BTreeMap<String, TemplateSelector>> {
+    let ctx = TemplateSelectorContext { actor, entry, actor_enums };
+    let mut selectors = BTreeMap::new();
+    for param in &entry.params {
+        if param.ty.array.is_some() || !actor_enums.contains_key(&param.ty.name) {
+            continue;
+        }
+        let selector = template_selector_from_actor_enum_value(
+            &ctx,
+            TemplateSelectorRequest {
+                name: &param.name,
+                actor_enum_name: &param.ty.name,
+                selector_expr: &param.name,
+                fixed_actor: None,
+                expected_state: None,
+                expected_actor_enum: Some(&param.ty.name),
+            },
+        )?;
+        insert_template_selector(actor, entry, &mut selectors, selector)?;
+    }
+
+    let tokens = lex(&entry.body)
+        .map_err(|err| ArgentError::new(format!("failed to lex body for `{}::{}`: {}", actor.name, entry.name, err.message)))?;
+    let mut pos = 0usize;
+    while pos + 3 < tokens.len() {
+        let is_actor_handle = matches!(&tokens[pos].kind, TokenKind::Ident(word) if word == "actor")
+            && matches!(tokens[pos + 1].kind, TokenKind::Symbol('<'))
+            && matches!(tokens[pos + 3].kind, TokenKind::Symbol('>'))
+            && matches!(tokens.get(pos + 4).map(|token| &token.kind), Some(TokenKind::Ident(_)))
+            && matches!(tokens.get(pos + 5).map(|token| &token.kind), Some(TokenKind::Symbol('=')));
+        if is_actor_handle {
+            let state = match &tokens[pos + 2].kind {
+                TokenKind::Ident(state) => state.clone(),
+                _ => {
+                    pos += 1;
+                    continue;
+                }
+            };
+            let name = match &tokens[pos + 4].kind {
+                TokenKind::Ident(name) => name.clone(),
+                _ => {
+                    pos += 1;
+                    continue;
+                }
+            };
+            let (expr, end_pos) = take_expr_until_semicolon(&entry.body, &tokens, pos + 6, actor, entry)?;
+            let selector = template_selector_from_initializer(&ctx, &name, Some(&state), None, &expr)?;
+            insert_template_selector(actor, entry, &mut selectors, selector)?;
+            pos = end_pos + 1;
+            continue;
+        }
+
+        let is_actor_enum_local = matches!(&tokens[pos].kind, TokenKind::Ident(source_ty) if actor_enums.contains_key(source_ty))
+            && matches!(tokens.get(pos + 1).map(|token| &token.kind), Some(TokenKind::Ident(_)))
+            && matches!(tokens.get(pos + 2).map(|token| &token.kind), Some(TokenKind::Symbol('=')));
+        if is_actor_enum_local {
+            let actor_enum_name = match &tokens[pos].kind {
+                TokenKind::Ident(actor_enum_name) => actor_enum_name.clone(),
+                _ => unreachable!("checked actor enum local type"),
+            };
+            let name = match &tokens[pos + 1].kind {
+                TokenKind::Ident(name) => name.clone(),
+                _ => unreachable!("checked actor enum local name"),
+            };
+            let (expr, end_pos) = take_expr_until_semicolon(&entry.body, &tokens, pos + 3, actor, entry)?;
+            let mut selector = template_selector_from_initializer(&ctx, &name, None, Some(&actor_enum_name), &expr)?;
+            selector.selector_expr = name.clone();
+            insert_template_selector(actor, entry, &mut selectors, selector)?;
+            pos = end_pos + 1;
+            continue;
+        }
+
+        pos += 1;
+    }
+    Ok(selectors)
+}
+
+fn take_expr_until_semicolon(
+    body: &str,
+    tokens: &[Token],
+    start_pos: usize,
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+) -> Result<(String, usize)> {
+    let start = tokens
+        .get(start_pos)
+        .ok_or_else(|| ArgentError::new(format!("entry `{}::{}` has an incomplete actor enum selector", actor.name, entry.name)))?
+        .span
+        .start;
+    let mut depth = 0usize;
+    let mut scan = start_pos;
+    while scan < tokens.len() {
+        match tokens[scan].kind {
+            TokenKind::Symbol('{') | TokenKind::Symbol('(') | TokenKind::Symbol('[') => depth += 1,
+            TokenKind::Symbol('}') | TokenKind::Symbol(')') | TokenKind::Symbol(']') => depth = depth.saturating_sub(1),
+            TokenKind::Symbol(';') if depth == 0 => {
+                return Ok((body[start..tokens[scan].span.start].trim().to_string(), scan));
+            }
+            TokenKind::Eof => break,
+            _ => {}
+        }
+        scan += 1;
+    }
+    Err(ArgentError::new(format!("entry `{}::{}` has an unterminated actor enum selector", actor.name, entry.name)))
+}
+
+fn insert_template_selector(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    selectors: &mut BTreeMap<String, TemplateSelector>,
+    selector: TemplateSelector,
+) -> Result<()> {
+    let name = selector.name.clone();
+    if selectors.insert(name.clone(), selector).is_some() {
+        return Err(ArgentError::new(format!("entry `{}::{}` declares actor handle `{name}` more than once", actor.name, entry.name)));
+    }
+    Ok(())
+}
+
+struct TemplateSelectorContext<'a> {
+    actor: &'a ActorDecl,
+    entry: &'a EntryDecl,
+    actor_enums: &'a BTreeMap<String, ActorEnumInfo>,
+}
+
+struct TemplateSelectorRequest<'a> {
+    name: &'a str,
+    actor_enum_name: &'a str,
+    selector_expr: &'a str,
+    fixed_actor: Option<&'a str>,
+    expected_state: Option<&'a str>,
+    expected_actor_enum: Option<&'a str>,
+}
+
+fn template_selector_from_initializer(
+    ctx: &TemplateSelectorContext<'_>,
+    name: &str,
+    expected_state: Option<&str>,
+    expected_actor_enum: Option<&str>,
+    expr: &str,
+) -> Result<TemplateSelector> {
+    if let Some((actor_enum, selector_expr)) = parse_actor_enum_selector(expr) {
+        return template_selector_from_actor_enum_value(
+            ctx,
+            TemplateSelectorRequest {
+                name,
+                actor_enum_name: actor_enum,
+                selector_expr,
+                fixed_actor: None,
+                expected_state,
+                expected_actor_enum,
+            },
+        );
+    }
+    if let Some((actor_enum, variant)) = parse_actor_enum_variant(expr) {
+        return template_selector_from_actor_enum_value(
+            ctx,
+            TemplateSelectorRequest {
+                name,
+                actor_enum_name: &actor_enum,
+                selector_expr: "",
+                fixed_actor: Some(&variant),
+                expected_state,
+                expected_actor_enum,
+            },
+        );
+    }
+    if let Some(actor_enum) = expected_actor_enum {
+        return template_selector_from_actor_enum_value(
+            ctx,
+            TemplateSelectorRequest {
+                name,
+                actor_enum_name: actor_enum,
+                selector_expr: expr,
+                fixed_actor: None,
+                expected_state,
+                expected_actor_enum,
+            },
+        );
+    }
+    Err(ArgentError::new(format!(
+        "entry `{}::{}` declares actor handle `{name}` without an actor enum initializer",
+        ctx.actor.name, ctx.entry.name
+    )))
+}
+
+fn template_selector_from_actor_enum_value(
+    ctx: &TemplateSelectorContext<'_>,
+    request: TemplateSelectorRequest<'_>,
+) -> Result<TemplateSelector> {
+    if let Some(expected_actor_enum) = request.expected_actor_enum
+        && request.actor_enum_name != expected_actor_enum
+    {
+        return Err(ArgentError::new(format!(
+            "entry `{}::{}` declares actor enum value `{name}` as `{expected_actor_enum}`, but initializes it from `{actor_enum_name}`",
+            ctx.actor.name,
+            ctx.entry.name,
+            name = request.name,
+            actor_enum_name = request.actor_enum_name
+        )));
+    }
+    let actor_enum = ctx.actor_enums.get(request.actor_enum_name).ok_or_else(|| {
+        ArgentError::new(format!(
+            "entry `{}::{}` declares actor handle `{name}` from unknown actor enum `{actor_enum_name}`",
+            ctx.actor.name,
+            ctx.entry.name,
+            name = request.name,
+            actor_enum_name = request.actor_enum_name
+        ))
+    })?;
+    if let Some(expected_state) = request.expected_state
+        && actor_enum.state != expected_state
+    {
+        return Err(ArgentError::new(format!(
+            "entry `{}::{}` declares actor handle `{name}` as actor<{expected_state}>, but `{actor_enum_name}` contains actor<{}>",
+            ctx.actor.name,
+            ctx.entry.name,
+            actor_enum.state,
+            name = request.name,
+            actor_enum_name = request.actor_enum_name
+        )));
+    }
+    if ctx.actor.state != actor_enum.state {
+        return Err(ArgentError::new(format!(
+            "entry `{}::{}` uses actor enum `{actor_enum_name}` for state `{}`, but the entry actor owns `{}`; selector handles currently require the same state",
+            ctx.actor.name,
+            ctx.entry.name,
+            actor_enum.state,
+            ctx.actor.state,
+            actor_enum_name = request.actor_enum_name
+        )));
+    }
+    let fixed_actor = request.fixed_actor.map(str::to_string);
+    let selector_expr = if let Some(fixed_actor) = &fixed_actor {
+        actor_enum_variant_const_expr(actor_enum, fixed_actor).ok_or_else(|| {
+            ArgentError::new(format!(
+                "actor enum `{actor_enum_name}` has no variant `{fixed_actor}` in `{}::{}`",
+                ctx.actor.name,
+                ctx.entry.name,
+                actor_enum_name = request.actor_enum_name
+            ))
+        })?
+    } else {
+        request.selector_expr.trim().to_string()
+    };
+    if selector_expr.is_empty() {
+        return Err(ArgentError::new(format!(
+            "entry `{}::{}` declares actor enum value `{name}` with an empty selector",
+            ctx.actor.name,
+            ctx.entry.name,
+            name = request.name
+        )));
+    }
+    Ok(TemplateSelector {
+        name: request.name.to_string(),
+        actor_enum: actor_enum.name.clone(),
+        state: actor_enum.state.clone(),
+        variants: actor_enum.variants.clone(),
+        selector_expr,
+        fixed_actor,
+    })
+}
+
+fn expand_entry_template_routes(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
+) -> Result<Vec<RouteCall>> {
+    let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
+    Ok(expand_route_set_for_template_deps(&entry.routes, &selectors))
+}
+
+fn expand_route_set(routes: &[RouteCall], selectors: &BTreeMap<String, TemplateSelector>) -> Vec<RouteCall> {
+    let mut out = Vec::new();
+    for route in routes {
+        if let Some(selector) = selectors.get(&route.actor) {
+            out.extend(selector.route_actors().into_iter().map(|variant| RouteCall {
+                output: route.output.clone(),
+                actor: variant,
+                state: route.state.clone(),
+            }));
+        } else {
+            out.push(route.clone());
+        }
+    }
+    out
+}
+
+fn expand_route_set_for_template_deps(routes: &[RouteCall], selectors: &BTreeMap<String, TemplateSelector>) -> Vec<RouteCall> {
+    let mut out = Vec::new();
+    for route in routes {
+        if let Some(selector) = selectors.get(&route.actor) {
+            out.extend(selector.variants.iter().cloned().map(|variant| RouteCall {
+                output: route.output.clone(),
+                actor: variant,
+                state: route.state.clone(),
+            }));
+        } else {
+            out.push(route.clone());
+        }
+    }
+    out
+}
+
 fn validate_unique_apps(program: &Program) -> Result<()> {
     let mut seen = BTreeMap::new();
     for module in &program.modules {
@@ -494,6 +925,7 @@ fn compute_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<BTreeMap<String, Vec<String>>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
@@ -510,7 +942,7 @@ fn compute_state_template_deps<'a>(
                 }
             }
 
-            for route in &entry.routes {
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
@@ -518,7 +950,7 @@ fn compute_state_template_deps<'a>(
                 adjacency.entry(target.state.clone()).or_default().insert(actor.state.clone());
 
                 if template_actor_set.contains(&route.actor)
-                    && route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate
+                    && route_validation_kind(actor, &route) == RouteValidationKind::ForeignTemplate
                 {
                     direct.entry(actor.state.clone()).or_default().insert(route.actor.clone());
                 }
@@ -563,6 +995,7 @@ fn compute_direct_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
@@ -574,12 +1007,12 @@ fn compute_direct_state_template_deps<'a>(
                     direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
                 }
             }
-            for route in &entry.routes {
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
                 if template_actor_set.contains(&target.name)
-                    && route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate
+                    && route_validation_kind(actor, &route) == RouteValidationKind::ForeignTemplate
                 {
                     direct.entry(actor.state.clone()).or_default().insert(target.name.clone());
                 }
@@ -628,14 +1061,18 @@ fn infer_direct_route_families<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<Vec<RouteFamily>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut edges_by_state = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
     let mut directed_routes = Vec::<(String, String)>::new();
+    let mut selectors_by_actor = BTreeMap::<String, Vec<TemplateSelector>>::new();
 
     for actor in actors {
         for entry in &actor.entries {
-            for route in &entry.routes {
+            let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
+            selectors_by_actor.entry(actor.name.clone()).or_default().extend(selectors.values().cloned());
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
@@ -697,7 +1134,10 @@ fn infer_direct_route_families<'a>(
             let anchor_actor = entry_actors.first().or_else(|| actors.first()).expect("component has at least two actors");
             let direct_template_actors = if entry_actors.is_empty() { vec![anchor_actor.clone()] } else { entry_actors.clone() };
             let direct_template_actor_set = direct_template_actors.iter().cloned().collect::<BTreeSet<_>>();
-            let table_actors = actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
+            let default_table_actors =
+                actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
+            let table_actors =
+                route_family_table_actors_from_selector_order(&state, &actors, &default_table_actors, &selectors_by_actor)?;
             if table_actors.is_empty() {
                 continue;
             }
@@ -713,6 +1153,44 @@ fn infer_direct_route_families<'a>(
     }
 
     Ok(families)
+}
+
+fn route_family_table_actors_from_selector_order(
+    state: &str,
+    component_actors: &[String],
+    default_table_actors: &[String],
+    selectors_by_actor: &BTreeMap<String, Vec<TemplateSelector>>,
+) -> Result<Vec<String>> {
+    let table_actor_set = default_table_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let mut selected_order = None::<(&str, Vec<String>)>;
+
+    for actor in component_actors {
+        let Some(selectors) = selectors_by_actor.get(actor) else {
+            continue;
+        };
+        for selector in selectors.iter().filter(|selector| selector.state == state) {
+            let selector_actor_set = selector.variants.iter().cloned().collect::<BTreeSet<_>>();
+            if selector_actor_set != table_actor_set {
+                return Err(ArgentError::new(format!(
+                    "actor enum `{}` variants must exactly match the route table actors for state `{state}`; expected {:?}, found {:?}",
+                    selector.actor_enum, table_actor_set, selector_actor_set
+                )));
+            }
+
+            if let Some((source_actor_enum, order)) = &selected_order {
+                if order != &selector.variants {
+                    return Err(ArgentError::new(format!(
+                        "actor enum `{}` uses a different selector order than actor enum `{source_actor_enum}` for state `{state}`",
+                        selector.actor_enum
+                    )));
+                }
+            } else {
+                selected_order = Some((&selector.actor_enum, selector.variants.clone()));
+            }
+        }
+    }
+
+    Ok(selected_order.map_or_else(|| default_table_actors.to_vec(), |(_, order)| order))
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -737,12 +1215,12 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let mut args = Vec::new();
     args.extend(hidden_template_init_args_for_state(&actor.state, model).into_iter().map(|arg| format!("    {arg}")));
     for field in &state.fields {
-        args.push(format!("    {} init_{}", field.ty.to_sil(), field.name));
+        args.push(format!("    {} init_{}", lower_type_ref(&field.ty, model), field.name));
     }
     out.push_str(&args.join(",\n"));
     out.push_str("\n) {\n");
 
-    emit_shared_constants(&mut out, model);
+    emit_shared_constants(&mut out, model)?;
     emit_state_layouts(&mut out, actor, model)?;
     emit_shared_functions(&mut out, model);
 
@@ -752,7 +1230,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 
     emit_section_header_raw(&mut out, &format!("state fields: {}", actor.name));
     for field in &state.fields {
-        out.push_str(&format!("    {} {} = init_{};\n", field.ty.to_sil(), field.name, field.name));
+        out.push_str(&format!("    {} {} = init_{};\n", lower_type_ref(&field.ty, model), field.name, field.name));
     }
     out.push('\n');
 
@@ -774,14 +1252,20 @@ fn emit_section_header_raw(out: &mut String, title: &str) {
     out.push_str(&format!("    // :: {title}\n"));
 }
 
-fn emit_shared_constants(out: &mut String, model: &Model<'_>) {
+fn emit_shared_constants(out: &mut String, model: &Model<'_>) -> Result<()> {
     if !model.consts.is_empty() {
         emit_section_header(out, "Shared constants");
         for konst in &model.consts {
-            out.push_str(&format!("    {} constant {} = {};\n", konst.ty.to_sil(), konst.name, konst.value));
+            out.push_str(&format!(
+                "    {} constant {} = {};\n",
+                lower_type_ref(&konst.ty, model),
+                konst.name,
+                lower_actor_enum_literals(&konst.value, model)?
+            ));
         }
         out.push('\n');
     }
+    Ok(())
 }
 
 fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model<'_>) -> Result<()> {
@@ -798,7 +1282,7 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
         out.push_str(&format!("    struct {} {{\n", state.name));
         emit_hidden_template_fields(out, state.name.as_str(), model, 8);
         for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", field.ty.to_sil(), field.name));
+            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
         }
         out.push_str("    }\n");
     }
@@ -810,9 +1294,13 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
     if !model.functions.is_empty() {
         emit_section_header(out, "Shared helper functions");
         for function in &model.functions {
-            let params =
-                function.params.iter().map(|param| format!("{} {}", param.ty.to_sil(), param.name)).collect::<Vec<_>>().join(", ");
-            out.push_str(&format!("    function {}({}) : {} {{\n", function.name, params, function.return_ty.to_sil()));
+            let params = function
+                .params
+                .iter()
+                .map(|param| format!("{} {}", lower_type_ref(&param.ty, model), param.name))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push_str(&format!("    function {}({}) : {} {{\n", function.name, params, lower_type_ref(&function.return_ty, model)));
             out.push_str(&indent_block_body(&function.body, 8));
             out.push_str("    }\n");
         }
@@ -823,11 +1311,12 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     out.push_str(&format!("    entrypoint function {}(", entry.name));
     let witness_specs = entry_witness_specs(actor, entry, model);
-    let sil_params = lower_entry_params(&entry.params, &witness_specs);
+    let sil_params = lower_entry_params(&entry.params, &witness_specs, model);
     out.push_str(&sil_params.join(", "));
     out.push_str(") {\n");
 
-    let has_byte_witnesses = witness_specs.templates.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes);
+    let has_byte_witnesses =
+        witness_specs.templates.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) || !witness_specs.selectors.is_empty();
     if has_byte_witnesses {
         out.push_str("        // :: witness lens\n");
         for spec in &witness_specs.templates {
@@ -838,6 +1327,14 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             let suffix = hidden_witness_suffix_name(&spec.actor);
             let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
             let suffix_len = hidden_witness_suffix_len_name(&spec.actor);
+            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
+            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
+        }
+        for spec in &witness_specs.selectors {
+            let prefix = hidden_template_selector_prefix_name(&spec.name);
+            let suffix = hidden_template_selector_suffix_name(&spec.name);
+            let prefix_len = hidden_template_selector_prefix_len_name(&spec.name);
+            let suffix_len = hidden_template_selector_suffix_len_name(&spec.name);
             out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
             out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
         }
@@ -971,6 +1468,8 @@ struct BodyLowerer<'a, 'm> {
     entry: &'a EntryDecl,
     model: &'m Model<'a>,
     types: BTreeMap<String, String>,
+    selectors: BTreeMap<String, TemplateSelector>,
+    materialized_selectors: BTreeSet<String>,
     input_names: BTreeSet<String>,
     output_names: BTreeSet<String>,
 }
@@ -982,10 +1481,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         let mut types = BTreeMap::new();
         for field in &model.state(&actor.state)?.fields {
-            types.insert(field.name.clone(), field.ty.to_sil());
+            types.insert(field.name.clone(), lower_type_ref(&field.ty, model));
         }
         for param in &entry.params {
-            types.insert(param.name.clone(), param.ty.to_sil());
+            types.insert(param.name.clone(), lower_type_ref(&param.ty, model));
         }
 
         let mut input_names = BTreeSet::new();
@@ -1005,7 +1504,21 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
         }
 
-        Ok(Self { body: &entry.body, tokens, pos: 0, actor, entry, model, types, input_names, output_names })
+        let selectors = model.template_selectors_for_entry(actor, entry)?;
+
+        Ok(Self {
+            body: &entry.body,
+            tokens,
+            pos: 0,
+            actor,
+            entry,
+            model,
+            types,
+            selectors,
+            materialized_selectors: BTreeSet::new(),
+            input_names,
+            output_names,
+        })
     }
 
     fn lower(mut self) -> Result<String> {
@@ -1059,6 +1572,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_plain_statement(&mut self, out: &mut String, indent: usize) -> Result<()> {
         let statement = self.take_until_semicolon()?;
         if let Some((source_ty, name, expr)) = parse_typed_local_statement(&statement) {
+            if let Some(state) = parse_actor_handle_type(source_ty) {
+                self.lower_actor_handle_statement(out, indent, state, name, expr)?;
+                return Ok(());
+            }
             let ty = self.lower_local_type(source_ty);
             let lowered = self.lower_typed_local_initializer(source_ty, &ty, expr, indent)?;
             self.types.insert(name.to_string(), ty.clone());
@@ -1072,6 +1589,77 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         out.push_str(&self.lower_expr(&statement, None, indent)?);
         out.push_str(";\n");
         Ok(())
+    }
+
+    fn lower_actor_handle_statement(&mut self, out: &mut String, indent: usize, state: &str, name: &str, expr: &str) -> Result<()> {
+        let selector = self
+            .selectors
+            .get(name)
+            .ok_or_else(|| ArgentError::new(format!("actor handle `{name}` must be initialized as `ActorEnum[selector]`")))?
+            .clone();
+        if selector.state != state {
+            return Err(ArgentError::new(format!(
+                "actor handle `{name}` is declared as actor<{state}>, but `{}` contains actor<{}>",
+                selector.actor_enum, selector.state
+            )));
+        }
+        self.validate_actor_handle_initializer(name, expr, &selector)?;
+        self.ensure_selector_template(out, indent, name)?;
+        Ok(())
+    }
+
+    fn validate_actor_handle_initializer(&self, name: &str, expr: &str, selector: &TemplateSelector) -> Result<()> {
+        if let Some((actor_enum, _)) = parse_actor_enum_selector(expr) {
+            if actor_enum != selector.actor_enum {
+                return Err(ArgentError::new(format!(
+                    "actor handle `{name}` was analyzed as `{}`, but lowers from `{actor_enum}`",
+                    selector.actor_enum
+                )));
+            }
+            return Ok(());
+        }
+        if let Some((actor_enum, _)) = parse_actor_enum_variant(expr) {
+            if actor_enum != selector.actor_enum {
+                return Err(ArgentError::new(format!(
+                    "actor handle `{name}` was analyzed as `{}`, but lowers from `{actor_enum}`",
+                    selector.actor_enum
+                )));
+            }
+            return Ok(());
+        }
+        Err(ArgentError::new(format!("actor handle `{name}` must be initialized as `ActorEnum[selector]` or `ActorEnum::Variant`")))
+    }
+
+    fn ensure_selector_template(&mut self, out: &mut String, indent: usize, selector_name: &str) -> Result<String> {
+        let template_var = hidden_template_selector_template_name(selector_name);
+        if !self.materialized_selectors.insert(selector_name.to_string()) {
+            return Ok(template_var);
+        }
+        let selector = self
+            .selectors
+            .get(selector_name)
+            .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{selector_name}`")))?
+            .clone();
+        let family = self.selector_family(&selector)?;
+        if family.table_actors() != selector.variants.as_slice() {
+            return Err(ArgentError::new(format!(
+                "actor enum `{}` order must match route family `{}` table order for selector lowering",
+                selector.actor_enum, family.id
+            )));
+        }
+
+        let selector_var = hidden_template_selector_index_name(selector_name);
+        let selector_expr = self.lower_expr(&selector.selector_expr, None, indent)?;
+        let table = hidden_route_family_table_name(family);
+        push_indent(out, indent);
+        out.push_str(&format!("int {selector_var} = {selector_expr};\n"));
+        push_indent(out, indent);
+        out.push_str(&format!("require({selector_var} >= 0);\n"));
+        push_indent(out, indent);
+        out.push_str(&format!("require({selector_var} < {});\n", selector.variants.len()));
+        push_indent(out, indent);
+        out.push_str(&format!("byte[32] {template_var} = byte[32]({table}.slice({selector_var} * 32, {selector_var} * 32 + 32));\n"));
+        Ok(template_var)
     }
 
     fn lower_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
@@ -1100,6 +1688,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
+        if self.selectors.contains_key(&route.actor) {
+            return self.lower_selector_route(out, indent, route);
+        }
         self.model.actor_state(&route.actor)?;
         let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
         let validation = route_validation_kind(self.actor, &route);
@@ -1146,6 +1737,51 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(())
     }
 
+    fn lower_selector_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
+        let selector = self
+            .selectors
+            .get(&route.actor)
+            .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{}`", route.actor)))?
+            .clone();
+        let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
+        let state_ty = if selector.state == self.actor.state { "State".to_string() } else { selector.state.clone() };
+        let state_expr = route.state.trim();
+        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+            self.lower_expr(state_expr, Some(&state_ty), indent)?
+        } else {
+            let name = generated_state_name(&route, &state_ty);
+            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            push_indent(out, indent);
+            out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
+            name
+        };
+
+        let template = self.ensure_selector_template(out, indent, &route.actor)?;
+        push_indent(out, indent);
+        out.push_str(&format!("// :: become {}\n", route.actor));
+        push_indent(out, indent);
+        out.push_str(&format!(
+            "validateOutputStateWithTemplate({output_idx}, {state_arg}, {}, {}, {});\n",
+            hidden_template_selector_prefix_name(&route.actor),
+            hidden_template_selector_suffix_name(&route.actor),
+            template
+        ));
+        Ok(())
+    }
+
+    fn selector_family(&self, selector: &TemplateSelector) -> Result<&RouteFamily> {
+        self.model
+            .route_families_for_state(&selector.state)
+            .into_iter()
+            .find(|family| selector.variants.iter().all(|variant| family.table_actors().contains(variant)))
+            .ok_or_else(|| {
+                ArgentError::new(format!(
+                    "actor enum `{}` variants are not available as a selector table for state `{}`",
+                    selector.actor_enum, selector.state
+                ))
+            })
+    }
+
     fn lower_expr(&self, expr: &str, expected_ty: Option<&str>, indent: usize) -> Result<String> {
         let expr = expr.trim();
         if let Some(domain) = parse_unique_self_outpoint(expr) {
@@ -1160,7 +1796,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if let Some((state_name, body)) = split_state_constructor(expr) {
             return self.lower_state_constructor(state_name, body, indent);
         }
-        Ok(self.lower_refs(expr))
+        self.lower_refs(expr)
     }
 
     fn lower_self_state_expr(&self, ty: &str, indent: usize) -> Result<String> {
@@ -1176,12 +1812,42 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn lower_typed_local_initializer(&self, source_ty: &str, lowered_ty: &str, expr: &str, indent: usize) -> Result<String> {
+        if self.model.actor_enums.contains_key(source_ty) {
+            return self.lower_actor_enum_initializer(source_ty, expr, indent);
+        }
         if let Some(state_name) = self.source_state_for_local_type(source_ty)
             && let Some(body) = split_state_object_literal(expr)
         {
             return self.lower_state_object_for_state(&state_name, body, indent);
         }
         self.lower_expr(expr, Some(lowered_ty), indent)
+    }
+
+    fn lower_actor_enum_initializer(&self, actor_enum_name: &str, expr: &str, indent: usize) -> Result<String> {
+        if let Some((source_actor_enum, selector_expr)) = parse_actor_enum_selector(expr) {
+            if source_actor_enum != actor_enum_name {
+                return Err(ArgentError::new(format!(
+                    "actor enum value `{actor_enum_name}` cannot be initialized from `{source_actor_enum}`"
+                )));
+            }
+            return self.lower_expr(selector_expr, Some("int"), indent);
+        }
+        if let Some((source_actor_enum, variant)) = parse_actor_enum_variant(expr) {
+            if source_actor_enum != actor_enum_name {
+                return Err(ArgentError::new(format!(
+                    "actor enum value `{actor_enum_name}` cannot be initialized from `{source_actor_enum}`"
+                )));
+            }
+            let actor_enum = self
+                .model
+                .actor_enums
+                .get(actor_enum_name)
+                .ok_or_else(|| ArgentError::new(format!("unknown actor enum `{actor_enum_name}`")))?;
+            let value = actor_enum_variant_const_expr(actor_enum, &variant)
+                .ok_or_else(|| ArgentError::new(format!("actor enum `{actor_enum_name}` has no variant `{variant}`")))?;
+            return Ok(value);
+        }
+        self.lower_expr(expr, Some("int"), indent)
     }
 
     fn lower_state_object_for_state(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
@@ -1194,6 +1860,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn lower_local_type(&self, source_ty: &str) -> String {
+        if self.model.actor_enums.contains_key(source_ty) {
+            return "int".to_string();
+        }
         if source_ty == self.actor.state { "State".to_string() } else { source_ty.to_string() }
     }
 
@@ -1226,7 +1895,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(out)
     }
 
-    fn lower_refs(&self, expr: &str) -> String {
+    fn lower_refs(&self, expr: &str) -> Result<String> {
         let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
         for name in &self.input_names {
             out = out.replace(&format!("{name}.value"), &format!("tx.inputs[{}].value", hidden_input_idx_name(name)));
@@ -1234,7 +1903,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for name in &self.output_names {
             out = out.replace(&format!("{name}.value"), &format!("tx.outputs[{}].value", hidden_output_idx_name(name)));
         }
-        out
+        lower_actor_enum_literals(&out, self.model)
     }
 
     fn take_until_semicolon(&mut self) -> Result<String> {
@@ -1427,6 +2096,36 @@ fn parse_typed_local_statement(statement: &str) -> Option<(&str, &str, &str)> {
     Some((source_ty, name, expr.trim()))
 }
 
+fn parse_actor_handle_type(ty: &str) -> Option<&str> {
+    let ty = ty.trim();
+    ty.strip_prefix("actor<")?.strip_suffix('>').map(str::trim).filter(|state| is_identifier(state))
+}
+
+fn parse_actor_enum_selector(expr: &str) -> Option<(&str, &str)> {
+    let expr = expr.trim();
+    let (actor_enum, rest) = expr.split_once('[')?;
+    let actor_enum = actor_enum.trim();
+    if !is_identifier(actor_enum) {
+        return None;
+    }
+    let selector = rest.strip_suffix(']')?.trim();
+    if selector.is_empty() {
+        return None;
+    }
+    Some((actor_enum, selector))
+}
+
+fn parse_actor_enum_variant(expr: &str) -> Option<(String, String)> {
+    let expr = expr.trim();
+    let (actor_enum, variant) = expr.split_once("::")?;
+    let actor_enum = actor_enum.trim();
+    let variant = variant.trim();
+    if !is_identifier(actor_enum) || !is_identifier(variant) {
+        return None;
+    }
+    Some((actor_enum.to_string(), variant.to_string()))
+}
+
 fn split_top_level_assignment(input: &str) -> Option<(&str, &str)> {
     let mut depth = 0usize;
     let mut in_string = false;
@@ -1570,9 +2269,17 @@ struct RouteFamilyWitnessSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct TemplateSelectorWitnessSpec {
+    name: String,
+    actor_enum: String,
+    variants: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct EntryWitnessSpecs {
     templates: Vec<TemplateWitnessSpec>,
     families: Vec<RouteFamilyWitnessSpec>,
+    selectors: Vec<TemplateSelectorWitnessSpec>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1598,10 +2305,10 @@ fn route_validation_kind(actor: &ActorDecl, route: &RouteCall) -> RouteValidatio
     RouteValidationKind::ForeignTemplate
 }
 
-fn lower_entry_params(params: &[ParamDecl], witness_specs: &EntryWitnessSpecs) -> Vec<String> {
+fn lower_entry_params(params: &[ParamDecl], witness_specs: &EntryWitnessSpecs, model: &Model<'_>) -> Vec<String> {
     let mut out = Vec::new();
     for param in params {
-        out.push(format!("{} {}", param.ty.to_sil(), param.name));
+        out.push(format!("{} {}", lower_type_ref(&param.ty, model), param.name));
     }
     for spec in &witness_specs.templates {
         match spec.form {
@@ -1618,18 +2325,35 @@ fn lower_entry_params(params: &[ParamDecl], witness_specs: &EntryWitnessSpecs) -
     for spec in &witness_specs.families {
         out.push(format!("byte[{}] {}", spec.byte_len, hidden_route_family_table_name_by_id(&spec.family_id)));
     }
+    for spec in &witness_specs.selectors {
+        out.push(format!("byte[] {}", hidden_template_selector_prefix_name(&spec.name)));
+        out.push(format!("byte[] {}", hidden_template_selector_suffix_name(&spec.name)));
+    }
     out
 }
 
 fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> EntryWitnessSpecs {
     let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let selectors = model.template_selectors_for_entry(actor, entry).expect("entry selectors are valid after model validation");
+    let selector_specs = selectors
+        .values()
+        .cloned()
+        .map(|selector| TemplateSelectorWitnessSpec {
+            name: selector.name,
+            actor_enum: selector.actor_enum,
+            variants: selector.variants,
+        })
+        .collect::<Vec<_>>();
     let byte_actors = entry
         .routes
         .iter()
+        .filter(|route| !selectors.contains_key(&route.actor))
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
-    template_witness_specs_for_actor(actor, model, read_actors, byte_actors)
+    let mut specs = template_witness_specs_for_actor(actor, model, read_actors, byte_actors);
+    specs.selectors = selector_specs;
+    specs
 }
 
 fn template_witness_specs_for_actor(
@@ -1651,7 +2375,7 @@ fn template_witness_specs_for_actor(
                 .or_insert(RouteFamilyWitnessSpec { family_id: family.id.clone(), byte_len: family.table_byte_len() });
         }
     }
-    EntryWitnessSpecs { templates: specs, families: family_specs.into_values().collect() }
+    EntryWitnessSpecs { templates: specs, families: family_specs.into_values().collect(), selectors: Vec::new() }
 }
 
 fn template_witness_specs(
@@ -1805,12 +2529,21 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
             fields: state
                 .fields
                 .iter()
-                .map(|field| FieldArtifact { name: field.name.clone(), ty: type_artifact(&field.ty) })
+                .map(|field| FieldArtifact { name: field.name.clone(), ty: type_artifact(&field.ty, model) })
                 .collect(),
         })
         .collect();
 
     let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
+    let actor_enums = model
+        .actor_enums
+        .values()
+        .map(|actor_enum| ActorEnumArtifact {
+            name: actor_enum.name.clone(),
+            state: actor_enum.state.clone(),
+            variants: actor_enum.variants.clone(),
+        })
+        .collect::<Vec<_>>();
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
     let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts)?;
 
@@ -1820,7 +2553,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         app: model.app_name.clone(),
         root: manifest_path(&program.root),
         modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
-        argent: ArgentArtifact { templates, template_plan, states: states.clone(), actors: argent_actors },
+        argent: ArgentArtifact { templates, template_plan, states: states.clone(), actor_enums, actors: argent_actors },
         sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
     };
     artifact.verify_template_plan().map_err(|err| ArgentError::new(format!("invalid template plan receipt: {err}")))?;
@@ -1875,6 +2608,7 @@ fn template_plan_artifact(
                         template_id: match &param.subject {
                             HiddenParamSubjectArtifact::Actor { actor } => Some(template_receipt_id(actor)),
                             HiddenParamSubjectArtifact::RouteFamily { .. } => None,
+                            HiddenParamSubjectArtifact::TemplateSelector { .. } => None,
                         },
                         subject: param.subject.clone(),
                         param: param.name.clone(),
@@ -2157,7 +2891,7 @@ fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String
         }
     }
     for field in &state.fields {
-        fields.push((field.name.clone(), type_artifact(&field.ty), None));
+        fields.push((field.name.clone(), type_artifact(&field.ty, model), None));
     }
     fields
 }
@@ -2233,11 +2967,32 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             route_proof_id: None,
         });
     }
+    for spec in &witness_specs.selectors {
+        let subject = HiddenParamSubjectArtifact::TemplateSelector { selector: spec.name.clone() };
+        hidden_params.push(HiddenParamArtifact {
+            recipe_id: template_selector_witness_recipe_id(&spec.name, HiddenParamPurposeArtifact::TemplatePrefixBytes),
+            name: hidden_template_selector_prefix_name(&spec.name),
+            ty: TypeArtifact::Bytes,
+            subject: subject.clone(),
+            purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+            route_proof_id: None,
+        });
+        hidden_params.push(HiddenParamArtifact {
+            recipe_id: template_selector_witness_recipe_id(&spec.name, HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            name: hidden_template_selector_suffix_name(&spec.name),
+            ty: TypeArtifact::Bytes,
+            subject,
+            purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+            route_proof_id: None,
+        });
+    }
     hidden_params
 }
 
 fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryArtifact> {
     let hidden_params = hidden_params_for_entry(actor, entry, model);
+    let selectors = model.template_selectors_for_entry(actor, entry)?;
+    let expanded_routes = expand_route_set(&entry.routes, &selectors);
     let witnesses = hidden_params
         .iter()
         .map(|param| WitnessArtifact {
@@ -2257,18 +3012,29 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
         abi: EntryAbiRefArtifact { actor: actor.name.clone(), entry: entry.name.clone() },
         route_plan: entry_route_plan_artifact(actor, entry, model, &witnesses)?,
         hidden_params,
+        template_selectors: model
+            .template_selectors_for_entry(actor, entry)?
+            .into_values()
+            .map(|selector| TemplateSelectorArtifact {
+                name: selector.name,
+                actor_enum: selector.actor_enum,
+                state: selector.state,
+                variants: selector.variants,
+                fixed_actor: selector.fixed_actor,
+            })
+            .collect(),
         witnesses,
         consumes: entry
             .consumes
             .iter()
             .map(|consume| ConsumeArtifact { name: consume.name.clone(), actor: consume.actor.clone() })
             .collect(),
-        emits: emit_spec_artifact(&entry.emits),
-        routes: entry.routes.iter().map(route_artifact).collect(),
+        emits: emit_spec_artifact(&entry.emits, model),
+        routes: expanded_routes.iter().map(route_artifact).collect(),
         terminal_paths: entry
             .terminal_route_sets
             .iter()
-            .map(|routes| TerminalPathArtifact { routes: routes.iter().map(route_artifact).collect() })
+            .map(|routes| TerminalPathArtifact { routes: expand_route_set(routes, &selectors).iter().map(route_artifact).collect() })
             .collect(),
     })
 }
@@ -2298,11 +3064,12 @@ fn entry_route_plan_artifact(
         EntryKind::Leader => Some(active_input.clone()),
         EntryKind::Delegate => consumes.first().cloned(),
     };
-    let outputs = route_output_handles(&entry.emits);
+    let outputs = route_output_handles(&entry.emits, model);
+    let selectors = model.template_selectors_for_entry(actor, entry)?;
     let terminal_paths = entry
         .terminal_route_sets
         .iter()
-        .map(|routes| planned_terminal_path_artifact(actor, routes, entry, model))
+        .map(|routes| planned_terminal_path_artifact(actor, routes, entry, model, &selectors))
         .collect::<Result<Vec<_>>>()?;
 
     Ok(EntryRoutePlanArtifact {
@@ -2322,16 +3089,18 @@ fn consume_cov_index(kind: EntryKind, idx: usize) -> usize {
     }
 }
 
-fn route_output_handles(emits: &EmitSpec) -> Vec<RouteOutputHandleArtifact> {
+fn route_output_handles(emits: &EmitSpec, model: &Model<'_>) -> Vec<RouteOutputHandleArtifact> {
     match emits {
         EmitSpec::None => Vec::new(),
-        EmitSpec::One { actors } => vec![RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }],
+        EmitSpec::One { actors } => {
+            vec![RouteOutputHandleArtifact { name: None, auth_index: 0, actors: model.expand_actor_refs(actors) }]
+        }
         EmitSpec::Outputs(outputs) => outputs
             .iter()
             .map(|output| RouteOutputHandleArtifact {
                 name: Some(output.name.clone()),
                 auth_index: output.auth_index,
-                actors: output.actors.clone(),
+                actors: model.expand_actor_refs(&output.actors),
             })
             .collect(),
     }
@@ -2342,40 +3111,71 @@ fn planned_terminal_path_artifact(
     routes: &[RouteCall],
     entry: &EntryDecl,
     model: &Model<'_>,
+    selectors: &BTreeMap<String, TemplateSelector>,
 ) -> Result<PlannedTerminalPathArtifact> {
     let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
     let byte_actors = routes
         .iter()
+        .filter(|route| !selectors.contains_key(&route.actor))
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
+    let selector_names =
+        routes.iter().filter_map(|route| selectors.get(&route.actor).map(|selector| selector.name.clone())).collect::<BTreeSet<_>>();
 
-    let witness_recipe_ids = witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors, byte_actors));
-    let routes = routes
-        .iter()
-        .map(|route| {
-            let output = route_output_handle(&entry.emits, route)?;
-            Ok(PlannedRouteArtifact {
-                output: output.name.clone(),
-                auth_index: output.auth_index,
-                actor: route.actor.clone(),
-                template_id: template_receipt_id(&route.actor),
-                state_expr: compact_expr(&route.state),
-                witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
-                    witness_recipe_ids_for_specs(template_witness_specs_for_actor(
-                        actor,
-                        model,
-                        BTreeSet::new(),
-                        [route.actor.clone()].into_iter().collect(),
-                    ))
-                } else {
-                    Vec::new()
-                },
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut witness_recipe_ids =
+        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors, byte_actors));
+    for selector_name in &selector_names {
+        witness_recipe_ids.extend(template_selector_witness_recipe_ids(selector_name));
+    }
 
-    Ok(PlannedTerminalPathArtifact { routes, witness_recipe_ids })
+    let mut planned_routes = Vec::new();
+    for route in routes {
+        if let Some(selector) = selectors.get(&route.actor) {
+            let selector_recipe_ids = template_selector_witness_recipe_ids(&selector.name);
+            for variant in selector.route_actors() {
+                let concrete_route = RouteCall { output: route.output.clone(), actor: variant.clone(), state: route.state.clone() };
+                let output = route_output_handle(&entry.emits, &concrete_route, model)?;
+                planned_routes.push(PlannedRouteArtifact {
+                    output: output.name.clone(),
+                    auth_index: output.auth_index,
+                    actor: variant.clone(),
+                    template_id: template_receipt_id(&variant),
+                    state_expr: compact_expr(&route.state),
+                    witness_recipe_ids: selector_recipe_ids.clone(),
+                });
+            }
+            continue;
+        }
+
+        let output = route_output_handle(&entry.emits, route, model)?;
+        planned_routes.push(PlannedRouteArtifact {
+            output: output.name.clone(),
+            auth_index: output.auth_index,
+            actor: route.actor.clone(),
+            template_id: template_receipt_id(&route.actor),
+            state_expr: compact_expr(&route.state),
+            witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
+                witness_recipe_ids_for_specs(template_witness_specs_for_actor(
+                    actor,
+                    model,
+                    BTreeSet::new(),
+                    [route.actor.clone()].into_iter().collect(),
+                ))
+            } else {
+                Vec::new()
+            },
+        });
+    }
+
+    Ok(PlannedTerminalPathArtifact { routes: planned_routes, witness_recipe_ids })
+}
+
+fn template_selector_witness_recipe_ids(selector_name: &str) -> Vec<String> {
+    vec![
+        template_selector_witness_recipe_id(selector_name, HiddenParamPurposeArtifact::TemplatePrefixBytes),
+        template_selector_witness_recipe_id(selector_name, HiddenParamPurposeArtifact::TemplateSuffixBytes),
+    ]
 }
 
 fn witness_recipe_ids_for_specs(specs: EntryWitnessSpecs) -> Vec<String> {
@@ -2385,6 +3185,9 @@ fn witness_recipe_ids_for_specs(specs: EntryWitnessSpecs) -> Vec<String> {
     }
     for spec in specs.families {
         ids.push(route_family_witness_recipe_id(&spec.family_id, HiddenParamPurposeArtifact::RouteFamilyTable));
+    }
+    for spec in specs.selectors {
+        ids.extend(template_selector_witness_recipe_ids(&spec.name));
     }
     ids
 }
@@ -2402,16 +3205,18 @@ fn push_actor_witness_recipe_ids(out: &mut Vec<String>, spec: &TemplateWitnessSp
     }
 }
 
-fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutputHandleArtifact> {
+fn route_output_handle(emits: &EmitSpec, route: &RouteCall, model: &Model<'_>) -> Result<RouteOutputHandleArtifact> {
     match (emits, &route.output) {
-        (EmitSpec::One { actors }, None) => Ok(RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }),
+        (EmitSpec::One { actors }, None) => {
+            Ok(RouteOutputHandleArtifact { name: None, auth_index: 0, actors: model.expand_actor_refs(actors) })
+        }
         (EmitSpec::Outputs(outputs), Some(name)) => outputs
             .iter()
             .find(|output| &output.name == name)
             .map(|output| RouteOutputHandleArtifact {
                 name: Some(output.name.clone()),
                 auth_index: output.auth_index,
-                actors: output.actors.clone(),
+                actors: model.expand_actor_refs(&output.actors),
             })
             .ok_or_else(|| ArgentError::new(format!("route references unknown output `{name}`"))),
         (EmitSpec::Outputs(_), None) => Err(ArgentError::new("named output route is missing an output handle")),
@@ -2421,8 +3226,11 @@ fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutpu
 }
 
 fn sil_entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, model: &Model<'_>) -> SilEntryArtifact {
-    let mut params =
-        entry.params.iter().map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty) }).collect::<Vec<_>>();
+    let mut params = entry
+        .params
+        .iter()
+        .map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty, model) })
+        .collect::<Vec<_>>();
     params.extend(
         hidden_params_for_entry(actor, entry, model).into_iter().map(|param| ParamArtifact { name: param.name, ty: param.ty }),
     );
@@ -2430,17 +3238,17 @@ fn sil_entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, 
     SilEntryArtifact { name: entry.name.clone(), selector: (actor.entries.len() > 1).then_some(entry_index as i64), params }
 }
 
-fn emit_spec_artifact(emits: &EmitSpec) -> EmitArtifact {
+fn emit_spec_artifact(emits: &EmitSpec, model: &Model<'_>) -> EmitArtifact {
     match emits {
         EmitSpec::None => EmitArtifact::None,
-        EmitSpec::One { actors } => EmitArtifact::One { actors: actors.clone() },
+        EmitSpec::One { actors } => EmitArtifact::One { actors: model.expand_actor_refs(actors) },
         EmitSpec::Outputs(outputs) => EmitArtifact::Outputs {
             outputs: outputs
                 .iter()
                 .map(|output| EmitOutputArtifact {
                     name: output.name.clone(),
                     auth_index: output.auth_index,
-                    actors: output.actors.clone(),
+                    actors: model.expand_actor_refs(&output.actors),
                 })
                 .collect(),
         },
@@ -2456,8 +3264,64 @@ fn route_artifact(route: &RouteCall) -> RouteArtifact {
     }
 }
 
-fn type_artifact(ty: &TypeRef) -> TypeArtifact {
-    TypeArtifact::from_parts(&ty.name, ty.array)
+fn lower_type_ref(ty: &TypeRef, model: &Model<'_>) -> String {
+    if model.is_actor_enum_type(ty) { "int".to_string() } else { ty.to_sil() }
+}
+
+fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
+    if model.is_actor_enum_type(ty) { TypeArtifact::Int } else { TypeArtifact::from_parts(&ty.name, ty.array) }
+}
+
+fn actor_enum_variant_index(actor_enum: &ActorEnumInfo, variant: &str) -> Option<usize> {
+    actor_enum.variants.iter().position(|candidate| candidate == variant)
+}
+
+fn actor_enum_variant_const_expr(actor_enum: &ActorEnumInfo, variant: &str) -> Option<String> {
+    actor_enum_variant_index(actor_enum, variant).map(|index| format!("{index} /*{}*/", to_snake(variant).to_ascii_uppercase()))
+}
+
+fn lower_actor_enum_literals(expr: &str, model: &Model<'_>) -> Result<String> {
+    if !expr.contains("::") {
+        return Ok(expr.to_string());
+    }
+    let tokens =
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex actor enum expression `{expr}`: {}", err.message)))?;
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    let mut pos = 0usize;
+    while pos + 3 < tokens.len() {
+        let actor_enum = match &tokens[pos].kind {
+            TokenKind::Ident(actor_enum) => actor_enum,
+            TokenKind::Eof => break,
+            _ => {
+                pos += 1;
+                continue;
+            }
+        };
+        let is_qualified_variant = matches!(tokens[pos + 1].kind, TokenKind::Symbol(':'))
+            && matches!(tokens[pos + 2].kind, TokenKind::Symbol(':'))
+            && matches!(tokens[pos + 3].kind, TokenKind::Ident(_));
+        if !is_qualified_variant {
+            pos += 1;
+            continue;
+        }
+        let Some(actor_enum_info) = model.actor_enums.get(actor_enum) else {
+            pos += 1;
+            continue;
+        };
+        let variant = match &tokens[pos + 3].kind {
+            TokenKind::Ident(variant) => variant,
+            _ => unreachable!("checked qualified variant"),
+        };
+        let value = actor_enum_variant_const_expr(actor_enum_info, variant)
+            .ok_or_else(|| ArgentError::new(format!("actor enum `{actor_enum}` has no variant `{variant}` in expression `{expr}`")))?;
+        out.push_str(&expr[cursor..tokens[pos].span.start]);
+        out.push_str(&value);
+        cursor = tokens[pos + 3].span.end;
+        pos += 4;
+    }
+    out.push_str(&expr[cursor..]);
+    Ok(out)
 }
 
 fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
@@ -2764,6 +3628,10 @@ fn route_family_witness_recipe_id(family_id: &str, purpose: HiddenParamPurposeAr
     format!("witness/{}/{}", route_family_suffix_by_id(family_id), hidden_param_purpose_id(purpose))
 }
 
+fn template_selector_witness_recipe_id(selector: &str, purpose: HiddenParamPurposeArtifact) -> String {
+    format!("witness/template_selector/{selector}/{}", hidden_param_purpose_id(purpose))
+}
+
 fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
     match purpose {
         HiddenParamPurposeArtifact::TemplatePrefixBytes => "template_prefix_bytes",
@@ -2791,6 +3659,30 @@ fn hidden_witness_prefix_len_name(actor: &str) -> String {
 
 fn hidden_witness_suffix_len_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{}_suffix_len", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_selector_prefix_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_prefix")
+}
+
+fn hidden_template_selector_suffix_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix")
+}
+
+fn hidden_template_selector_prefix_len_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_prefix_len")
+}
+
+fn hidden_template_selector_suffix_len_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix_len")
+}
+
+fn hidden_template_selector_index_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_selector")
+}
+
+fn hidden_template_selector_template_name(selector: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{selector}_template")
 }
 
 fn hidden_cov_id_name() -> String {
@@ -3493,6 +4385,22 @@ mod tests {
         );
 
         assert_eq!(
+            artifact
+                .argent
+                .actor_enums
+                .iter()
+                .map(|actor_enum| {
+                    (
+                        actor_enum.name.as_str(),
+                        actor_enum.state.as_str(),
+                        actor_enum.variants.iter().map(String::as_str).collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("MoveActor", "BoardState", vec!["Pawn", "Knight"])]
+        );
+
+        assert_eq!(
             runtime_state_plan(&artifact, "Player").expect("Player runtime role overlay exists").field_roles[..3]
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
@@ -3532,6 +4440,55 @@ mod tests {
                 ("gen__mux_routes", "route_family/BoardState/mux", HiddenParamPurposeArtifact::RouteFamilyTable, None),
             ]
         );
+
+        let mux_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Mux").expect("Mux actor exists");
+        let choose = mux_actor.entries.iter().find(|entry| entry.name == "choose").expect("choose entry exists");
+        assert_eq!(
+            choose
+                .template_selectors
+                .iter()
+                .map(|selector| {
+                    (
+                        selector.name.as_str(),
+                        selector.actor_enum.as_str(),
+                        selector.state.as_str(),
+                        selector.variants.iter().map(String::as_str).collect::<Vec<_>>(),
+                        selector.fixed_actor.as_deref(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("target", "MoveActor", "BoardState", vec!["Pawn", "Knight"], None)]
+        );
+        assert_eq!(
+            choose
+                .hidden_params
+                .iter()
+                .map(|param| (param.name.as_str(), subject_label(&param.subject), param.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__target_prefix", "target", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__target_suffix", "target", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+        let choose_knight_const =
+            mux_actor.entries.iter().find(|entry| entry.name == "choose_knight_const").expect("choose_knight_const entry exists");
+        assert_eq!(
+            choose_knight_const
+                .template_selectors
+                .iter()
+                .map(|selector| {
+                    (
+                        selector.name.as_str(),
+                        selector.actor_enum.as_str(),
+                        selector.state.as_str(),
+                        selector.variants.iter().map(String::as_str).collect::<Vec<_>>(),
+                        selector.fixed_actor.as_deref(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("target", "MoveActor", "BoardState", vec!["Pawn", "Knight"], Some("Knight"))]
+        );
+        assert_eq!(choose_knight_const.routes.iter().map(|route| route.actor.as_str()).collect::<Vec<_>>(), vec!["Knight"]);
         artifact.verify_template_plan().expect("template plan receipt verifies inferred route family");
     }
 
@@ -3567,6 +4524,31 @@ mod tests {
         let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
         assert!(mux_sil.contains("byte[64] gen__init_mux_routes"), "{mux_sil}");
         assert!(mux_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{mux_sil}");
+        assert!(
+            mux_sil.contains("entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix)"),
+            "{mux_sil}"
+        );
+        assert!(mux_sil.contains("if (target == 1 /*KNIGHT*/)"), "{mux_sil}");
+        assert!(mux_sil.contains("int gen__target_selector = target;"), "{mux_sil}");
+        assert!(mux_sil.contains("require(gen__target_selector >= 0);"), "{mux_sil}");
+        assert!(mux_sil.contains("require(gen__target_selector < 2);"), "{mux_sil}");
+        assert!(
+            mux_sil.contains(
+                "byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));"
+            ),
+            "{mux_sil}"
+        );
+        assert!(
+            mux_sil.contains(
+                "validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);"
+            ),
+            "{mux_sil}"
+        );
+        assert!(
+            mux_sil.contains("entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix)"),
+            "{mux_sil}"
+        );
+        assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(32, 64));"), "{mux_sil}");
         assert!(mux_sil.contains("validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__pawn_template);"), "{mux_sil}");
@@ -3577,6 +4559,220 @@ mod tests {
         assert!(pawn_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__pawn_template"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__knight_template"), "{pawn_sil}");
+    }
+
+    #[test]
+    fn actor_enum_order_drives_route_table_order() {
+        let source = toy_chess_source().replace(
+            "actor enum MoveActor {\n                Pawn;\n                Knight;\n            }",
+            "actor enum MoveActor {\n                Knight;\n                Pawn;\n            }",
+        );
+        let path = PathBuf::from("toy-chess-selector-order.ag");
+        let module = crate::parser::parse_module(path.clone(), source).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("reordered selector enum defines route table order");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        let board_table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route table exists");
+        assert_eq!(
+            board_table.entries.iter().map(|entry| entry.leaf.clone()).collect::<Vec<_>>(),
+            vec![
+                RouteTemplateLeafArtifact::Template { actor: "Knight".to_string(), template_id: "template/knight".to_string() },
+                RouteTemplateLeafArtifact::Template { actor: "Pawn".to_string(), template_id: "template/pawn".to_string() },
+            ]
+        );
+        assert_eq!(
+            runtime_state_plan(&artifact, "Mux").expect("Mux runtime role overlay exists").field_roles[1].role,
+            RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["Knight".to_string(), "Pawn".to_string()] }
+        );
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("if (target == 0 /*KNIGHT*/)"), "{mux_sil}");
+        assert!(mux_sil.contains("int gen__target_selector = 0 /*KNIGHT*/;"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(0, 32));"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(32, 64));"), "{mux_sil}");
+    }
+
+    #[test]
+    fn fixed_actor_enum_selector_still_builds_full_selector_table() {
+        let path = PathBuf::from("fixed-selector-table.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state BoardState {
+                int ply;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Mux owns BoardState {
+                entry choose_knight_const() emits one MoveActor {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+
+                    actor<BoardState> target = MoveActor::Knight;
+                    become target(next_board);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            app FixedSelectorTable {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("fixed selector still infers the full enum table");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        let board_table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route table exists");
+        assert_eq!(
+            board_table.entries.iter().map(|entry| entry.leaf.clone()).collect::<Vec<_>>(),
+            vec![
+                RouteTemplateLeafArtifact::Template { actor: "Pawn".to_string(), template_id: "template/pawn".to_string() },
+                RouteTemplateLeafArtifact::Template { actor: "Knight".to_string(), template_id: "template/knight".to_string() },
+            ]
+        );
+
+        let mux_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Mux").expect("Mux actor exists");
+        let choose_knight_const = mux_actor.entries.iter().find(|entry| entry.name == "choose_knight_const").expect("entry exists");
+        assert_eq!(
+            choose_knight_const
+                .template_selectors
+                .iter()
+                .map(|selector| (selector.name.as_str(), selector.fixed_actor.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("target", Some("Knight"))]
+        );
+        assert_eq!(choose_knight_const.routes.iter().map(|route| route.actor.as_str()).collect::<Vec<_>>(), vec!["Knight"]);
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
+        assert!(
+            mux_sil.contains(
+                "byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));"
+            ),
+            "{mux_sil}"
+        );
+        artifact.verify_template_plan().expect("template plan receipt verifies");
+    }
+
+    #[test]
+    fn actor_enums_over_same_route_table_must_use_one_order() {
+        let source = r#"
+            state BoardState {
+                int selector;
+                int ply;
+            }
+
+            actor enum FirstMove {
+                Pawn;
+                Knight;
+            }
+
+            actor enum SecondMove {
+                Knight;
+                Pawn;
+            }
+
+            actor Mux owns BoardState {
+                entry choose_first(target: FirstMove) emits one FirstMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+
+                entry choose_second(target: SecondMove) emits one SecondMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+            }
+
+            actor Pawn owns BoardState {}
+            actor Knight owns BoardState {}
+
+            app ConflictingSelectorOrder {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+            }
+        "#;
+        let path = PathBuf::from("conflicting-selector-order.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let err = Model::from_program(&program).expect_err("conflicting actor enum orders must be rejected");
+        assert!(err.to_string().contains("different selector order"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_actor_enum_variants_with_different_owned_states() {
+        let artifact_source = r#"
+            state AState {
+                int n;
+            }
+
+            state BState {
+                int n;
+            }
+
+            actor A owns AState {}
+            actor B owns BState {}
+
+            actor enum MixedActor {
+                A;
+                B;
+            }
+
+            app BadEnum {
+                actor A;
+                actor B;
+            }
+            "#;
+        let path = PathBuf::from("bad-actor-enum.ag");
+        let module = crate::parser::parse_module(path.clone(), artifact_source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let err = Model::from_program(&program).expect_err("mixed actor enum state must be rejected");
+        assert!(err.to_string().contains("variant `B` owns state `BState`, expected `AState`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -3870,6 +5066,11 @@ mod tests {
                 int ply;
             }
 
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
             actor League owns LeagueState {
                 entry register() emits one Player {
                     PlayerState next_player = {
@@ -3890,6 +5091,29 @@ mod tests {
             }
 
             actor Mux owns BoardState {
+                entry choose(target: MoveActor) emits one MoveActor {
+                    if (target == MoveActor::Knight) {
+                        require(selector >= 0);
+                    }
+
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+
+                    become target(next_board);
+                }
+
+                entry choose_knight_const() emits one MoveActor {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+
+                    actor<BoardState> target = MoveActor::Knight;
+                    become target(next_board);
+                }
+
                 entry choose_pawn() emits one Pawn {
                     BoardState next_board = {
                         selector: selector,
@@ -4040,6 +5264,7 @@ mod tests {
             states: Vec::new(),
             functions: Vec::new(),
             actors: Vec::new(),
+            actor_enums: Vec::new(),
             apps: Vec::new(),
         }
     }
@@ -4132,6 +5357,7 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
+            HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
         }
     }
 
@@ -4168,6 +5394,7 @@ mod tests {
                     },
                     ActorDecl { name: "Game".to_string(), state: "GameState".to_string(), entries: Vec::new() },
                 ],
+                actor_enums: Vec::new(),
                 apps: vec![AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string(), "Game".to_string()] }],
             }],
         }

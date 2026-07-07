@@ -68,6 +68,12 @@ pub enum BuilderError {
     NestedRouteFamilyTableLeaf { table_id: String, family_id: String },
     #[error("hidden param `{param}` has the wrong subject kind; expected {expected}")]
     UnexpectedHiddenSubject { param: String, expected: &'static str },
+    #[error("entry `{actor}::{entry}` does not define template selector `{selector}`")]
+    UnknownTemplateSelector { actor: String, entry: String, selector: String },
+    #[error("template selector `{selector}` requires a selected actor")]
+    MissingTemplateSelectorChoice { selector: String },
+    #[error("template selector `{selector}` cannot select actor `{actor}`")]
+    InvalidTemplateSelectorChoice { selector: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
     #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
@@ -129,21 +135,55 @@ impl<'a> TxBuilder<'a> {
         input_source_state: BTreeMap<String, ArtifactValue>,
         user_args: Vec<ArtifactValue>,
     ) -> BuilderResult<Vec<u8>> {
+        self.p2sh_signature_script_with_template_selectors(actor_name, entry_name, input_source_state, user_args, &BTreeMap::new())
+    }
+
+    pub fn p2sh_signature_script_with_template_selector(
+        &self,
+        actor_name: &str,
+        entry_name: &str,
+        input_source_state: BTreeMap<String, ArtifactValue>,
+        user_args: Vec<ArtifactValue>,
+        selector: &str,
+        selected_actor: &str,
+    ) -> BuilderResult<Vec<u8>> {
+        let mut template_selectors = BTreeMap::new();
+        template_selectors.insert(selector.to_string(), selected_actor.to_string());
+        self.p2sh_signature_script_with_template_selectors(actor_name, entry_name, input_source_state, user_args, &template_selectors)
+    }
+
+    fn p2sh_signature_script_with_template_selectors(
+        &self,
+        actor_name: &str,
+        entry_name: &str,
+        input_source_state: BTreeMap<String, ArtifactValue>,
+        user_args: Vec<ArtifactValue>,
+        template_selectors: &BTreeMap<String, String>,
+    ) -> BuilderResult<Vec<u8>> {
         let contract = self.contract(actor_name)?;
         let sil_entry = contract
             .entry(entry_name)
             .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
         let argent_entry = self.entry(actor_name, entry_name)?;
+        for selector in template_selectors.keys() {
+            if argent_entry.template_selectors.iter().all(|candidate| &candidate.name != selector) {
+                return Err(BuilderError::UnknownTemplateSelector {
+                    actor: actor_name.to_string(),
+                    entry: entry_name.to_string(),
+                    selector: selector.clone(),
+                });
+            }
+        }
         let mut args = user_args;
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let actor = hidden_actor_subject(hidden)?;
-                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?)
+                    let actor = hidden_template_actor(hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(&actor)?.compiled.template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let actor = hidden_actor_subject(hidden)?;
-                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?)
+                    let actor = hidden_template_actor(hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(&actor)?.compiled.template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
                     let actor = hidden_actor_subject(hidden)?;
@@ -434,7 +474,7 @@ impl<'a> TxBuilder<'a> {
 fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
-        HiddenParamSubjectArtifact::RouteFamily { .. } => {
+        HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
         }
     }
@@ -443,8 +483,48 @@ fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
 fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
-        HiddenParamSubjectArtifact::Actor { .. } => {
+        HiddenParamSubjectArtifact::Actor { .. } | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
+        }
+    }
+}
+
+fn hidden_template_actor(
+    hidden: &HiddenParamArtifact,
+    entry: &EntryArtifact,
+    template_selectors: &BTreeMap<String, String>,
+) -> BuilderResult<String> {
+    match &hidden.subject {
+        HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.clone()),
+        HiddenParamSubjectArtifact::TemplateSelector { selector: selector_name } => {
+            let selector = entry
+                .template_selectors
+                .iter()
+                .find(|candidate| candidate.name == *selector_name)
+                .ok_or_else(|| BuilderError::MissingTemplateSelectorChoice { selector: selector_name.clone() })?;
+            let selected_actor = match (template_selectors.get(selector_name), selector.fixed_actor.as_ref()) {
+                (Some(selected_actor), Some(fixed_actor)) if selected_actor != fixed_actor => {
+                    return Err(BuilderError::InvalidTemplateSelectorChoice {
+                        selector: selector.name.clone(),
+                        actor: selected_actor.clone(),
+                    });
+                }
+                (Some(selected_actor), _) => selected_actor,
+                (None, Some(fixed_actor)) => fixed_actor,
+                (None, None) => {
+                    return Err(BuilderError::MissingTemplateSelectorChoice { selector: selector_name.clone() });
+                }
+            };
+            if selector.variants.iter().all(|variant| variant != selected_actor) {
+                return Err(BuilderError::InvalidTemplateSelectorChoice {
+                    selector: selector.name.clone(),
+                    actor: selected_actor.clone(),
+                });
+            }
+            Ok(selected_actor.clone())
+        }
+        HiddenParamSubjectArtifact::RouteFamily { .. } => {
+            Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
         }
     }
 }

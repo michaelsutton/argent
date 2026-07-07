@@ -34,6 +34,57 @@ contract Mux(
     int ply = init_ply;
 
     // :: entrypoints
+    entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
+        // :: witness lens
+        int gen__target_prefix_len = gen__target_prefix.length;
+        int gen__target_suffix_len = gen__target_suffix.length;
+
+        // :: auth outputs
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
+
+        if (target == 1 /*KNIGHT*/) {
+            require(selector >= 0);
+        }
+        State next_board = {
+            gen__mux_template: gen__mux_template,
+            gen__mux_routes: gen__mux_routes,
+            // :: gen__ ^ | src:
+            selector: selector,
+            ply: ply + 1,
+        };
+        int gen__target_selector = target;
+        require(gen__target_selector >= 0);
+        require(gen__target_selector < 2);
+        byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));
+        // :: become target
+        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);
+    }
+
+    entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix) {
+        // :: witness lens
+        int gen__target_prefix_len = gen__target_prefix.length;
+        int gen__target_suffix_len = gen__target_suffix.length;
+
+        // :: auth outputs
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
+
+        State next_board = {
+            gen__mux_template: gen__mux_template,
+            gen__mux_routes: gen__mux_routes,
+            // :: gen__ ^ | src:
+            selector: selector,
+            ply: ply + 1,
+        };
+        int gen__target_selector = 1 /*KNIGHT*/;
+        require(gen__target_selector >= 0);
+        require(gen__target_selector < 2);
+        byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));
+        // :: become target
+        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);
+    }
+
     entrypoint function choose_pawn(byte[] gen__pawn_prefix, byte[] gen__pawn_suffix) {
         // :: witness lens
         int gen__pawn_prefix_len = gen__pawn_prefix.length;

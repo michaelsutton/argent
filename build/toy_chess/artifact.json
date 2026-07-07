@@ -58,7 +58,7 @@
           "actor": "Mux",
           "contract": "Mux",
           "symbol": "gen__mux_template",
-          "hash_hex": "55918f7386bf9217fac71f7f34f79632f7a43a085f28ede1d8769bfff7a24771"
+          "hash_hex": "c2e0e2114c9a0f078c77ec7a38069b14867992f095b82368d8c1bfdd75c1f586"
         },
         {
           "id": "template/pawn",
@@ -338,6 +338,28 @@
           }
         },
         {
+          "id": "witness/template_selector/target/template_prefix_bytes",
+          "subject": {
+            "kind": "template_selector",
+            "selector": "target"
+          },
+          "param": "gen__target_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/template_selector/target/template_suffix_bytes",
+          "subject": {
+            "kind": "template_selector",
+            "selector": "target"
+          },
+          "param": "gen__target_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
           "id": "witness/pawn/template_prefix_bytes",
           "template_id": "template/pawn",
           "subject": {
@@ -425,6 +447,16 @@
               "kind": "int"
             }
           }
+        ]
+      }
+    ],
+    "actor_enums": [
+      {
+        "name": "MoveActor",
+        "state": "BoardState",
+        "variants": [
+          "Pawn",
+          "Knight"
         ]
       }
     ],
@@ -520,6 +552,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/player/template_prefix_bytes",
@@ -683,6 +716,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/mux/template_prefix_bytes",
@@ -755,6 +789,328 @@
           "actor": "Mux"
         },
         "entries": [
+          {
+            "name": "choose",
+            "kind": "leader",
+            "abi": {
+              "actor": "Mux",
+              "entry": "choose"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Pawn",
+                    "Knight"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Pawn",
+                      "template_id": "template/pawn",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/template_selector/target/template_prefix_bytes",
+                        "witness/template_selector/target/template_suffix_bytes"
+                      ]
+                    },
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Knight",
+                      "template_id": "template/knight",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/template_selector/target/template_prefix_bytes",
+                        "witness/template_selector/target/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/template_selector/target/template_prefix_bytes",
+                    "witness/template_selector/target/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/template_selector/target/template_prefix_bytes",
+                "witness/template_selector/target/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/template_selector/target/template_prefix_bytes",
+                "name": "gen__target_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/template_selector/target/template_suffix_bytes",
+                "name": "gen__target_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "template_selectors": [
+              {
+                "name": "target",
+                "actor_enum": "MoveActor",
+                "state": "BoardState",
+                "variants": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/template_selector/target/template_prefix_bytes",
+                "param": "gen__target_prefix",
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/template_selector/target/template_suffix_bytes",
+                "param": "gen__target_suffix",
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Pawn",
+                "Knight"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Pawn",
+                "template_id": "template/pawn",
+                "state_expr": "next_board"
+              },
+              {
+                "output": null,
+                "actor": "Knight",
+                "template_id": "template/knight",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Pawn",
+                    "template_id": "template/pawn",
+                    "state_expr": "next_board"
+                  },
+                  {
+                    "output": null,
+                    "actor": "Knight",
+                    "template_id": "template/knight",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "choose_knight_const",
+            "kind": "leader",
+            "abi": {
+              "actor": "Mux",
+              "entry": "choose_knight_const"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Pawn",
+                    "Knight"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Knight",
+                      "template_id": "template/knight",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/template_selector/target/template_prefix_bytes",
+                        "witness/template_selector/target/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/template_selector/target/template_prefix_bytes",
+                    "witness/template_selector/target/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/template_selector/target/template_prefix_bytes",
+                "witness/template_selector/target/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/template_selector/target/template_prefix_bytes",
+                "name": "gen__target_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/template_selector/target/template_suffix_bytes",
+                "name": "gen__target_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "template_selectors": [
+              {
+                "name": "target",
+                "actor_enum": "MoveActor",
+                "state": "BoardState",
+                "variants": [
+                  "Pawn",
+                  "Knight"
+                ],
+                "fixed_actor": "Knight"
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/template_selector/target/template_prefix_bytes",
+                "param": "gen__target_prefix",
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/template_selector/target/template_suffix_bytes",
+                "param": "gen__target_suffix",
+                "subject": {
+                  "kind": "template_selector",
+                  "selector": "target"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Pawn",
+                "Knight"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Knight",
+                "template_id": "template/knight",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Knight",
+                    "template_id": "template/knight",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          },
           {
             "name": "choose_pawn",
             "kind": "leader",
@@ -839,6 +1195,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/pawn/template_prefix_bytes",
@@ -975,6 +1332,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/knight/template_prefix_bytes",
@@ -1120,6 +1478,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/mux/template_prefix_bytes",
@@ -1265,6 +1624,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/mux/template_prefix_bytes",
@@ -1544,8 +1904,50 @@
         },
         "entries": [
           {
-            "name": "choose_pawn",
+            "name": "choose",
             "selector": 0,
+            "params": [
+              {
+                "name": "target",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__target_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__target_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          },
+          {
+            "name": "choose_knight_const",
+            "selector": 1,
+            "params": [
+              {
+                "name": "gen__target_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__target_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          },
+          {
+            "name": "choose_pawn",
+            "selector": 2,
             "params": [
               {
                 "name": "gen__pawn_prefix",
@@ -1563,7 +1965,7 @@
           },
           {
             "name": "choose_knight",
-            "selector": 1,
+            "selector": 3,
             "params": [
               {
                 "name": "gen__knight_prefix",
@@ -1581,11 +1983,11 @@
           }
         ],
         "compiled": {
-          "script_hex": "6b20000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000006c76009c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776519c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551677500696868",
+          "script_hex": "6b20000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000006c76009c6375b9cb519c695679519c637800a2696856797600a26976529f69567956797e5479527901209553790120950120937f7caa8769547901207c7e547901407c7e547958cd01087c7e5479519358cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc38769007a7575757575757575516776519c6375b9cb519c69517600a26976529f69567956797e5479527901209553790120950120937f7caa8769547901207c7e547901407c7e547958cd01087c7e5479519358cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75757575757575516776529c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776539c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516775006968686868",
           "template": {
             "prefix_hex": "6b",
-            "suffix_hex": "6c76009c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776519c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551677500696868",
-            "hash_hex": "55918f7386bf9217fac71f7f34f79632f7a43a085f28ede1d8769bfff7a24771"
+            "suffix_hex": "6c76009c6375b9cb519c695679519c637800a2696856797600a26976529f69567956797e5479527901209553790120950120937f7caa8769547901207c7e547901407c7e547958cd01087c7e5479519358cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc38769007a7575757575757575516776519c6375b9cb519c69517600a26976529f69567956797e5479527901209553790120950120937f7caa8769547901207c7e547901407c7e547958cd01087c7e5479519358cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75757575757575516776529c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776539c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516775006968686868",
+            "hash_hex": "c2e0e2114c9a0f078c77ec7a38069b14867992f095b82368d8c1bfdd75c1f586"
           },
           "state_span": {
             "offset": 1,

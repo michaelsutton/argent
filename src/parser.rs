@@ -26,6 +26,7 @@ impl Parser {
             states: Vec::new(),
             functions: Vec::new(),
             actors: Vec::new(),
+            actor_enums: Vec::new(),
             apps: Vec::new(),
         };
 
@@ -39,7 +40,11 @@ impl Parser {
             } else if self.check_ident("fn") {
                 module.functions.push(self.parse_function()?);
             } else if self.check_ident("actor") {
-                module.actors.push(self.parse_actor()?);
+                if self.peek_ident(1, "enum") {
+                    module.actor_enums.push(self.parse_actor_enum()?);
+                } else {
+                    module.actors.push(self.parse_actor()?);
+                }
             } else if self.check_ident("app") {
                 module.apps.push(self.parse_app()?);
             } else {
@@ -116,6 +121,25 @@ impl Parser {
         }
         self.expect_symbol('}')?;
         Ok(ActorDecl { name, state, entries })
+    }
+
+    fn parse_actor_enum(&mut self) -> Result<ActorEnumDecl> {
+        self.expect_ident("actor")?;
+        self.expect_ident("enum")?;
+        let name = self.expect_any_ident()?;
+        self.expect_symbol('{')?;
+        let mut variants = Vec::new();
+        while !self.check_symbol('}') {
+            variants.push(self.expect_any_ident()?);
+            if self.consume_symbol(';') || self.consume_symbol(',') {
+                continue;
+            }
+            if !self.check_symbol('}') {
+                return Err(self.error(format!("expected `;`, `,`, or `}}`, found {}", self.describe_current())));
+            }
+        }
+        self.expect_symbol('}')?;
+        Ok(ActorEnumDecl { name, variants })
     }
 
     fn parse_actor_item(&mut self) -> Result<EntryDecl> {
@@ -330,6 +354,10 @@ impl Parser {
             }
             _ => false,
         }
+    }
+
+    fn peek_ident(&self, offset: usize, expected: &str) -> bool {
+        matches!(self.tokens.get(self.pos + offset).map(|token| &token.kind), Some(TokenKind::Ident(actual)) if actual == expected)
     }
 
     fn expect_any_ident(&mut self) -> Result<String> {

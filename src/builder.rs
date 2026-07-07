@@ -36,6 +36,7 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
+            HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
         }
     }
 
@@ -421,6 +422,144 @@ mod tests {
         let choose_pawn_tx =
             TxBuilder::transaction(vec![TxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript.clone())], vec![pawn_output]);
         execute_input_with_covenants(&choose_pawn_tx, vec![mux_utxo.clone()], 0).expect("Mux can route to Pawn by table slice");
+
+        let dynamic_pawn_next = board_state(7, 1);
+        let dynamic_pawn_output = builder
+            .covenant_output("Pawn", dynamic_pawn_next.clone(), input_value, 0, covenant_id)
+            .expect("dynamic Pawn output builds");
+        let dynamic_pawn_sigscript = builder
+            .p2sh_signature_script_with_template_selector(
+                "Mux",
+                "choose",
+                mux_initial.clone(),
+                vec![ArtifactValue::Int(0)],
+                "target",
+                "Pawn",
+            )
+            .expect("selector sigscript fills Pawn template lens");
+        let dynamic_pawn_tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, dynamic_pawn_sigscript.clone())],
+            vec![dynamic_pawn_output],
+        );
+        execute_input_with_covenants(&dynamic_pawn_tx, vec![mux_utxo.clone()], 0)
+            .expect("Mux can route through an actor enum selector");
+
+        let dynamic_knight_output =
+            builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("dynamic Knight output builds");
+        let dynamic_knight_sigscript = builder
+            .p2sh_signature_script_with_template_selector(
+                "Mux",
+                "choose",
+                mux_initial.clone(),
+                vec![ArtifactValue::Int(1)],
+                "target",
+                "Knight",
+            )
+            .expect("selector sigscript fills Knight template lens");
+        let dynamic_knight_tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, dynamic_knight_sigscript)],
+            vec![dynamic_knight_output],
+        );
+        execute_input_with_covenants(&dynamic_knight_tx, vec![mux_utxo.clone()], 0)
+            .expect("Mux selector can choose the second table entry");
+
+        let missing_selector = builder
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), vec![ArtifactValue::Int(0)])
+            .expect_err("selector entries require an explicit template choice");
+        assert!(
+            matches!(missing_selector, BuilderError::MissingTemplateSelectorChoice { ref selector } if selector == "target"),
+            "unexpected error: {missing_selector}"
+        );
+
+        let invalid_selector = builder
+            .p2sh_signature_script_with_template_selector(
+                "Mux",
+                "choose",
+                mux_initial.clone(),
+                vec![ArtifactValue::Int(0)],
+                "target",
+                "League",
+            )
+            .expect_err("selector must choose one of the actor enum variants");
+        assert!(
+            matches!(
+                invalid_selector,
+                BuilderError::InvalidTemplateSelectorChoice { ref selector, ref actor }
+                    if selector == "target" && actor == "League"
+            ),
+            "unexpected error: {invalid_selector}"
+        );
+
+        let out_of_range_selector = builder
+            .p2sh_signature_script_with_template_selector(
+                "Mux",
+                "choose",
+                mux_initial.clone(),
+                vec![ArtifactValue::Int(2)],
+                "target",
+                "Pawn",
+            )
+            .expect("selector sigscript can encode an out-of-range selector value");
+        let out_of_range_tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, out_of_range_selector)],
+            vec![
+                builder
+                    .covenant_output("Pawn", board_state(7, 1), input_value, 0, covenant_id)
+                    .expect("out-of-range Pawn output builds"),
+            ],
+        );
+        assert!(
+            execute_input_with_covenants(&out_of_range_tx, vec![mux_utxo.clone()], 0).is_err(),
+            "selector index must be bounded by the actor enum variant count"
+        );
+
+        let wrong_selector_witness = builder
+            .p2sh_signature_script_with_template_selector(
+                "Mux",
+                "choose",
+                mux_initial.clone(),
+                vec![ArtifactValue::Int(0)],
+                "target",
+                "Knight",
+            )
+            .expect("selector sigscript can encode mismatched witness material");
+        let wrong_selector_tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, wrong_selector_witness)],
+            vec![
+                builder
+                    .covenant_output("Pawn", dynamic_pawn_next, input_value, 0, covenant_id)
+                    .expect("dynamic wrong-witness Pawn output builds"),
+            ],
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_selector_tx, vec![mux_utxo.clone()], 0).is_err(),
+            "selector witness must match the actor selected by table index"
+        );
+
+        let const_knight_sigscript = builder
+            .p2sh_signature_script("Mux", "choose_knight_const", mux_initial.clone(), Vec::new())
+            .expect("fixed actor enum selector fills Knight template lens");
+        let const_knight_tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, const_knight_sigscript.clone())],
+            vec![
+                builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("const Knight output builds"),
+            ],
+        );
+        execute_input_with_covenants(&const_knight_tx, vec![mux_utxo.clone()], 0)
+            .expect("fixed actor enum selector can route to Knight without caller selector metadata");
+
+        let const_wrong_output = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(mux_outpoint, const_knight_sigscript)],
+            vec![
+                builder
+                    .covenant_output("Pawn", board_state(7, 1), input_value, 0, covenant_id)
+                    .expect("const wrong Pawn output builds"),
+            ],
+        );
+        assert!(
+            execute_input_with_covenants(&const_wrong_output, vec![mux_utxo.clone()], 0).is_err(),
+            "fixed actor enum selector must reject a non-Knight output"
+        );
 
         let wrong_worker_output =
             builder.covenant_output("Knight", pawn_next, input_value, 0, covenant_id).expect("wrong worker output builds");
