@@ -1,0 +1,38 @@
+name: Quality Control
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.94.0
+          components: rustfmt, clippy
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: argent-v1
+          shared-key: ${{ github.job }}
+          cache-on-failure: "false"
+          cache-bin: "false"
+          cache-all-crates: "false"
+          cache-workspace-crates: "true"
+          add-job-id-key: "false"
+          save-if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+      - name: Run full checks
+        run: ./check.sh --full
+
+      - name: Verify generated artifacts are current
+        run: git diff --exit-code
