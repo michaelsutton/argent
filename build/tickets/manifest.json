@@ -5,8 +5,8 @@
     "examples/tickets.ag"
   ],
   "templates": [
-    { "actor": "Issuer", "symbol": "gen__template_issuer", "hash": null },
-    { "actor": "Ticket", "symbol": "gen__template_ticket", "hash": null }
+    { "actor": "Issuer", "symbol": "gen__issuer_template", "hash": null },
+    { "actor": "Ticket", "symbol": "gen__ticket_template", "hash": null }
   ],
   "actors": [
     {

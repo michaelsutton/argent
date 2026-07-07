@@ -4,10 +4,9 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Player(
-    byte[32] gen__init_template_league,
-    byte[32] gen__init_template_player,
-    byte[32] gen__init_template_stones_game,
-    byte[32] gen__init_template_stones_settle,
+    byte[32] gen__init_player_template,
+    byte[32] gen__init_stones_game_template,
+    byte[32] gen__init_stones_settle_template,
     byte[32] init_owner,
     byte[32] init_player_id,
     int init_open_games,
@@ -15,30 +14,28 @@ contract Player(
     int init_wins,
     int init_losses
 ) {
-    // Shared constants
+    // :: shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // State layouts
+    // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct GameState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
         int pile;
@@ -46,17 +43,16 @@ contract Player(
         int turn;
     }
     struct SettleState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
         int status;
     }
 
-    // Shared helper functions
+    // :: shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -85,13 +81,12 @@ contract Player(
         return result;
     }
 
-    // Template capability table
-    byte[32] gen__template_league = gen__init_template_league;
-    byte[32] gen__template_player = gen__init_template_player;
-    byte[32] gen__template_stones_game = gen__init_template_stones_game;
-    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
+    // :: route templates
+    byte[32] gen__player_template = gen__init_player_template;
+    byte[32] gen__stones_game_template = gen__init_stones_game_template;
+    byte[32] gen__stones_settle_template = gen__init_stones_settle_template;
 
-    // Player state fields
+    // :: state fields: Player
     byte[32] owner = init_owner;
     byte[32] player_id = init_player_id;
     int open_games = init_open_games;
@@ -99,16 +94,20 @@ contract Player(
     int wins = init_wins;
     int losses = init_losses;
 
-    // Entrypoints
+    // :: entrypoints
     entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix) {
+        // :: witness lens
         int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
         int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
 
+        // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) == 2);
         require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
         int gen__opponent_input_idx = OpCovInputIdx(gen__cov_id, 1); // input Player at cov[1]
-        State opponent = readInputStateWithTemplate(gen__opponent_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
+        State opponent = readInputStateWithTemplate(gen__opponent_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 3);
         int gen__self_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output self_out: Player
         int gen__opponent_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output opponent_out: Player
@@ -123,11 +122,10 @@ contract Player(
         byte[32] self_ref = player_ref(owner, player_id);
         byte[32] opponent_ref = player_ref(opponent.owner, opponent.player_id);
         State next_self = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
+            // :: gen__ ^ | src:
             owner: owner,
             player_id: player_id,
             open_games: open_games + 1,
@@ -136,11 +134,10 @@ contract Player(
             losses: losses,
         };
         State next_opponent = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
+            // :: gen__ ^ | src:
             owner: opponent.owner,
             player_id: opponent.player_id,
             open_games: opponent.open_games + 1,
@@ -149,11 +146,10 @@ contract Player(
             losses: opponent.losses,
         };
         GameState next_game = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
+            // :: gen__ ^ | src:
             player_a: self_ref,
             player_b: opponent_ref,
             pile: pile,
@@ -163,17 +159,23 @@ contract Player(
         require(tx.outputs[gen__self_out_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__opponent_out_output_idx].value == tx.inputs[gen__opponent_input_idx].value);
         require(tx.outputs[gen__game_output_idx].value > 0);
+        // :: become Player
         validateOutputState(gen__self_out_output_idx, next_self);
+        // :: become Player
         validateOutputState(gen__opponent_out_output_idx, next_opponent);
-        validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
+        // :: become StonesGame
+        validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__stones_game_template);
     }
 
     entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len) {
+        // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__starter_input_idx = OpCovInputIdx(gen__cov_id, 0); // input Player at cov[0]
-        State starter = readInputStateWithTemplate(gen__starter_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
+        State starter = readInputStateWithTemplate(gen__starter_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
         require(blake2b(owner_pk) == owner);
@@ -182,11 +184,14 @@ contract Player(
     }
 
     entrypoint function settle(int gen__stones_settle_prefix_len, int gen__stones_settle_suffix_len) {
+        // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__settle_input_idx = OpCovInputIdx(gen__cov_id, 0); // input StonesSettle at cov[0]
-        SettleState settle = readInputStateWithTemplate(gen__settle_input_idx, gen__stones_settle_prefix_len, gen__stones_settle_suffix_len, gen__template_stones_settle);
+        SettleState settle = readInputStateWithTemplate(gen__settle_input_idx, gen__stones_settle_prefix_len, gen__stones_settle_suffix_len, gen__stones_settle_template);
+
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
         byte[32] self_ref = player_ref(owner, player_id);
@@ -194,6 +199,7 @@ contract Player(
     }
 
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 
         require(blake2b(owner_pk) == owner);

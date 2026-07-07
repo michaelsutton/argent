@@ -4,40 +4,37 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesGame(
-    byte[32] gen__init_template_league,
-    byte[32] gen__init_template_player,
-    byte[32] gen__init_template_stones_game,
-    byte[32] gen__init_template_stones_settle,
+    byte[32] gen__init_player_template,
+    byte[32] gen__init_stones_game_template,
+    byte[32] gen__init_stones_settle_template,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_pile,
     int init_max_take,
     int init_turn
 ) {
-    // Shared constants
+    // :: shared constants
     int constant SIDE_A = 0;
     int constant SIDE_B = 1;
     int constant LIVE = 0;
     int constant A_WIN = 1;
     int constant B_WIN = 2;
 
-    // State layouts
+    // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] owner;
         byte[32] player_id;
         int open_games;
@@ -46,17 +43,16 @@ contract StonesGame(
         int losses;
     }
     struct SettleState {
-        byte[32] gen__template_league;
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
-        // ----------- template fields above; source state below
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
+        // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
         int status;
     }
 
-    // Shared helper functions
+    // :: shared helper functions
     function player_ref(byte[32] owner, byte[32] player_id) : byte[32] {
         return blake2b(owner + player_id);
     }
@@ -85,24 +81,25 @@ contract StonesGame(
         return result;
     }
 
-    // Template capability table
-    byte[32] gen__template_league = gen__init_template_league;
-    byte[32] gen__template_player = gen__init_template_player;
-    byte[32] gen__template_stones_game = gen__init_template_stones_game;
-    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
+    // :: route templates
+    byte[32] gen__player_template = gen__init_player_template;
+    byte[32] gen__stones_game_template = gen__init_stones_game_template;
+    byte[32] gen__stones_settle_template = gen__init_stones_settle_template;
 
-    // StonesGame state fields
+    // :: state fields: StonesGame
     byte[32] player_a = init_player_a;
     byte[32] player_b = init_player_b;
     int pile = init_pile;
     int max_take = init_max_take;
     int turn = init_turn;
 
-    // Entrypoints
+    // :: entrypoints
     entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+        // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: StonesGame | StonesSettle
 
@@ -118,37 +115,39 @@ contract StonesGame(
         require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         if (next_pile == 0) {
             SettleState ticket = {
-                gen__template_league: gen__template_league,
-                gen__template_player: gen__template_player,
-                gen__template_stones_game: gen__template_stones_game,
-                gen__template_stones_settle: gen__template_stones_settle,
-                // ----------- template fields above; source state below
+                gen__player_template: gen__player_template,
+                gen__stones_game_template: gen__stones_game_template,
+                gen__stones_settle_template: gen__stones_settle_template,
+                // :: gen__ ^ | src:
                 player_a: player_a,
                 player_b: player_b,
                 status: win_status(turn),
             };
-            validateOutputStateWithTemplate(gen__next_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__template_stones_settle);
+            // :: become StonesSettle
+            validateOutputStateWithTemplate(gen__next_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__stones_settle_template);
         } else {
             State next_game = {
-                gen__template_league: gen__template_league,
-                gen__template_player: gen__template_player,
-                gen__template_stones_game: gen__template_stones_game,
-                gen__template_stones_settle: gen__template_stones_settle,
-                // ----------- template fields above; source state below
+                gen__player_template: gen__player_template,
+                gen__stones_game_template: gen__stones_game_template,
+                gen__stones_settle_template: gen__stones_settle_template,
+                // :: gen__ ^ | src:
                 player_a: player_a,
                 player_b: player_b,
                 pile: next_pile,
                 max_take: max_take,
                 turn: other_side(turn),
             };
+            // :: become StonesGame
             validateOutputState(gen__next_output_idx, next_game);
         }
     }
 
     entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+        // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
+        // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output settle: StonesSettle
 
@@ -159,16 +158,16 @@ contract StonesGame(
         require(tx.outputs[gen__settle_output_idx].value == tx.inputs[this.activeInputIndex].value);
         int winner = other_side(turn);
         SettleState ticket = {
-            gen__template_league: gen__template_league,
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
-            // ----------- template fields above; source state below
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
+            // :: gen__ ^ | src:
             player_a: player_a,
             player_b: player_b,
             status: win_status(winner),
         };
-        validateOutputStateWithTemplate(gen__settle_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__template_stones_settle);
+        // :: become StonesSettle
+        validateOutputStateWithTemplate(gen__settle_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__stones_settle_template);
     }
 
 }

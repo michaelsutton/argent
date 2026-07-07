@@ -4,3 +4,5 @@
 !/build/stones/**
 !/build/tickets/
 !/build/tickets/**
+!/build/toy_chess/
+!/build/toy_chess/**

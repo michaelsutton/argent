@@ -136,7 +136,7 @@ state ForagerState extends AgentCapsule {
 `expand custom_data_digest as ForagerMemory` means:
 
 - the stored covenant state still contains only `custom_data_digest`;
-- the transaction builder supplies a hidden opening witness;
+- the transaction builder supplies a hidden opening witness for `ForagerMemory`;
 - the compiler verifies `hash(serialize(ForagerMemory)) == custom_data_digest`;
 - fields such as `hunger`, `mood`, and `target_agent_id` are available as a
   flattened source-level view;

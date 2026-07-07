@@ -1,3 +1,15 @@
+//! Portable ABI and codec data for generated Silverscript contracts.
+//!
+//! This crate owns only bytecode-facing facts: contract scripts, entrypoint
+//! selectors and parameters, runtime state field order, structural field types,
+//! template prefix/suffix/hash data, and the codec for encoding those values.
+//!
+//! It must not know why a field exists. Argent coordination semantics such as
+//! hidden template fields, route-family tables, route roots, observed actors,
+//! witness purposes, and any future covenant-routing meaning belong in the
+//! outer `argent-artifact` crate. Keep that boundary sharp so this ABI can be
+//! replaced by a native Silverscript portable artifact later.
+
 use std::collections::BTreeMap;
 
 use kaspa_txscript::{
@@ -144,14 +156,6 @@ pub struct RuntimeFieldArtifact {
     pub name: String,
     #[serde(rename = "type")]
     pub ty: TypeArtifact,
-    pub role: RuntimeFieldRoleArtifact,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum RuntimeFieldRoleArtifact {
-    Template { contract: String },
-    Source,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -778,7 +782,7 @@ mod tests {
               "source_path": "sil/Foo.sil",
               "runtime_state": {
                 "source": "FooState",
-                "fields": [{ "name": "count", "type": { "kind": "int" }, "role": { "kind": "source" } }]
+                "fields": [{ "name": "count", "type": { "kind": "int" } }]
               },
               "entries": [
                 {
@@ -825,17 +829,13 @@ mod tests {
         let runtime_state = RuntimeStateArtifact {
             source: "FooState".to_string(),
             fields: vec![
-                RuntimeFieldArtifact {
-                    name: "gen__template_foo".to_string(),
-                    ty: TypeArtifact::FixedBytes { len: 32 },
-                    role: RuntimeFieldRoleArtifact::Template { contract: "Foo".to_string() },
-                },
-                RuntimeFieldArtifact { name: "count".to_string(), ty: TypeArtifact::Int, role: RuntimeFieldRoleArtifact::Source },
-                RuntimeFieldArtifact { name: "flag".to_string(), ty: TypeArtifact::Bool, role: RuntimeFieldRoleArtifact::Source },
+                RuntimeFieldArtifact { name: "gen__foo_template".to_string(), ty: TypeArtifact::FixedBytes { len: 32 } },
+                RuntimeFieldArtifact { name: "count".to_string(), ty: TypeArtifact::Int },
+                RuntimeFieldArtifact { name: "flag".to_string(), ty: TypeArtifact::Bool },
             ],
         };
         let values = BTreeMap::from([
-            ("gen__template_foo".to_string(), ArtifactValue::Bytes(vec![7; 32])),
+            ("gen__foo_template".to_string(), ArtifactValue::Bytes(vec![7; 32])),
             ("count".to_string(), ArtifactValue::Int(-5)),
             ("flag".to_string(), ArtifactValue::Bool(true)),
         ]);

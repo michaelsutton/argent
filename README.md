@@ -37,13 +37,16 @@ What works today:
 - generated hidden template fields in state objects
 - generated `readInputStateWithTemplate` calls for consumed actors
 - generated `validateOutputStateWithTemplate` calls for successor actors
+- same-template `validateOutputState` shortcuts for exact continuations
+- portable artifact JSON with an inner Sil ABI artifact
+- artifact-driven transaction-building helpers for tests and prototypes
+- template table/proof receipts and one-level route-family commitments
 
 What is still early or missing:
 
-- no generated transaction builder yet
 - no launch proof tooling yet
-- no route Merkle tree support yet
-- no same-template `validateOutputState` shortcut yet
+- no generated app-specific transaction builder API yet
+- no optimized template tree-cut algorithms yet
 - no stable ABI
 - no full Argent typechecker
 - minimal diagnostics

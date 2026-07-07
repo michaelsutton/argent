@@ -174,9 +174,12 @@ impl Parser {
         self.expect_symbol('{')?;
         let mut actors = Vec::new();
         while !self.check_symbol('}') {
-            self.expect_ident("actor")?;
-            actors.push(self.expect_any_ident()?);
-            self.expect_symbol(';')?;
+            if self.consume_ident("actor") {
+                actors.push(self.expect_any_ident()?);
+                self.expect_symbol(';')?;
+            } else {
+                return Err(self.error(format!("expected `actor`, found {}", self.describe_current())));
+            }
         }
         self.expect_symbol('}')?;
         Ok(AppDecl { name, actors })

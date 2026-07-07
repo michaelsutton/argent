@@ -17,8 +17,8 @@ use thiserror::Error;
 
 use crate::{
     artifact::{
-        ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, RuntimeFieldRoleArtifact,
-        SilContractArtifact, TemplatePlanError,
+        ActorArtifact, Artifact, ArtifactVersionError, EntryArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
+        RouteTemplateLeafArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, TemplatePlanError,
     },
     codec::{ArtifactValue, CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script},
 };
@@ -39,6 +39,22 @@ pub enum BuilderError {
     TxScript(#[from] TxScriptError),
     #[error("unknown actor `{0}`")]
     UnknownActor(String),
+    #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
+    RuntimeStatePlanMismatch { contract: String, message: String },
+    #[error("hidden param `{param}` is missing route proof metadata")]
+    MissingHiddenRouteProof { param: String },
+    #[error("unknown route proof `{0}`")]
+    UnknownRouteProof(String),
+    #[error("unknown route table `{0}`")]
+    UnknownRouteTable(String),
+    #[error("route proof `{route_proof_id}` has no leaf `{leaf}`")]
+    MissingRouteProofLeaf { route_proof_id: String, leaf: String },
+    #[error("unknown route family `{0}`")]
+    UnknownRouteFamily(String),
+    #[error("route family table `{table_id}` contains nested route family `{family_id}`")]
+    NestedRouteFamilyTableLeaf { table_id: String, family_id: String },
+    #[error("hidden param `{param}` has the wrong subject kind; expected {expected}")]
+    UnexpectedHiddenSubject { param: String, expected: &'static str },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
     #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
@@ -109,16 +125,50 @@ impl<'a> ArtifactTxBuilder<'a> {
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    ArtifactValue::Bytes(decode_hex(&self.contract(&hidden.actor)?.compiled.template.prefix_hex)?)
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    ArtifactValue::Bytes(decode_hex(&self.contract(&hidden.actor)?.compiled.template.suffix_hex)?)
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    ArtifactValue::Int(decode_hex(&self.contract(&hidden.actor)?.compiled.template.prefix_hex)?.len() as i64)
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    ArtifactValue::Int(decode_hex(&self.contract(&hidden.actor)?.compiled.template.suffix_hex)?.len() as i64)
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?.len() as i64)
+                }
+                HiddenParamPurposeArtifact::RouteTemplateLeaf => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?)
+                }
+                HiddenParamPurposeArtifact::RouteTemplateProof => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    let route_proof_id = hidden
+                        .route_proof_id
+                        .as_deref()
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes_for_actor(route_proof_id, actor)?)
+                }
+                HiddenParamPurposeArtifact::RouteFamilyTable => {
+                    let family_id = hidden_family_subject(hidden)?;
+                    ArtifactValue::Bytes(self.route_family_table_bytes(family_id)?)
+                }
+                HiddenParamPurposeArtifact::RouteFamilyProof => {
+                    let family_id = hidden_family_subject(hidden)?;
+                    let route_proof_id = hidden
+                        .route_proof_id
+                        .as_deref()
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes(
+                        route_proof_id,
+                        &RouteTemplateLeafArtifact::RouteFamily {
+                            family_id: family_id.to_string(),
+                            proof_id: route_proof_id.to_string(),
+                        },
+                    )?)
                 }
             });
         }
@@ -207,6 +257,10 @@ impl<'a> ArtifactTxBuilder<'a> {
         self.artifact.sil_abi.contract(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
     }
 
+    fn runtime_state_plan(&self, contract_name: &str) -> Option<&'a RuntimeStatePlanArtifact> {
+        self.artifact.argent.template_plan.runtime_states.iter().find(|state| state.contract == contract_name)
+    }
+
     fn argent_actor(&self, name: &str) -> BuilderResult<&'a ActorArtifact> {
         self.artifact.argent.actors.iter().find(|actor| actor.name == name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
     }
@@ -224,18 +278,63 @@ impl<'a> ArtifactTxBuilder<'a> {
         contract: &SilContractArtifact,
         mut source_state: BTreeMap<String, ArtifactValue>,
     ) -> BuilderResult<BTreeMap<String, ArtifactValue>> {
+        let mut role_by_field = BTreeMap::new();
+        if let Some(runtime_plan) = self.runtime_state_plan(&contract.name) {
+            if runtime_plan.source != contract.runtime_state.source {
+                return Err(BuilderError::RuntimeStatePlanMismatch {
+                    contract: contract.name.clone(),
+                    message: format!(
+                        "source `{}` does not match Sil ABI source `{}`",
+                        runtime_plan.source, contract.runtime_state.source
+                    ),
+                });
+            }
+            let sil_fields_by_name =
+                contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<std::collections::BTreeSet<_>>();
+            for field_role in &runtime_plan.field_roles {
+                if !sil_fields_by_name.contains(field_role.name.as_str()) {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` does not match any Sil ABI runtime field", field_role.name),
+                    });
+                }
+                if role_by_field.insert(field_role.name.as_str(), &field_role.role).is_some() {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` is duplicated", field_role.name),
+                    });
+                }
+            }
+        }
+
         let mut values = BTreeMap::new();
         for field in &contract.runtime_state.fields {
-            match &field.role {
-                RuntimeFieldRoleArtifact::Source => {
+            match role_by_field.get(field.name.as_str()) {
+                None => {
                     let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
                     values.insert(field.name.clone(), value);
                 }
-                RuntimeFieldRoleArtifact::Template { contract } => {
+                Some(RuntimeFieldRoleArtifact::Template { contract }) => {
                     values.insert(
                         field.name.clone(),
                         ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
                     );
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateTable { contracts }) => {
+                    let mut table = Vec::with_capacity(contracts.len() * 32);
+                    for contract in contracts {
+                        table.extend_from_slice(&decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?);
+                    }
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(table));
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateDigest { id }) => {
+                    let table = self.route_family_table_bytes(id)?;
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateRoot { .. }) => {
+                    let proof_id = crate::artifact::route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
+                    let proof = self.route_template_proof(&proof_id)?;
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
                 }
             }
         }
@@ -243,6 +342,116 @@ impl<'a> ArtifactTxBuilder<'a> {
             return Err(CodecError::UnknownField(extra).into());
         }
         Ok(values)
+    }
+
+    fn route_template_proof(&self, route_proof_id: &str) -> BuilderResult<&crate::artifact::RouteTemplateProofArtifact> {
+        self.artifact
+            .argent
+            .template_plan
+            .route_proofs
+            .iter()
+            .find(|proof| proof.id == route_proof_id)
+            .ok_or_else(|| BuilderError::UnknownRouteProof(route_proof_id.to_string()))
+    }
+
+    fn route_template_proof_bytes(&self, route_proof_id: &str, wanted_leaf: &RouteTemplateLeafArtifact) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt.leaves.iter().find(|leaf| &leaf.leaf == wanted_leaf).ok_or_else(|| {
+            BuilderError::MissingRouteProofLeaf { route_proof_id: route_proof_id.to_string(), leaf: route_leaf_label(wanted_leaf) }
+        })?;
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
+        }
+        Ok(proof)
+    }
+
+    fn route_template_proof_bytes_for_actor(&self, route_proof_id: &str, actor: &str) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt
+            .leaves
+            .iter()
+            .find(|leaf| matches!(&leaf.leaf, RouteTemplateLeafArtifact::Template { actor: leaf_actor, .. } if leaf_actor == actor))
+            .ok_or_else(|| BuilderError::MissingRouteProofLeaf {
+                route_proof_id: route_proof_id.to_string(),
+                leaf: actor.to_string(),
+            })?;
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
+        }
+        Ok(proof)
+    }
+
+    fn route_family_table_bytes(&self, family_id: &str) -> BuilderResult<Vec<u8>> {
+        let family = self
+            .artifact
+            .argent
+            .template_plan
+            .route_families
+            .iter()
+            .find(|family| family.id == family_id)
+            .ok_or_else(|| BuilderError::UnknownRouteFamily(family_id.to_string()))?;
+        let route_table = self
+            .artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == family.table_id)
+            .ok_or_else(|| BuilderError::UnknownRouteTable(family.table_id.clone()))?;
+        let mut table = Vec::with_capacity(route_table.byte_len);
+        for entry in &route_table.entries {
+            match &entry.leaf {
+                RouteTemplateLeafArtifact::Template { actor, .. } => {
+                    table.extend_from_slice(&decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?);
+                }
+                RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => {
+                    return Err(BuilderError::NestedRouteFamilyTableLeaf {
+                        table_id: route_table.id.clone(),
+                        family_id: family_id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(table)
+    }
+}
+
+fn hidden_actor_subject(hidden: &crate::artifact::HiddenParamArtifact) -> BuilderResult<&str> {
+    match &hidden.subject {
+        HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
+        HiddenParamSubjectArtifact::RouteFamily { .. } => {
+            Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
+        }
+    }
+}
+
+fn hidden_family_subject(hidden: &crate::artifact::HiddenParamArtifact) -> BuilderResult<&str> {
+    match &hidden.subject {
+        HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
+        HiddenParamSubjectArtifact::Actor { .. } => {
+            Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
+        }
+    }
+}
+
+fn route_leaf_label(leaf: &RouteTemplateLeafArtifact) -> String {
+    match leaf {
+        RouteTemplateLeafArtifact::Template { actor, .. } => actor.clone(),
+        RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => family_id.clone(),
+    }
+}
+
+fn blake2b32(data: &[u8]) -> Vec<u8> {
+    blake2b_simd::Params::new().hash_length(32).to_state().update(data).finalize().as_bytes().to_vec()
+}
+
+#[cfg(test)]
+fn subject_label(subject: &HiddenParamSubjectArtifact) -> &str {
+    match subject {
+        HiddenParamSubjectArtifact::Actor { actor } => actor,
+        HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
     }
 }
 
@@ -272,6 +481,7 @@ fn covenant_engine_flags() -> EngineFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact::{route_template_proof_receipt_id, route_template_table_receipt_id};
     use std::{
         fs,
         path::PathBuf,
@@ -379,13 +589,10 @@ mod tests {
 
         assert_eq!(decoded.get("owner"), source_state.get("owner"));
         assert_eq!(
-            decoded.get("gen__template_ticket"),
+            decoded.get("gen__ticket_template"),
             Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
-        assert_eq!(
-            decoded.get("gen__template_issuer"),
-            Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Issuer").unwrap().compiled.template.hash_hex).unwrap()))
-        );
+        assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
     }
 
     #[test]
@@ -433,7 +640,7 @@ mod tests {
             entry
                 .witnesses
                 .iter()
-                .map(|witness| (witness.param.as_str(), witness.actor.as_str(), witness.purpose))
+                .map(|witness| (witness.param.as_str(), subject_label(&witness.subject), witness.purpose))
                 .collect::<Vec<_>>(),
             vec![
                 ("gen__player_prefix_len", "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
@@ -458,7 +665,7 @@ mod tests {
             accept_start
                 .hidden_params
                 .iter()
-                .map(|param| (param.name.as_str(), param.actor.as_str(), param.purpose))
+                .map(|param| (param.name.as_str(), subject_label(&param.subject), param.purpose))
                 .collect::<Vec<_>>(),
             vec![
                 ("gen__player_prefix_len", "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
@@ -634,6 +841,86 @@ mod tests {
     }
 
     #[test]
+    fn toy_chess_builder_redeems_route_family_and_worker_paths() {
+        let artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-builder-family-paths");
+        let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
+        let covenant_id = Hash::from_bytes([0x61; 32]);
+        let input_value = 1_000;
+
+        let player_initial = toy_player_state(7);
+        let mux_initial = board_state(7, 0);
+        let player_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x62; 32]), index: 0 };
+        let player_utxo = builder
+            .covenant_utxo("Player", player_initial.clone(), input_value, 0, false, Some(covenant_id))
+            .expect("Player utxo builds");
+        let mux_output = builder.covenant_output("Mux", mux_initial.clone(), input_value, 0, covenant_id).expect("Mux output builds");
+        let enter_mux_sigscript = builder
+            .p2sh_signature_script("Player", "enter_mux", player_initial.clone(), Vec::new())
+            .expect("enter_mux sigscript fills the family route table");
+        let enter_mux_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(player_outpoint, enter_mux_sigscript)],
+            vec![mux_output.clone()],
+        );
+        execute_input_with_covenants(&enter_mux_tx, vec![player_utxo.clone()], 0).expect("Player can enter the mux family");
+
+        let player_contract = builder.contract("Player").expect("Player contract exists");
+        let enter_mux = player_contract.entry("enter_mux").expect("enter_mux ABI exists");
+        let mux_template = &builder.contract("Mux").expect("Mux contract exists").compiled.template;
+        let mut wrong_routes = builder.route_family_table_bytes("route_family/BoardState/mux").expect("mux family route table builds");
+        wrong_routes[0] ^= 1;
+        let bad_route_table_sigscript = encode_entry_sig_script(
+            &artifact.sil_abi,
+            player_contract,
+            enter_mux,
+            &[
+                ArtifactValue::Bytes(decode_hex(&mux_template.prefix_hex).expect("Mux prefix decodes")),
+                ArtifactValue::Bytes(decode_hex(&mux_template.suffix_hex).expect("Mux suffix decodes")),
+                ArtifactValue::Bytes(wrong_routes),
+            ],
+        )
+        .expect("bad route table sigscript encodes");
+        let bad_route_table_sigscript = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("Player", player_initial).expect("Player redeem script builds"),
+            bad_route_table_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("bad route table p2sh sigscript builds");
+        let bad_route_table_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(player_outpoint, bad_route_table_sigscript)],
+            vec![mux_output],
+        );
+        assert!(
+            execute_input_with_covenants(&bad_route_table_tx, vec![player_utxo], 0).is_err(),
+            "Player must reject a route-family table that does not match the stored digest"
+        );
+
+        let pawn_next = board_state(7, 1);
+        let mux_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x63; 32]), index: 0 };
+        let mux_utxo =
+            builder.covenant_utxo("Mux", mux_initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
+        let pawn_output = builder.covenant_output("Pawn", pawn_next.clone(), input_value, 0, covenant_id).expect("Pawn output builds");
+        let choose_pawn_sigscript = builder
+            .p2sh_signature_script("Mux", "choose_pawn", mux_initial.clone(), Vec::new())
+            .expect("choose_pawn sigscript fills Pawn template lens");
+        let choose_pawn_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript.clone())],
+            vec![pawn_output],
+        );
+        execute_input_with_covenants(&choose_pawn_tx, vec![mux_utxo.clone()], 0).expect("Mux can route to Pawn by table slice");
+
+        let wrong_worker_output =
+            builder.covenant_output("Knight", pawn_next, input_value, 0, covenant_id).expect("wrong worker output builds");
+        let wrong_worker_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript)],
+            vec![wrong_worker_output],
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_worker_tx, vec![mux_utxo], 0).is_err(),
+            "choose_pawn must reject an output using the wrong worker template"
+        );
+    }
+
+    #[test]
     fn builder_rejects_template_plan_hash_mismatch() {
         let mut artifact = tickets_artifact();
         artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
@@ -652,6 +939,67 @@ mod tests {
         };
         assert!(
             matches!(err, BuilderError::TemplatePlan(TemplatePlanError::TemplateHashMismatch { ref id, .. }) if id == "template/ticket"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn builder_rejects_route_template_table_mismatch() {
+        let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-table-plan");
+        artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+        let table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter_mut()
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route table receipt exists");
+        table.entries[1].offset = 33;
+
+        let err = match ArtifactTxBuilder::new(&artifact) {
+            Ok(_) => panic!("builder must reject a corrupted route template table receipt"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                BuilderError::TemplatePlan(TemplatePlanError::RouteTableOffsetMismatch {
+                    ref id,
+                    index: 1,
+                    offset: 33,
+                    expected: 32,
+                }) if id == "route_table/BoardState/gen__mux_routes"
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn builder_rejects_route_template_merkle_proof_mismatch() {
+        let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-proof-plan");
+        artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+        let proof = artifact
+            .argent
+            .template_plan
+            .route_proofs
+            .iter_mut()
+            .find(|proof| proof.id == route_template_proof_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route proof receipt exists");
+        proof.leaves[1].proof[0].hash_hex = "00".repeat(32);
+
+        let err = match ArtifactTxBuilder::new(&artifact) {
+            Ok(_) => panic!("builder must reject a corrupted route template proof receipt"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                BuilderError::TemplatePlan(TemplatePlanError::RouteProofMismatch {
+                    ref id,
+                    index: 1,
+                    ..
+                }) if id == "route_proof/BoardState/gen__mux_routes"
+            ),
             "unexpected error: {err}"
         );
     }
@@ -765,12 +1113,44 @@ mod tests {
                 "League",
                 "register_player",
                 league_initial.clone(),
-                vec![ArtifactValue::Bytes(signature), ArtifactValue::Bytes(owner_pk.clone())],
+                vec![ArtifactValue::Bytes(signature.clone()), ArtifactValue::Bytes(owner_pk.clone())],
             )
             .expect("register sigscript builds");
-        let tx = ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, sigscript)], outputs);
+        let tx = ArtifactTxBuilder::transaction(vec![ArtifactTxBuilder::transaction_input(outpoint, sigscript)], outputs.clone());
 
         execute_input_with_covenants(&tx, entries.clone(), 0).expect("exact continuation register_player passes");
+
+        let player_template = &builder.contract("Player").expect("Player contract exists").compiled.template;
+        let register_entry =
+            builder.contract("League").expect("League contract exists").entry("register_player").expect("register_player exists");
+        let mut bad_prefix = decode_hex(&player_template.prefix_hex).expect("player prefix decodes");
+        bad_prefix.push(0);
+        let bad_prefix_sigscript = encode_entry_sig_script(
+            &artifact.sil_abi,
+            builder.contract("League").expect("League contract exists"),
+            register_entry,
+            &[
+                ArtifactValue::Bytes(signature),
+                ArtifactValue::Bytes(owner_pk.clone()),
+                ArtifactValue::Bytes(bad_prefix),
+                ArtifactValue::Bytes(decode_hex(&player_template.suffix_hex).expect("player suffix decodes")),
+            ],
+        )
+        .expect("bad prefix sigscript encodes");
+        let bad_prefix_sigscript = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("League", league_initial.clone()).expect("league redeem script builds"),
+            bad_prefix_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("bad prefix p2sh sigscript builds");
+        let bad_prefix_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(outpoint, bad_prefix_sigscript)],
+            outputs.clone(),
+        );
+        assert!(
+            execute_input_with_covenants(&bad_prefix_tx, entries.clone(), 0).is_err(),
+            "register_player must reject a corrupted Player template prefix"
+        );
 
         let changed_league_state = league_state(vec![0x56; 32], 7, 3);
         let bad_outputs = builder
@@ -896,6 +1276,14 @@ mod tests {
 
     fn count_state(count: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([("count".to_string(), ArtifactValue::Int(count))])
+    }
+
+    fn toy_player_state(nonce: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("nonce".to_string(), ArtifactValue::Int(nonce))])
+    }
+
+    fn board_state(selector: i64, ply: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("selector".to_string(), ArtifactValue::Int(selector)), ("ply".to_string(), ArtifactValue::Int(ply))])
     }
 
     fn stones_player_id(outpoint: &TransactionOutpoint) -> Vec<u8> {

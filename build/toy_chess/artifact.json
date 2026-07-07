@@ -1,0 +1,1732 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "ToyChess",
+  "root": "examples/toy_chess/app.ag",
+  "modules": [
+    "examples/toy_chess/app.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/league",
+        "actor": "League",
+        "symbol": "gen__league_template"
+      },
+      {
+        "id": "template/player",
+        "actor": "Player",
+        "symbol": "gen__player_template"
+      },
+      {
+        "id": "template/mux",
+        "actor": "Mux",
+        "symbol": "gen__mux_template"
+      },
+      {
+        "id": "template/pawn",
+        "actor": "Pawn",
+        "symbol": "gen__pawn_template"
+      },
+      {
+        "id": "template/knight",
+        "actor": "Knight",
+        "symbol": "gen__knight_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/league",
+          "actor": "League",
+          "contract": "League",
+          "symbol": "gen__league_template",
+          "hash_hex": "6284a85af3ce740e751b72ec82d880a4db57a5237990097f410fd4ee0d3a5d37"
+        },
+        {
+          "id": "template/player",
+          "actor": "Player",
+          "contract": "Player",
+          "symbol": "gen__player_template",
+          "hash_hex": "c606b79a176b9476968f3bb34e4a382ce9f0b61555e507db2913697d9fbb6c4a"
+        },
+        {
+          "id": "template/mux",
+          "actor": "Mux",
+          "contract": "Mux",
+          "symbol": "gen__mux_template",
+          "hash_hex": "55918f7386bf9217fac71f7f34f79632f7a43a085f28ede1d8769bfff7a24771"
+        },
+        {
+          "id": "template/pawn",
+          "actor": "Pawn",
+          "contract": "Pawn",
+          "symbol": "gen__pawn_template",
+          "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
+        },
+        {
+          "id": "template/knight",
+          "actor": "Knight",
+          "contract": "Knight",
+          "symbol": "gen__knight_template",
+          "hash_hex": "ca3ab95f99bf082371179eb17cc89110a60a04bc226f8a8035fb00469c524c66"
+        }
+      ],
+      "runtime_states": [
+        {
+          "contract": "League",
+          "source": "LeagueState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "role": {
+                "kind": "template_digest",
+                "id": "route_family/BoardState/mux"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Player",
+          "source": "PlayerState",
+          "field_roles": [
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "role": {
+                "kind": "template_digest",
+                "id": "route_family/BoardState/mux"
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Mux",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Pawn",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "contract": "Knight",
+          "source": "BoardState",
+          "field_roles": [
+            {
+              "name": "gen__mux_template",
+              "role": {
+                "kind": "template",
+                "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "role": {
+                "kind": "template_table",
+                "contracts": [
+                  "Pawn",
+                  "Knight"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "route_tables": [
+        {
+          "id": "route_table/BoardState/gen__mux_routes",
+          "state": "BoardState",
+          "field": "gen__mux_routes",
+          "byte_len": 64,
+          "entries": [
+            {
+              "index": 0,
+              "offset": 0,
+              "kind": "template",
+              "actor": "Pawn",
+              "template_id": "template/pawn"
+            },
+            {
+              "index": 1,
+              "offset": 32,
+              "kind": "template",
+              "actor": "Knight",
+              "template_id": "template/knight"
+            }
+          ]
+        }
+      ],
+      "route_proofs": [
+        {
+          "id": "route_proof/BoardState/gen__mux_routes",
+          "table_id": "route_table/BoardState/gen__mux_routes",
+          "state": "BoardState",
+          "field": "gen__mux_routes",
+          "root_hex": "116d60dc1c4e4cd7a1718940d9a91ac8d4114db4a0e04eca082fbb8d64809e36",
+          "leaves": [
+            {
+              "index": 0,
+              "kind": "template",
+              "actor": "Pawn",
+              "template_id": "template/pawn",
+              "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73",
+              "proof": [
+                {
+                  "side": "right",
+                  "hash_hex": "ca3ab95f99bf082371179eb17cc89110a60a04bc226f8a8035fb00469c524c66"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "kind": "template",
+              "actor": "Knight",
+              "template_id": "template/knight",
+              "hash_hex": "ca3ab95f99bf082371179eb17cc89110a60a04bc226f8a8035fb00469c524c66",
+              "proof": [
+                {
+                  "side": "left",
+                  "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "route_families": [
+        {
+          "id": "route_family/BoardState/mux",
+          "state": "BoardState",
+          "anchor_actor": "Mux",
+          "entry_actors": [
+            "Mux"
+          ],
+          "table_id": "route_table/BoardState/gen__mux_routes",
+          "actors": [
+            "Mux",
+            "Pawn",
+            "Knight"
+          ]
+        }
+      ],
+      "witness_recipes": [
+        {
+          "id": "witness/player/template_prefix_bytes",
+          "template_id": "template/player",
+          "subject": {
+            "kind": "actor",
+            "actor": "Player"
+          },
+          "param": "gen__player_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/player/template_suffix_bytes",
+          "template_id": "template/player",
+          "subject": {
+            "kind": "actor",
+            "actor": "Player"
+          },
+          "param": "gen__player_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/mux/template_prefix_bytes",
+          "template_id": "template/mux",
+          "subject": {
+            "kind": "actor",
+            "actor": "Mux"
+          },
+          "param": "gen__mux_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/mux/template_suffix_bytes",
+          "template_id": "template/mux",
+          "subject": {
+            "kind": "actor",
+            "actor": "Mux"
+          },
+          "param": "gen__mux_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/mux/route_family_table",
+          "subject": {
+            "kind": "route_family",
+            "family_id": "route_family/BoardState/mux"
+          },
+          "param": "gen__mux_routes",
+          "purpose": {
+            "kind": "route_family_table"
+          }
+        },
+        {
+          "id": "witness/pawn/template_prefix_bytes",
+          "template_id": "template/pawn",
+          "subject": {
+            "kind": "actor",
+            "actor": "Pawn"
+          },
+          "param": "gen__pawn_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/pawn/template_suffix_bytes",
+          "template_id": "template/pawn",
+          "subject": {
+            "kind": "actor",
+            "actor": "Pawn"
+          },
+          "param": "gen__pawn_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/knight/template_prefix_bytes",
+          "template_id": "template/knight",
+          "subject": {
+            "kind": "actor",
+            "actor": "Knight"
+          },
+          "param": "gen__knight_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/knight/template_suffix_bytes",
+          "template_id": "template/knight",
+          "subject": {
+            "kind": "actor",
+            "actor": "Knight"
+          },
+          "param": "gen__knight_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        }
+      ]
+    },
+    "states": [
+      {
+        "name": "BoardState",
+        "fields": [
+          {
+            "name": "selector",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "ply",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "LeagueState",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "PlayerState",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "actors": [
+      {
+        "name": "League",
+        "state": "LeagueState",
+        "abi": {
+          "actor": "League"
+        },
+        "entries": [
+          {
+            "name": "register",
+            "kind": "leader",
+            "abi": {
+              "actor": "League",
+              "entry": "register"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "League",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "League",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Player"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Player",
+                      "template_id": "template/player",
+                      "state_expr": "next_player",
+                      "witness_recipe_ids": [
+                        "witness/player/template_prefix_bytes",
+                        "witness/player/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/player/template_prefix_bytes",
+                    "witness/player/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/player/template_prefix_bytes",
+                "witness/player/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/player/template_prefix_bytes",
+                "name": "gen__player_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Player"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/player/template_suffix_bytes",
+                "name": "gen__player_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Player"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/player/template_prefix_bytes",
+                "param": "gen__player_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Player"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/player/template_suffix_bytes",
+                "param": "gen__player_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Player"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Player"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Player",
+                "template_id": "template/player",
+                "state_expr": "next_player"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Player",
+                    "template_id": "template/player",
+                    "state_expr": "next_player"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Player",
+        "state": "PlayerState",
+        "abi": {
+          "actor": "Player"
+        },
+        "entries": [
+          {
+            "name": "enter_mux",
+            "kind": "leader",
+            "abi": {
+              "actor": "Player",
+              "entry": "enter_mux"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Player",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Mux"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Mux",
+                      "template_id": "template/mux",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/mux/template_prefix_bytes",
+                        "witness/mux/template_suffix_bytes",
+                        "witness/mux/route_family_table"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/mux/template_prefix_bytes",
+                    "witness/mux/template_suffix_bytes",
+                    "witness/mux/route_family_table"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/mux/template_prefix_bytes",
+                "witness/mux/template_suffix_bytes",
+                "witness/mux/route_family_table"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/route_family_table",
+                "name": "gen__mux_routes",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 64
+                },
+                "subject": {
+                  "kind": "route_family",
+                  "family_id": "route_family/BoardState/mux"
+                },
+                "purpose": {
+                  "kind": "route_family_table"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "param": "gen__mux_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "param": "gen__mux_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/route_family_table",
+                "param": "gen__mux_routes",
+                "subject": {
+                  "kind": "route_family",
+                  "family_id": "route_family/BoardState/mux"
+                },
+                "purpose": {
+                  "kind": "route_family_table"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Mux"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Mux",
+                "template_id": "template/mux",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Mux",
+                    "template_id": "template/mux",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Mux",
+        "state": "BoardState",
+        "abi": {
+          "actor": "Mux"
+        },
+        "entries": [
+          {
+            "name": "choose_pawn",
+            "kind": "leader",
+            "abi": {
+              "actor": "Mux",
+              "entry": "choose_pawn"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Pawn"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Pawn",
+                      "template_id": "template/pawn",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/pawn/template_prefix_bytes",
+                        "witness/pawn/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/pawn/template_prefix_bytes",
+                    "witness/pawn/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/pawn/template_prefix_bytes",
+                "witness/pawn/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/pawn/template_prefix_bytes",
+                "name": "gen__pawn_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Pawn"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/pawn/template_suffix_bytes",
+                "name": "gen__pawn_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Pawn"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/pawn/template_prefix_bytes",
+                "param": "gen__pawn_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Pawn"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/pawn/template_suffix_bytes",
+                "param": "gen__pawn_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Pawn"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Pawn"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Pawn",
+                "template_id": "template/pawn",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Pawn",
+                    "template_id": "template/pawn",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "choose_knight",
+            "kind": "leader",
+            "abi": {
+              "actor": "Mux",
+              "entry": "choose_knight"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Mux",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Knight"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Knight",
+                      "template_id": "template/knight",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/knight/template_prefix_bytes",
+                        "witness/knight/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/knight/template_prefix_bytes",
+                    "witness/knight/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/knight/template_prefix_bytes",
+                "witness/knight/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/knight/template_prefix_bytes",
+                "name": "gen__knight_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Knight"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/knight/template_suffix_bytes",
+                "name": "gen__knight_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Knight"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/knight/template_prefix_bytes",
+                "param": "gen__knight_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Knight"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/knight/template_suffix_bytes",
+                "param": "gen__knight_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Knight"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Knight"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Knight",
+                "template_id": "template/knight",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Knight",
+                    "template_id": "template/knight",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Pawn",
+        "state": "BoardState",
+        "abi": {
+          "actor": "Pawn"
+        },
+        "entries": [
+          {
+            "name": "back_to_mux",
+            "kind": "leader",
+            "abi": {
+              "actor": "Pawn",
+              "entry": "back_to_mux"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Pawn",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Pawn",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Mux"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Mux",
+                      "template_id": "template/mux",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/mux/template_prefix_bytes",
+                        "witness/mux/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/mux/template_prefix_bytes",
+                    "witness/mux/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/mux/template_prefix_bytes",
+                "witness/mux/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "param": "gen__mux_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "param": "gen__mux_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Mux"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Mux",
+                "template_id": "template/mux",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Mux",
+                    "template_id": "template/mux",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Knight",
+        "state": "BoardState",
+        "abi": {
+          "actor": "Knight"
+        },
+        "entries": [
+          {
+            "name": "back_to_mux",
+            "kind": "leader",
+            "abi": {
+              "actor": "Knight",
+              "entry": "back_to_mux"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Knight",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Knight",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Mux"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": null,
+                      "auth_index": 0,
+                      "actor": "Mux",
+                      "template_id": "template/mux",
+                      "state_expr": "next_board",
+                      "witness_recipe_ids": [
+                        "witness/mux/template_prefix_bytes",
+                        "witness/mux/template_suffix_bytes"
+                      ]
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/mux/template_prefix_bytes",
+                    "witness/mux/template_suffix_bytes"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/mux/template_prefix_bytes",
+                "witness/mux/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/mux/template_prefix_bytes",
+                "param": "gen__mux_prefix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/mux/template_suffix_bytes",
+                "param": "gen__mux_suffix",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Mux"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Mux"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Mux",
+                "template_id": "template/mux",
+                "state_expr": "next_board"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": null,
+                    "actor": "Mux",
+                    "template_id": "template/mux",
+                    "state_expr": "next_board"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "BoardState",
+        "fields": [
+          {
+            "name": "selector",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "ply",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "LeagueState",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "PlayerState",
+        "fields": [
+          {
+            "name": "nonce",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "League",
+        "source_path": "sil/League.sil",
+        "runtime_state": {
+          "source": "LeagueState",
+          "fields": [
+            {
+              "name": "gen__player_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "nonce",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "register",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__player_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__player_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c69557955797e54797caa8769537901207c7e537901207c7e537901207c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c69557955797e54797caa8769537901207c7e537901207c7e537901207c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "6284a85af3ce740e751b72ec82d880a4db57a5237990097f410fd4ee0d3a5d37"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 108
+          }
+        }
+      },
+      {
+        "name": "Player",
+        "source_path": "sil/Player.sil",
+        "runtime_state": {
+          "source": "PlayerState",
+          "fields": [
+            {
+              "name": "gen__player_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_routes_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "nonce",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "enter_mux",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__mux_routes",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 64
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000005479aa52798769b9cb519c69567956797e53797caa8769527901207c7e557901407c7e527958cd01087c7e0058cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc387697575757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "5479aa52798769b9cb519c69567956797e53797caa8769527901207c7e557901407c7e527958cd01087c7e0058cd01087c7e7e7e7e57797c7e56797eaa02000001aa7e01207e7c7e01877eb900ccc387697575757575757551",
+            "hash_hex": "c606b79a176b9476968f3bb34e4a382ce9f0b61555e507db2913697d9fbb6c4a"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 108
+          }
+        }
+      },
+      {
+        "name": "Mux",
+        "source_path": "sil/Mux.sil",
+        "runtime_state": {
+          "source": "BoardState",
+          "fields": [
+            {
+              "name": "gen__mux_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 64
+              }
+            },
+            {
+              "name": "selector",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "ply",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "choose_pawn",
+            "selector": 0,
+            "params": [
+              {
+                "name": "gen__pawn_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__pawn_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          },
+          {
+            "name": "choose_knight",
+            "selector": 1,
+            "params": [
+              {
+                "name": "gen__knight_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__knight_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "6b20000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000006c76009c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776519c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551677500696868",
+          "template": {
+            "prefix_hex": "6b",
+            "suffix_hex": "6c76009c6375b9cb519c69557955797e53790001207f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575516776519c6375b9cb519c69557955797e5379012001407f7caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551677500696868",
+            "hash_hex": "55918f7386bf9217fac71f7f34f79632f7a43a085f28ede1d8769bfff7a24771"
+          },
+          "state_span": {
+            "offset": 1,
+            "len": 116
+          }
+        }
+      },
+      {
+        "name": "Pawn",
+        "source_path": "sil/Pawn.sil",
+        "runtime_state": {
+          "source": "BoardState",
+          "fields": [
+            {
+              "name": "gen__mux_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 64
+              }
+            },
+            {
+              "name": "selector",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "ply",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "back_to_mux",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000000000000000080000000000000000b9cb519c69557955797e54797caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c69557955797e54797caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 116
+          }
+        }
+      },
+      {
+        "name": "Knight",
+        "source_path": "sil/Knight.sil",
+        "runtime_state": {
+          "source": "BoardState",
+          "fields": [
+            {
+              "name": "gen__mux_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__mux_routes",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 64
+              }
+            },
+            {
+              "name": "selector",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "ply",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "back_to_mux",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__mux_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__mux_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000080000000000000000080000000000000000b9cb519c697800a269557955797e54797caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c697800a269557955797e54797caa8769537901207c7e537901407c7e537958cd01087c7e5379519358cd01087c7e7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "ca3ab95f99bf082371179eb17cc89110a60a04bc226f8a8035fb00469c524c66"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 116
+          }
+        }
+      }
+    ]
+  }
+}

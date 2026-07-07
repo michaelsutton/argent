@@ -1,0 +1,85 @@
+state LeagueState {
+    int nonce;
+}
+
+state PlayerState {
+    int nonce;
+}
+
+state BoardState {
+    int selector;
+    int ply;
+}
+
+actor League owns LeagueState {
+    entry register() emits one Player {
+        PlayerState next_player = {
+            nonce: nonce + 1,
+        };
+
+        become Player(next_player);
+    }
+}
+
+actor Player owns PlayerState {
+    entry enter_mux() emits one Mux {
+        BoardState next_board = {
+            selector: nonce,
+            ply: 0,
+        };
+
+        become Mux(next_board);
+    }
+}
+
+actor Mux owns BoardState {
+    entry choose_pawn() emits one Pawn {
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        become Pawn(next_board);
+    }
+
+    entry choose_knight() emits one Knight {
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        become Knight(next_board);
+    }
+}
+
+actor Pawn owns BoardState {
+    entry back_to_mux() emits one Mux {
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        become Mux(next_board);
+    }
+}
+
+actor Knight owns BoardState {
+    entry back_to_mux() emits one Mux {
+        require(selector >= 0);
+
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        become Mux(next_board);
+    }
+}
+
+app ToyChess {
+    actor League;
+    actor Player;
+    actor Mux;
+    actor Pawn;
+    actor Knight;
+}

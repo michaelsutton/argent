@@ -371,37 +371,47 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
+Status: done. The first version has route-root receipts, canonical route proof
+receipts, generated proof witnesses, tx-builder witness filling, and toy-chess
+E2E coverage. The toy-chess fixture infers direct route families from shared
+owned state plus direct `become` edges, then uses one-level expansion/packing so
+upper layers carry a family commitment without exposing every worker template.
+
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
 rule plus optional developer hints that influence grouping/nesting.
 
 The first version should support:
 
-- one default tree over the actor templates an actor needs to reference;
+- one default proof receipt over the actor templates an actor needs to reference;
 - stable leaf identities based on artifact ids and actor ids;
-- generated proof/opening witnesses for the leaves each entrypoint needs;
-- artifact-visible tree metadata and witness recipes;
-- one minimal hint form for grouping related template refs.
+- generated proof witnesses for the leaves each entrypoint needs;
+- artifact-visible proof metadata and witness recipes;
+- inferred direct route-family metadata for actors that share owned state and
+  route to each other directly;
+- one-level route-family digest leaves that can be proven against an inner
+  family proof receipt when routing into the family.
 
-Hints should affect layout only, not meaning. The compiler still owns dependency
-analysis, validates every referenced template, and emits a receipt proving the
-final tree.
+Family inference should affect layout only, not meaning. The compiler still owns
+dependency analysis, validates every referenced template, and emits a receipt
+proving the final tree. Manual tuning, if needed later, should be a follow-up
+task with a narrow attribute such as `infrequent` on a `become` edge rather than
+source-level group declarations.
 
 End-to-end test:
 
 - Build a fixture with several cross-actor `become` targets.
-- Verify the artifact records a deterministic Merkle tree and per-entry witness
+- Verify the artifact records a deterministic Merkle proof receipt and per-entry witness
   requirements.
-- Build a valid tx using generated openings instead of flat template fields.
-- Corrupt one opening or substitute a wrong leaf and assert rejection.
-- Add one grouping hint and verify it changes the tree receipt without changing
-  source-level behavior.
+- Build a valid tx using generated proofs instead of flat template fields.
+- Corrupt one proof or substitute a wrong leaf and assert rejection.
 - Add a chess-like fixture with `League`, `Player`, `Mux`, and a family of move
-  workers. Use developer grouping/nesting hints so the compiler can hide the mux
-  family behind a route-family commitment from the `League`/`Player` layers.
+  workers. Infer the worker family from direct same-state route edges so the
+  compiler can hide the mux family behind a route-family commitment from the
+  `League`/`Player` layers.
 - Verify `League` and `Player` artifacts do not expose individual worker
-  template leaves or openings, while `Mux` and worker entrypoints still receive
-  the openings needed for selected routes.
+  template leaves or proof witnesses, while `Mux` and worker entrypoints still
+  receive the proofs needed for selected routes.
 
 Obstacle to handle:
 
@@ -512,7 +522,7 @@ Conceptually:
 TemplateHandle<StateView>
   template_hash
   Sil ABI / state layout class
-  template cut or prefix/suffix opening requirement
+  template cut or prefix/suffix proof requirement
   source-level state view exposed to Argent
 ```
 
@@ -782,6 +792,36 @@ Obstacle to handle:
 
 - Intent binding commits to one chosen action. It still does not prove the
   strategy contract could not have chosen another legal action.
+
+### 25. Prune Generated State Layouts
+
+Stop emitting every other actor state struct into every generated Silverscript
+contract. A contract should only contain foreign state layouts it can actually
+reference through consumes, foreign `become` routes, observed actors, or
+compiler-generated witness/state construction.
+
+Before pruning, fence off a confusing source-level escape hatch: top-level
+shared `fn` declarations should not accept or return actor-owned state types
+until Argent has an explicit public/source-only state view. Generated state
+structs include hidden template fields, so exposing them to arbitrary shared
+helper functions makes the hidden layout part of general user code.
+
+End-to-end test:
+
+- Build the toy-chess fixture.
+- Verify a family worker such as `Mux` no longer emits unrelated `LeagueState`
+  or `PlayerState` layouts.
+- Verify an actor that emits a foreign state still emits exactly that target
+  state layout.
+- Add a negative source fixture where a top-level `fn` takes or returns an
+  actor-owned state type and assert the compiler rejects it with a clear
+  diagnostic.
+
+Obstacle to handle:
+
+- Entry-local state construction is still allowed and compiler-controlled; only
+  shared top-level helper signatures/bodies need the restriction. Later,
+  `state extends` / public header views can reopen this in a deliberate way.
 
 ## Suggested Implementation Boundaries
 
