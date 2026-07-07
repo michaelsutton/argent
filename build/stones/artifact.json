@@ -435,6 +435,7 @@
         ]
       }
     ],
+    "actor_enums": [],
     "actors": [
       {
         "name": "League",
@@ -542,6 +543,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/player/template_prefix_bytes",
@@ -780,6 +782,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/player/template_prefix_len",
@@ -965,6 +968,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/player/template_prefix_len",
@@ -1063,6 +1067,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/stones_settle/template_prefix_len",
@@ -1123,6 +1128,7 @@
               "witness_recipe_ids": []
             },
             "hidden_params": [],
+            "template_selectors": [],
             "witnesses": [],
             "consumes": [],
             "emits": {
@@ -1238,6 +1244,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/stones_settle/template_prefix_bytes",
@@ -1397,6 +1404,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/stones_settle/template_prefix_bytes",
@@ -1577,6 +1585,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/player/template_prefix_bytes",

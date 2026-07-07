@@ -11,6 +11,11 @@ state BoardState {
     int ply;
 }
 
+actor enum MoveActor {
+    Pawn;
+    Knight;
+}
+
 actor League owns LeagueState {
     entry register() emits one Player {
         PlayerState next_player = {
@@ -33,6 +38,29 @@ actor Player owns PlayerState {
 }
 
 actor Mux owns BoardState {
+    entry choose(target: MoveActor) emits one MoveActor {
+        if (target == MoveActor::Knight) {
+            require(selector >= 0);
+        }
+
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        become target(next_board);
+    }
+
+    entry choose_knight_const() emits one MoveActor {
+        BoardState next_board = {
+            selector: selector,
+            ply: ply + 1,
+        };
+
+        actor<BoardState> target = MoveActor::Knight;
+        become target(next_board);
+    }
+
     entry choose_pawn() emits one Pawn {
         BoardState next_board = {
             selector: selector,

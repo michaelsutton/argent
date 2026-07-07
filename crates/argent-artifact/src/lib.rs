@@ -37,6 +37,8 @@ pub struct ArgentArtifact {
     #[serde(default)]
     pub template_plan: TemplatePlanArtifact,
     pub states: Vec<StateArtifact>,
+    #[serde(default)]
+    pub actor_enums: Vec<ActorEnumArtifact>,
     pub actors: Vec<ActorArtifact>,
 }
 
@@ -68,6 +70,13 @@ pub struct TemplateRefArtifact {
     pub id: String,
     pub actor: String,
     pub symbol: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorEnumArtifact {
+    pub name: String,
+    pub state: String,
+    pub variants: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,11 +231,23 @@ pub struct EntryArtifact {
     pub route_plan: EntryRoutePlanArtifact,
     #[serde(default)]
     pub hidden_params: Vec<HiddenParamArtifact>,
+    #[serde(default)]
+    pub template_selectors: Vec<TemplateSelectorArtifact>,
     pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
     pub routes: Vec<RouteArtifact>,
     pub terminal_paths: Vec<TerminalPathArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TemplateSelectorArtifact {
+    pub name: String,
+    pub actor_enum: String,
+    pub state: String,
+    pub variants: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixed_actor: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -262,6 +283,7 @@ pub struct HiddenParamArtifact {
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
     RouteFamily { family_id: String },
+    TemplateSelector { selector: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -809,7 +831,12 @@ impl TemplatePlanArtifact {
             let direct_template_actor_set = direct_template_actors.into_iter().collect::<BTreeSet<_>>();
             let expected_table_actors =
                 family.actors.iter().filter(|actor| !direct_template_actor_set.contains(actor.as_str())).cloned().collect::<Vec<_>>();
-            if table.state != family.state || table_actors != expected_table_actors {
+            let expected_table_actor_set = expected_table_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            let table_actor_set = table_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
+            if table.state != family.state
+                || table_actors.len() != expected_table_actor_set.len()
+                || table_actor_set != expected_table_actor_set
+            {
                 return Err(TemplatePlanError::RouteFamilyTableMismatch {
                     id: family.id.clone(),
                     table_id: family.table_id.clone(),
@@ -851,6 +878,7 @@ impl TemplatePlanArtifact {
                         });
                     }
                 }
+                HiddenParamSubjectArtifact::TemplateSelector { .. } => {}
             }
             if let Some(route_proof_id) = &recipe.route_proof_id
                 && !route_proof_ids.contains(route_proof_id.as_str())
@@ -1348,6 +1376,7 @@ mod tests {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
                 states: Vec::new(),
+                actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
             sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states: Vec::new(), contracts: Vec::new() },
@@ -1370,6 +1399,7 @@ mod tests {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
                 states: Vec::new(),
+                actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
             sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION + 1, states: Vec::new(), contracts: Vec::new() },
@@ -1392,6 +1422,7 @@ mod tests {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
                 states: Vec::new(),
+                actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
             sil_abi: SilAbiArtifact {
@@ -1581,6 +1612,7 @@ mod tests {
                     witness_recipes: Vec::new(),
                 },
                 states: Vec::new(),
+                actor_enums: Vec::new(),
                 actors: ["Mux", "Pawn", "Knight", "Bishop"]
                     .into_iter()
                     .map(|actor| ActorArtifact {
@@ -1638,6 +1670,7 @@ mod tests {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact { route_families, ..TemplatePlanArtifact::default() },
                 states: Vec::new(),
+                actor_enums: Vec::new(),
                 actors: vec![
                     ActorArtifact {
                         name: "Mux".to_string(),

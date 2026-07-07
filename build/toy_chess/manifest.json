@@ -46,6 +46,20 @@
       "sil": "sil/Mux.sil",
       "entries": [
         {
+          "name": "choose",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["MoveActor"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "target", "state": "next_board" }]
+        },
+        {
+          "name": "choose_knight_const",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["MoveActor"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "target", "state": "next_board" }]
+        },
+        {
           "name": "choose_pawn",
           "kind": "leader",
           "emits": { "kind": "one", "actors": ["Pawn"] },

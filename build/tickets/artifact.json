@@ -141,6 +141,7 @@
         ]
       }
     ],
+    "actor_enums": [],
     "actors": [
       {
         "name": "Issuer",
@@ -248,6 +249,7 @@
                 }
               }
             ],
+            "template_selectors": [],
             "witnesses": [
               {
                 "recipe_id": "witness/ticket/template_prefix_bytes",
@@ -380,6 +382,7 @@
               "witness_recipe_ids": []
             },
             "hidden_params": [],
+            "template_selectors": [],
             "witnesses": [],
             "consumes": [],
             "emits": {
