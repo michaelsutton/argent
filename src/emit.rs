@@ -2,9 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
+use crate::artifact::*;
 use crate::ast::*;
+use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
+use silverscript_lang::ast::Expr as SilExpr;
+use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
@@ -12,14 +16,19 @@ pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
     fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(out_dir, err.to_string()))?;
 
     let model = Model::from_program(program)?;
+    let mut actor_sil = BTreeMap::new();
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
-        fs::write(sil_dir.join(format!("{}.sil", actor.name)), sil)
+        fs::write(sil_dir.join(format!("{}.sil", actor.name)), &sil)
             .map_err(|err| ArgentError::at(sil_dir.join(format!("{}.sil", actor.name)), err.to_string()))?;
+        actor_sil.insert(actor.name.clone(), sil);
     }
 
     fs::write(out_dir.join("manifest.json"), emit_manifest(program, &model))
         .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
+
+    fs::write(out_dir.join("artifact.json"), emit_artifact_json(program, &model, &actor_sil)?)
+        .map_err(|err| ArgentError::at(out_dir.join("artifact.json"), err.to_string()))?;
     Ok(())
 }
 
@@ -531,20 +540,22 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     out.push_str(&format!("    entrypoint function {}(", entry.name));
-    let witness_actors = entry_witness_actors(entry, model);
-    let sil_params = lower_entry_params(&entry.params, &witness_actors);
+    let witness_specs = entry_witness_specs(actor, entry, model);
+    let sil_params = lower_entry_params(&entry.params, &witness_specs);
     out.push_str(&sil_params.join(", "));
     out.push_str(") {\n");
 
-    for actor_name in &witness_actors {
-        let prefix = hidden_witness_prefix_name(actor_name);
-        let suffix = hidden_witness_suffix_name(actor_name);
-        let prefix_len = hidden_witness_prefix_len_name(actor_name);
-        let suffix_len = hidden_witness_suffix_len_name(actor_name);
-        out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-        out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
+    for spec in &witness_specs {
+        if spec.form == TemplateWitnessForm::Bytes {
+            let prefix = hidden_witness_prefix_name(&spec.actor);
+            let suffix = hidden_witness_suffix_name(&spec.actor);
+            let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
+            let suffix_len = hidden_witness_suffix_len_name(&spec.actor);
+            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
+            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
+        }
     }
-    if !witness_actors.is_empty() {
+    if witness_specs.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) {
         out.push('\n');
     }
 
@@ -762,6 +773,16 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
         self.model.actor_state(&route.actor)?;
         let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
+        let validation = route_validation_kind(self.actor, &route);
+
+        if validation == RouteValidationKind::ExactScriptPublicKey {
+            push_indent(out, indent);
+            out.push_str(&format!(
+                "require(tx.outputs[{output_idx}].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);\n"
+            ));
+            return Ok(());
+        }
+
         let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
@@ -774,11 +795,21 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             name
         };
 
-        let prefix = hidden_witness_prefix_name(&route.actor);
-        let suffix = hidden_witness_suffix_name(&route.actor);
-        let template = hidden_template_name(&route.actor);
         push_indent(out, indent);
-        out.push_str(&format!("validateOutputStateWithTemplate({output_idx}, {state_arg}, {prefix}, {suffix}, {template});\n"));
+        match validation {
+            RouteValidationKind::ExactScriptPublicKey => unreachable!("exact continuation returned before state lowering"),
+            RouteValidationKind::SameTemplate => {
+                out.push_str(&format!("validateOutputState({output_idx}, {state_arg});\n"));
+            }
+            RouteValidationKind::ForeignTemplate => {
+                let prefix = hidden_witness_prefix_name(&route.actor);
+                let suffix = hidden_witness_suffix_name(&route.actor);
+                let template = hidden_template_name(&route.actor);
+                out.push_str(&format!(
+                    "validateOutputStateWithTemplate({output_idx}, {state_arg}, {prefix}, {suffix}, {template});\n"
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -1179,48 +1210,93 @@ fn split_top_level_commas(input: &str) -> Vec<&str> {
     parts
 }
 
-fn lower_entry_params(params: &[ParamDecl], witness_actors: &[String]) -> Vec<String> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TemplateWitnessForm {
+    Bytes,
+    Len,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct TemplateWitnessSpec {
+    actor: String,
+    form: TemplateWitnessForm,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RouteValidationKind {
+    ExactScriptPublicKey,
+    SameTemplate,
+    ForeignTemplate,
+}
+
+fn route_validation_kind(actor: &ActorDecl, route: &RouteCall) -> RouteValidationKind {
+    if route.actor == actor.name && compact_expr(&route.state) == "self.state" {
+        return RouteValidationKind::ExactScriptPublicKey;
+    }
+
+    // Concrete actor names denote one compiled template in the current Argent
+    // model, so peer coordination does not by itself require a foreign-template
+    // witness. Future generic/observed actor handles need their own identity
+    // classifier instead of flowing through this named-actor shortcut.
+    if route.actor == actor.name {
+        return RouteValidationKind::SameTemplate;
+    }
+
+    RouteValidationKind::ForeignTemplate
+}
+
+fn lower_entry_params(params: &[ParamDecl], witness_specs: &[TemplateWitnessSpec]) -> Vec<String> {
     let mut out = Vec::new();
     for param in params {
         out.push(format!("{} {}", param.ty.to_sil(), param.name));
     }
-    for actor_name in witness_actors {
-        out.push(format!("byte[] {}", hidden_witness_prefix_name(actor_name)));
-        out.push(format!("byte[] {}", hidden_witness_suffix_name(actor_name)));
+    for spec in witness_specs {
+        match spec.form {
+            TemplateWitnessForm::Bytes => {
+                out.push(format!("byte[] {}", hidden_witness_prefix_name(&spec.actor)));
+                out.push(format!("byte[] {}", hidden_witness_suffix_name(&spec.actor)));
+            }
+            TemplateWitnessForm::Len => {
+                out.push(format!("int {}", hidden_witness_prefix_len_name(&spec.actor)));
+                out.push(format!("int {}", hidden_witness_suffix_len_name(&spec.actor)));
+            }
+        }
     }
     out
 }
 
-fn entry_witness_actors(entry: &EntryDecl, model: &Model<'_>) -> Vec<String> {
-    let mut required = BTreeSet::new();
-    for consume in &entry.consumes {
-        required.insert(consume.actor.clone());
-    }
+fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<TemplateWitnessSpec> {
+    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let byte_actors = entry
+        .routes
+        .iter()
+        .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
+        .map(|route| route.actor.clone())
+        .collect::<BTreeSet<_>>();
+    template_witness_specs(model, read_actors, byte_actors)
+}
 
-    match &entry.emits {
-        EmitSpec::None => {}
-        EmitSpec::One { actors } => {
-            required.extend(actors.iter().cloned());
-        }
-        EmitSpec::Outputs(outputs) => {
-            for output in outputs {
-                required.extend(output.actors.iter().cloned());
-            }
-        }
-    }
-
-    for route in &entry.routes {
-        required.insert(route.actor.clone());
-    }
-
+fn template_witness_specs(
+    model: &Model<'_>,
+    read_actors: BTreeSet<String>,
+    byte_actors: BTreeSet<String>,
+) -> Vec<TemplateWitnessSpec> {
+    let mut required = read_actors.union(&byte_actors).cloned().collect::<BTreeSet<_>>();
     let mut ordered = Vec::new();
     for actor in &model.template_actors {
         if required.remove(actor) {
-            ordered.push(actor.clone());
+            ordered.push(TemplateWitnessSpec { actor: actor.clone(), form: witness_form(actor, &byte_actors) });
         }
     }
-    ordered.extend(required);
+    ordered.extend(required.into_iter().map(|actor| {
+        let form = witness_form(&actor, &byte_actors);
+        TemplateWitnessSpec { actor, form }
+    }));
     ordered
+}
+
+fn witness_form(actor: &str, byte_actors: &BTreeSet<String>) -> TemplateWitnessForm {
+    if byte_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -1314,6 +1390,478 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
     out
 }
 
+fn emit_artifact_json(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<String> {
+    let artifact = emit_artifact(program, model, actor_sil)?;
+    let mut json = serde_json::to_string_pretty(&artifact).map_err(|err| ArgentError::new(err.to_string()))?;
+    json.push('\n');
+    Ok(json)
+}
+
+fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<Artifact> {
+    let templates = model.template_actors.iter().map(|actor| template_ref_artifact(actor)).collect::<Vec<_>>();
+
+    let states: Vec<StateArtifact> = model
+        .states
+        .values()
+        .map(|state| StateArtifact {
+            name: state.name.clone(),
+            fields: state
+                .fields
+                .iter()
+                .map(|field| FieldArtifact { name: field.name.clone(), ty: type_artifact(&field.ty) })
+                .collect(),
+        })
+        .collect();
+
+    let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
+    let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+    let template_plan = template_plan_artifact(&templates, &argent_actors, &sil_contracts)?;
+
+    let artifact = Artifact {
+        schema_version: ARTIFACT_SCHEMA_VERSION,
+        generator: GeneratorArtifact { name: "argentc".to_string(), version: env!("CARGO_PKG_VERSION").to_string() },
+        app: model.app_name.clone(),
+        root: manifest_path(&program.root),
+        modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
+        argent: ArgentArtifact { templates, template_plan, states: states.clone(), actors: argent_actors },
+        sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
+    };
+    artifact.verify_template_plan().map_err(|err| ArgentError::new(format!("invalid template plan receipt: {err}")))?;
+    Ok(artifact)
+}
+
+fn template_ref_artifact(actor: &str) -> TemplateRefArtifact {
+    TemplateRefArtifact { id: template_receipt_id(actor), actor: actor.to_string(), symbol: hidden_template_name(actor) }
+}
+
+fn template_plan_artifact(
+    templates: &[TemplateRefArtifact],
+    actors: &[ActorArtifact],
+    sil_contracts: &[SilContractArtifact],
+) -> Result<TemplatePlanArtifact> {
+    let sil_by_name = sil_contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+    let templates = templates
+        .iter()
+        .map(|template| {
+            let contract = sil_by_name
+                .get(template.actor.as_str())
+                .ok_or_else(|| ArgentError::new(format!("missing Sil ABI contract for template actor `{}`", template.actor)))?;
+            Ok(TemplatePlanTemplateArtifact {
+                id: template.id.clone(),
+                actor: template.actor.clone(),
+                contract: contract.name.clone(),
+                symbol: template.symbol.clone(),
+                hash_hex: contract.compiled.template.hash_hex.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let mut seen = BTreeSet::new();
+    let mut witness_recipes = Vec::new();
+    for actor in actors {
+        for entry in &actor.entries {
+            for param in &entry.hidden_params {
+                if seen.insert(param.recipe_id.clone()) {
+                    witness_recipes.push(TemplateWitnessRecipeArtifact {
+                        id: param.recipe_id.clone(),
+                        template_id: template_receipt_id(&param.actor),
+                        actor: param.actor.clone(),
+                        param: param.name.clone(),
+                        purpose: param.purpose,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(TemplatePlanArtifact { templates, witness_recipes })
+}
+
+fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
+    let entries = actor.entries.iter().map(|entry| entry_artifact(actor, entry, model)).collect::<Result<Vec<_>>>()?;
+
+    Ok(ActorArtifact {
+        name: actor.name.clone(),
+        state: actor.state.clone(),
+        abi: ActorAbiRefArtifact { actor: actor.name.clone() },
+        entries,
+    })
+}
+
+fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<SilContractArtifact> {
+    let state = model.state(&actor.state)?;
+    let entries = actor.entries.iter().enumerate().map(|(idx, entry)| sil_entry_artifact(actor, idx, entry, model)).collect();
+    let sil = actor_sil
+        .get(&actor.name)
+        .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
+
+    Ok(SilContractArtifact {
+        name: actor.name.clone(),
+        source_path: format!("sil/{}.sil", actor.name),
+        runtime_state: RuntimeStateArtifact { source: state.name.clone(), fields: runtime_state_fields(state, model) },
+        entries,
+        compiled: compile_contract_artifact(sil, actor, model)?,
+    })
+}
+
+fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<'_>) -> Result<CompiledContractArtifact> {
+    let args: Vec<SilExpr<'i>> = constructor_args_for_actor(actor, model)?;
+    let compiled = compile_contract(sil, &args, CompileOptions::default())
+        .map_err(|err| ArgentError::new(format!("generated Silverscript for actor `{}` failed to compile: {err}", actor.name)))?;
+    compiled_contract_artifact(&compiled)
+}
+
+fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
+    let state = model.state(&actor.state)?;
+    let mut args = Vec::with_capacity(model.template_actors.len() + state.fields.len());
+
+    // These placeholders are valid because Argent-generated constructor
+    // arguments are state initializers: hidden template hashes and source state
+    // fields. If a constructor argument affects code shape outside the compiled
+    // state span, the template hash changes and the contract must be recompiled
+    // for that value.
+    for _ in &model.template_actors {
+        args.push(SilExpr::bytes(vec![0; 32]));
+    }
+    for field in &state.fields {
+        args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
+            ArgentError::new(format!(
+                "cannot build placeholder constructor argument for actor `{}` field `{}`: {err}",
+                actor.name, field.name
+            ))
+        })?);
+    }
+
+    Ok(args)
+}
+
+fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
+    match (&ty.name[..], ty.array) {
+        ("byte", Some(len)) => Ok(SilExpr::bytes(vec![0; len])),
+        (_, Some(len)) => {
+            let item = TypeRef::new(ty.name.clone());
+            let values = (0..len).map(|_| placeholder_expr_for_type(&item)).collect::<Result<Vec<_>>>()?;
+            Ok(values.into())
+        }
+        ("int", None) => Ok(SilExpr::int(0)),
+        ("bool", None) => Ok(SilExpr::bool(false)),
+        ("byte", None) => Ok(SilExpr::byte(0)),
+        ("string", None) => Ok(SilExpr::string("")),
+        ("pubkey", None) => Ok(SilExpr::bytes(vec![0; 32])),
+        ("sig", None) => Ok(SilExpr::bytes(vec![0; 65])),
+        ("datasig", None) => Ok(SilExpr::bytes(vec![0; 64])),
+        (name, None) => Err(ArgentError::new(format!("unsupported constructor placeholder type `{name}`"))),
+    }
+}
+
+fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<CompiledContractArtifact> {
+    let layout = compiled.state_layout;
+    let suffix_start = layout.start + layout.len;
+    if layout.start > compiled.script.len() || suffix_start > compiled.script.len() {
+        return Err(ArgentError::new(format!(
+            "compiled contract `{}` reported invalid state span start={} len={} for script len={}",
+            compiled.contract_name,
+            layout.start,
+            layout.len,
+            compiled.script.len()
+        )));
+    }
+
+    let prefix = &compiled.script[..layout.start];
+    let suffix = &compiled.script[suffix_start..];
+    let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(prefix).update(suffix).finalize();
+
+    Ok(CompiledContractArtifact {
+        script_hex: encode_hex(&compiled.script),
+        template: CompiledTemplateArtifact {
+            prefix_hex: encode_hex(prefix),
+            suffix_hex: encode_hex(suffix),
+            hash_hex: encode_hex(template_hash.as_bytes()),
+        },
+        state_span: StateSpanArtifact { offset: layout.start, len: layout.len },
+    })
+}
+
+fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
+    let mut fields = Vec::new();
+    for actor in &model.template_actors {
+        fields.push(RuntimeFieldArtifact {
+            name: hidden_template_name(actor),
+            ty: TypeArtifact::from_parts("byte", Some(32)),
+            role: RuntimeFieldRoleArtifact::Template { contract: actor.clone() },
+        });
+    }
+    for field in &state.fields {
+        fields.push(RuntimeFieldArtifact {
+            name: field.name.clone(),
+            ty: type_artifact(&field.ty),
+            role: RuntimeFieldRoleArtifact::Source,
+        });
+    }
+    fields
+}
+
+fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenParamArtifact> {
+    let witness_specs = entry_witness_specs(actor, entry, model);
+    let mut hidden_params = Vec::new();
+    for spec in &witness_specs {
+        match spec.form {
+            TemplateWitnessForm::Bytes => {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                    name: hidden_witness_prefix_name(&spec.actor),
+                    ty: TypeArtifact::Bytes,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                    name: hidden_witness_suffix_name(&spec.actor),
+                    ty: TypeArtifact::Bytes,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                });
+            }
+            TemplateWitnessForm::Len => {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen),
+                    name: hidden_witness_prefix_len_name(&spec.actor),
+                    ty: TypeArtifact::Int,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen),
+                    name: hidden_witness_suffix_len_name(&spec.actor),
+                    ty: TypeArtifact::Int,
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
+                });
+            }
+        }
+    }
+    hidden_params
+}
+
+fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryArtifact> {
+    let hidden_params = hidden_params_for_entry(actor, entry, model);
+    let witnesses = hidden_params
+        .iter()
+        .map(|param| WitnessArtifact {
+            recipe_id: param.recipe_id.clone(),
+            param: param.name.clone(),
+            actor: param.actor.clone(),
+            purpose: param.purpose,
+        })
+        .collect::<Vec<_>>();
+    Ok(EntryArtifact {
+        name: entry.name.clone(),
+        kind: match entry.kind {
+            EntryKind::Leader => EntryKindArtifact::Leader,
+            EntryKind::Delegate => EntryKindArtifact::Delegate,
+        },
+        abi: EntryAbiRefArtifact { actor: actor.name.clone(), entry: entry.name.clone() },
+        route_plan: entry_route_plan_artifact(actor, entry, model, &witnesses)?,
+        hidden_params,
+        witnesses,
+        consumes: entry
+            .consumes
+            .iter()
+            .map(|consume| ConsumeArtifact { name: consume.name.clone(), actor: consume.actor.clone() })
+            .collect(),
+        emits: emit_spec_artifact(&entry.emits),
+        routes: entry.routes.iter().map(route_artifact).collect(),
+        terminal_paths: entry
+            .terminal_route_sets
+            .iter()
+            .map(|routes| TerminalPathArtifact { routes: routes.iter().map(route_artifact).collect() })
+            .collect(),
+    })
+}
+
+fn entry_route_plan_artifact(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    witnesses: &[WitnessArtifact],
+) -> Result<EntryRoutePlanArtifact> {
+    let active_input = RouteInputArtifact {
+        name: "self".to_string(),
+        actor: actor.name.clone(),
+        cov_index: matches!(entry.kind, EntryKind::Leader).then_some(0),
+    };
+    let consumes = entry
+        .consumes
+        .iter()
+        .enumerate()
+        .map(|(idx, consume)| RouteInputArtifact {
+            name: consume.name.clone(),
+            actor: consume.actor.clone(),
+            cov_index: Some(consume_cov_index(entry.kind, idx)),
+        })
+        .collect::<Vec<_>>();
+    let leader_input = match entry.kind {
+        EntryKind::Leader => Some(active_input.clone()),
+        EntryKind::Delegate => consumes.first().cloned(),
+    };
+    let outputs = route_output_handles(&entry.emits);
+    let terminal_paths = entry
+        .terminal_route_sets
+        .iter()
+        .map(|routes| planned_terminal_path_artifact(actor, routes, entry, model))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(EntryRoutePlanArtifact {
+        active_input: Some(active_input),
+        leader_input,
+        consumes,
+        outputs,
+        terminal_paths,
+        witness_recipe_ids: witnesses.iter().map(|witness| witness.recipe_id.clone()).collect(),
+    })
+}
+
+fn consume_cov_index(kind: EntryKind, idx: usize) -> usize {
+    match kind {
+        EntryKind::Leader => idx + 1,
+        EntryKind::Delegate => idx,
+    }
+}
+
+fn route_output_handles(emits: &EmitSpec) -> Vec<RouteOutputHandleArtifact> {
+    match emits {
+        EmitSpec::None => Vec::new(),
+        EmitSpec::One { actors } => vec![RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }],
+        EmitSpec::Outputs(outputs) => outputs
+            .iter()
+            .map(|output| RouteOutputHandleArtifact {
+                name: Some(output.name.clone()),
+                auth_index: output.auth_index,
+                actors: output.actors.clone(),
+            })
+            .collect(),
+    }
+}
+
+fn planned_terminal_path_artifact(
+    actor: &ActorDecl,
+    routes: &[RouteCall],
+    entry: &EntryDecl,
+    model: &Model<'_>,
+) -> Result<PlannedTerminalPathArtifact> {
+    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let byte_actors = routes
+        .iter()
+        .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
+        .map(|route| route.actor.clone())
+        .collect::<BTreeSet<_>>();
+
+    let witness_recipe_ids = witness_recipe_ids_for_specs(template_witness_specs(model, read_actors, byte_actors));
+    let routes = routes
+        .iter()
+        .map(|route| {
+            let output = route_output_handle(&entry.emits, route)?;
+            Ok(PlannedRouteArtifact {
+                output: output.name.clone(),
+                auth_index: output.auth_index,
+                actor: route.actor.clone(),
+                template_id: template_receipt_id(&route.actor),
+                state_expr: compact_expr(&route.state),
+                witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
+                    witness_recipe_ids_for_specs(template_witness_specs(
+                        model,
+                        BTreeSet::new(),
+                        [route.actor.clone()].into_iter().collect(),
+                    ))
+                } else {
+                    Vec::new()
+                },
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(PlannedTerminalPathArtifact { routes, witness_recipe_ids })
+}
+
+fn witness_recipe_ids_for_specs(specs: Vec<TemplateWitnessSpec>) -> Vec<String> {
+    let mut ids = Vec::new();
+    for spec in specs {
+        push_actor_witness_recipe_ids(&mut ids, &spec);
+    }
+    ids
+}
+
+fn push_actor_witness_recipe_ids(out: &mut Vec<String>, spec: &TemplateWitnessSpec) {
+    match spec.form {
+        TemplateWitnessForm::Bytes => {
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixBytes));
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes));
+        }
+        TemplateWitnessForm::Len => {
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen));
+            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen));
+        }
+    }
+}
+
+fn route_output_handle(emits: &EmitSpec, route: &RouteCall) -> Result<RouteOutputHandleArtifact> {
+    match (emits, &route.output) {
+        (EmitSpec::One { actors }, None) => Ok(RouteOutputHandleArtifact { name: None, auth_index: 0, actors: actors.clone() }),
+        (EmitSpec::Outputs(outputs), Some(name)) => outputs
+            .iter()
+            .find(|output| &output.name == name)
+            .map(|output| RouteOutputHandleArtifact {
+                name: Some(output.name.clone()),
+                auth_index: output.auth_index,
+                actors: output.actors.clone(),
+            })
+            .ok_or_else(|| ArgentError::new(format!("route references unknown output `{name}`"))),
+        (EmitSpec::Outputs(_), None) => Err(ArgentError::new("named output route is missing an output handle")),
+        (EmitSpec::One { .. }, Some(name)) => Err(ArgentError::new(format!("single-output route unexpectedly named `{name}`"))),
+        (EmitSpec::None, _) => Err(ArgentError::new("route cannot target an entry that emits none")),
+    }
+}
+
+fn sil_entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, model: &Model<'_>) -> SilEntryArtifact {
+    let mut params =
+        entry.params.iter().map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty) }).collect::<Vec<_>>();
+    params.extend(
+        hidden_params_for_entry(actor, entry, model).into_iter().map(|param| ParamArtifact { name: param.name, ty: param.ty }),
+    );
+
+    SilEntryArtifact { name: entry.name.clone(), selector: (actor.entries.len() > 1).then_some(entry_index as i64), params }
+}
+
+fn emit_spec_artifact(emits: &EmitSpec) -> EmitArtifact {
+    match emits {
+        EmitSpec::None => EmitArtifact::None,
+        EmitSpec::One { actors } => EmitArtifact::One { actors: actors.clone() },
+        EmitSpec::Outputs(outputs) => EmitArtifact::Outputs {
+            outputs: outputs
+                .iter()
+                .map(|output| EmitOutputArtifact {
+                    name: output.name.clone(),
+                    auth_index: output.auth_index,
+                    actors: output.actors.clone(),
+                })
+                .collect(),
+        },
+    }
+}
+
+fn route_artifact(route: &RouteCall) -> RouteArtifact {
+    RouteArtifact {
+        output: route.output.clone(),
+        actor: route.actor.clone(),
+        template_id: template_receipt_id(&route.actor),
+        state_expr: compact_expr(&route.state),
+    }
+}
+
+fn type_artifact(ty: &TypeRef) -> TypeArtifact {
+    TypeArtifact::from_parts(&ty.name, ty.array)
+}
+
 fn emit_emit_spec_json(out: &mut String, emits: &EmitSpec) {
     match emits {
         EmitSpec::None => out.push_str("{ \"kind\": \"none\" }"),
@@ -1398,6 +1946,23 @@ fn hidden_template_init_name(actor: &str) -> String {
 
 fn hidden_template_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
+}
+
+fn template_receipt_id(actor: &str) -> String {
+    format!("template/{}", hidden_actor_suffix(actor))
+}
+
+fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) -> String {
+    format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
+}
+
+fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
+    match purpose {
+        HiddenParamPurposeArtifact::TemplatePrefixBytes => "template_prefix_bytes",
+        HiddenParamPurposeArtifact::TemplateSuffixBytes => "template_suffix_bytes",
+        HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
+        HiddenParamPurposeArtifact::TemplateSuffixLen => "template_suffix_len",
+    }
 }
 
 fn hidden_witness_prefix_name(actor: &str) -> String {
@@ -1487,7 +2052,10 @@ fn json_escape(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+    };
 
     use super::*;
 
@@ -1748,17 +2316,360 @@ mod tests {
 
         assert!(sil.contains("byte[32] gen__init_template_foo"), "{sil}");
         assert!(sil.contains("byte[32] gen__template_foo = gen__init_template_foo;"), "{sil}");
-        assert!(sil.contains("byte[] gen__foo_prefix"), "{sil}");
-        assert!(sil.contains("int gen__foo_prefix_len = gen__foo_prefix.length;"), "{sil}");
         assert!(sil.contains("int gen__next_output_idx = OpAuthOutputIdx"), "{sil}");
         assert!(sil.contains("tx.outputs[gen__next_output_idx].value"), "{sil}");
-        assert!(sil.contains("validateOutputStateWithTemplate(gen__next_output_idx,"), "{sil}");
-        assert!(sil.contains("gen__state_foo_state"), "{sil}");
+        assert!(
+            sil.contains("require(tx.outputs[gen__next_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);"),
+            "{sil}"
+        );
         assert!(manifest.contains(r#""symbol": "gen__template_foo""#), "{manifest}");
         assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
         assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
+        assert!(!sil.contains("byte[] gen__foo_prefix"), "{sil}");
+        assert!(!sil.contains("gen__state_foo_state"), "{sil}");
         assert!(!sil.contains("__argent_"), "{sil}");
+    }
+
+    #[test]
+    fn self_transition_uses_same_template_shortcut() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                int count;
+            }
+
+            actor Foo owns FooState {
+                entry bump(amount: int) emits one Foo {
+                    State next_state = {
+                        count: count + amount,
+                    };
+                    become Foo(next_state);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor = model.actor("Foo").expect("actor exists");
+        let sil = emit_actor(actor, &model).expect("actor emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        assert!(sil.contains("validateOutputState(gen__next_output_idx, next_state);"), "{sil}");
+        assert!(!sil.contains("validateOutputStateWithTemplate"), "{sil}");
+        assert!(!sil.contains("byte[] gen__foo_prefix"), "{sil}");
+
+        let foo = artifact.argent.actors.iter().find(|actor| actor.name == "Foo").expect("Foo actor is present");
+        let bump = foo.entries.iter().find(|entry| entry.name == "bump").expect("bump entry is present");
+        assert!(bump.hidden_params.is_empty());
+        assert!(bump.witnesses.is_empty());
+        assert!(bump.route_plan.witness_recipe_ids.is_empty());
+        assert!(bump.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
+
+        let sil_foo = artifact.sil_abi.contract("Foo").expect("Foo Sil ABI exists");
+        let sil_bump = sil_foo.entry("bump").expect("bump Sil ABI exists");
+        assert_eq!(sil_bump.params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(), ["amount"]);
+    }
+
+    #[test]
+    fn emits_portable_artifact_schema() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                byte[32] owner;
+                int count;
+            }
+
+            actor Foo owns FooState {
+                entry step(amount: int) emits one Foo {
+                    require(next.value == self.value);
+                    become Foo(self.state);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor_sil = actor_sil_for_model(&model);
+
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+        artifact.check_schema_version().expect("schema version is current");
+        let json = serde_json::to_string(&artifact).expect("artifact serializes");
+        let artifact: crate::artifact::Artifact = serde_json::from_str(&json).expect("artifact deserializes");
+
+        assert_eq!(artifact.schema_version, ARTIFACT_SCHEMA_VERSION);
+        assert_eq!(artifact.generator.name, "argentc");
+        assert_eq!(artifact.app, "Test");
+        assert_eq!(artifact.root, "test.ag");
+        assert_eq!(artifact.argent.templates[0].symbol, "gen__template_foo");
+        assert_eq!(artifact.argent.templates[0].id, "template/foo");
+        assert_eq!(artifact.argent.template_plan.templates[0].id, "template/foo");
+        assert_eq!(
+            artifact.argent.template_plan.templates[0].hash_hex,
+            artifact.sil_abi.contract("Foo").unwrap().compiled.template.hash_hex
+        );
+        artifact.verify_template_plan().expect("template plan receipt verifies");
+        assert_eq!(
+            artifact.argent.states, artifact.sil_abi.states,
+            "source and ABI structural state descriptors should be derived from the same model"
+        );
+
+        let state = artifact.argent.states.iter().find(|state| state.name == "FooState").expect("source state is present");
+        assert_eq!(
+            state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            ["owner", "count"],
+            "source state field order must stay stable"
+        );
+        assert_eq!(state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
+        assert_eq!(state.fields[1].ty, TypeArtifact::Int);
+
+        let actor = artifact.argent.actors.iter().find(|actor| actor.name == "Foo").expect("actor is present");
+        assert_eq!(actor.abi.actor, "Foo");
+        let sil_contract = artifact.sil_abi.contract(&actor.abi.actor).expect("outer actor should point at Sil ABI contract");
+        assert_eq!(sil_contract.source_path, "sil/Foo.sil");
+        assert_compiled_projection(sil_contract.name.as_str(), &sil_contract.compiled);
+        assert_eq!(
+            sil_contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            ["gen__template_foo", "owner", "count"],
+            "runtime state field order must match generated Silverscript state order"
+        );
+        assert_eq!(sil_contract.runtime_state.fields[0].name, "gen__template_foo");
+        assert_eq!(sil_contract.runtime_state.fields[0].role, RuntimeFieldRoleArtifact::Template { contract: "Foo".to_string() });
+        assert_eq!(sil_contract.runtime_state.fields[1].name, "owner");
+        assert_eq!(sil_contract.runtime_state.fields[1].role, RuntimeFieldRoleArtifact::Source);
+        assert_eq!(sil_contract.runtime_state.fields[2].role, RuntimeFieldRoleArtifact::Source);
+
+        let entry = actor.entries.iter().find(|entry| entry.name == "step").expect("entry is present");
+        assert_eq!(entry.kind, EntryKindArtifact::Leader);
+        assert_eq!(entry.abi.actor, "Foo");
+        assert_eq!(entry.abi.entry, "step");
+        assert!(entry.hidden_params.is_empty(), "exact same-state continuation should not expose template witnesses");
+        assert!(entry.witnesses.is_empty(), "exact same-state continuation should not expose route witnesses");
+        assert!(matches!(entry.emits, EmitArtifact::One { .. }));
+        assert_eq!(entry.routes[0].actor, "Foo");
+        assert_eq!(entry.routes[0].state_expr, "self.state");
+        assert_eq!(entry.terminal_paths[0].routes[0], entry.routes[0]);
+        assert_eq!(
+            entry.route_plan.active_input.as_ref().map(|input| (input.actor.as_str(), input.cov_index)),
+            Some(("Foo", Some(0)))
+        );
+        assert_eq!(entry.route_plan.outputs[0].auth_index, 0);
+        assert_eq!(entry.route_plan.outputs[0].name, None);
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].actor, "Foo");
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].template_id, "template/foo");
+        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].auth_index, 0);
+        assert!(entry.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
+
+        let sil_entry = sil_contract.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
+        assert_eq!(sil_entry.selector, None);
+        assert_eq!(sil_entry.params.len(), 1);
+        assert_eq!(sil_entry.params[0].name, "amount");
+        assert_eq!(sil_entry.params[0].ty, TypeArtifact::Int);
+        assert_eq!(
+            entry.witnesses.iter().map(|witness| (witness.param.clone(), witness.actor.clone(), witness.purpose)).collect::<Vec<_>>(),
+            entry.hidden_params.iter().map(|param| (param.name.clone(), param.actor.clone(), param.purpose)).collect::<Vec<_>>(),
+            "outer witness recipes must correspond to outer hidden ABI params"
+        );
+    }
+
+    #[test]
+    fn builds_examples_with_compiled_artifacts() {
+        assert_example_build_artifact(
+            "examples/tickets.ag",
+            "tickets",
+            &[
+                ("Issuer", "5404d6e8784964254e7639560c10b08d10ba4ff53f77d38c90128273e6f5c50d"),
+                ("Ticket", "af2c2f57d547110b19467ceea32a3a34e947649b03893b222ed8da5fc57f6324"),
+            ],
+        );
+        assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
+    }
+
+    #[test]
+    fn stones_delegate_reads_use_length_only_template_witnesses() {
+        let out_dir = std::env::temp_dir().join(format!("argent-stones-length-witness-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new("examples/stones/app.ag")).expect("stones example loads");
+        emit_build(&program, &out_dir).expect("stones example builds");
+        let player_sil = fs::read_to_string(out_dir.join("sil/Player.sil")).expect("Player.sil exists");
+        let league_sil = fs::read_to_string(out_dir.join("sil/League.sil")).expect("League.sil exists");
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+
+        assert!(
+            player_sil.contains(
+                "entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len)"
+            ),
+            "{player_sil}"
+        );
+        assert!(!player_sil.contains("entrypoint function accept_start(sig owner_sig, pubkey owner_pk, byte[]"), "{player_sil}");
+        assert!(
+            player_sil.contains(
+                "entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix)"
+            ),
+            "{player_sil}"
+        );
+        assert!(!player_sil.contains("byte[] gen__player_prefix"), "{player_sil}");
+        assert!(player_sil.contains("validateOutputState(gen__self_out_output_idx, next_self);"), "{player_sil}");
+        assert!(player_sil.contains("validateOutputState(gen__opponent_out_output_idx, next_opponent);"), "{player_sil}");
+        assert!(player_sil.contains("validateOutputStateWithTemplate(gen__game_output_idx, next_game"), "{player_sil}");
+        assert!(
+            league_sil.contains("entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix)"),
+            "{league_sil}"
+        );
+        assert!(!league_sil.contains("gen__league_prefix"), "{league_sil}");
+        assert!(
+            league_sil.contains(
+                "require(tx.outputs[gen__league_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);"
+            ),
+            "{league_sil}"
+        );
+        assert!(league_sil.contains("validateOutputStateWithTemplate(gen__player_output_idx, next_player"), "{league_sil}");
+
+        let player_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Player").expect("Player actor exists");
+        let accept_start = player_actor.entries.iter().find(|entry| entry.name == "accept_start").expect("accept_start ABI exists");
+        assert_eq!(accept_start.hidden_params.len(), 2);
+        assert_eq!(accept_start.hidden_params[0].name, "gen__player_prefix_len");
+        assert_eq!(accept_start.hidden_params[0].ty, TypeArtifact::Int);
+        assert_eq!(accept_start.hidden_params[0].actor, "Player");
+        assert_eq!(accept_start.hidden_params[0].purpose, HiddenParamPurposeArtifact::TemplatePrefixLen);
+        assert_eq!(accept_start.hidden_params[1].name, "gen__player_suffix_len");
+        assert_eq!(accept_start.hidden_params[1].ty, TypeArtifact::Int);
+        assert_eq!(accept_start.hidden_params[1].actor, "Player");
+        assert_eq!(accept_start.hidden_params[1].purpose, HiddenParamPurposeArtifact::TemplateSuffixLen);
+
+        let start_game = player_actor.entries.iter().find(|entry| entry.name == "start_game").expect("start_game ABI exists");
+        assert_eq!(
+            start_game
+                .hidden_params
+                .iter()
+                .map(|param| (param.name.as_str(), param.ty.clone(), param.actor.as_str(), param.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__player_prefix_len", TypeArtifact::Int, "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
+                ("gen__player_suffix_len", TypeArtifact::Int, "Player", HiddenParamPurposeArtifact::TemplateSuffixLen),
+                ("gen__stones_game_prefix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__stones_game_suffix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+
+        let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
+        let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
+        assert_eq!(
+            sil_accept_start.params.iter().map(|param| (param.name.as_str(), param.ty.clone())).collect::<Vec<_>>(),
+            vec![
+                ("owner_sig", TypeArtifact::Sig),
+                ("owner_pk", TypeArtifact::Pubkey),
+                ("gen__player_prefix_len", TypeArtifact::Int),
+                ("gen__player_suffix_len", TypeArtifact::Int),
+            ]
+        );
+
+        let league_actor = artifact.argent.actors.iter().find(|actor| actor.name == "League").expect("League actor exists");
+        let register_player =
+            league_actor.entries.iter().find(|entry| entry.name == "register_player").expect("register_player exists");
+        assert_eq!(
+            register_player
+                .hidden_params
+                .iter()
+                .map(|param| (param.name.as_str(), param.ty.clone(), param.actor.as_str(), param.purpose))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gen__player_prefix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                ("gen__player_suffix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            ]
+        );
+        assert!(
+            register_player.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty(),
+            "exact league continuation should not need per-route template witnesses"
+        );
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn artifact_codec_matches_silverscript_sigscript_builder() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                int count;
+                byte[4] tag;
+                bool flag;
+            }
+
+            actor Foo owns FooState {
+                entry bump(amount: int, next_tag: byte[4], next_flag: bool, b: byte) emits none {
+                    require(amount >= 0);
+                }
+
+                entry done() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor = model.actor("Foo").expect("actor exists");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+        let sil_abi_json = serde_json::to_string(&artifact.sil_abi).expect("Sil ABI artifact serializes");
+        let sil_abi: SilAbiArtifact = serde_json::from_str(&sil_abi_json).expect("Sil ABI artifact deserializes");
+        sil_abi.check_schema_version().expect("Sil ABI schema version is current");
+        let sil = actor_sil.get("Foo").expect("Foo Sil exists");
+        let constructor_args = constructor_args_for_actor(actor, &model).expect("constructor args build");
+        let compiled = compile_contract(sil, &constructor_args, CompileOptions::default()).expect("generated Sil compiles");
+
+        let sil_contract = sil_abi.contract("Foo").expect("Foo Sil ABI exists");
+        let bump = sil_contract.entries.iter().find(|entry| entry.name == "bump").expect("bump entry exists");
+        let done = sil_contract.entries.iter().find(|entry| entry.name == "done").expect("done entry exists");
+        assert_eq!(bump.selector, Some(0));
+        assert_eq!(done.selector, Some(1));
+
+        let portable_bump = crate::codec::encode_contract_entry_sig_script(
+            &sil_abi,
+            "Foo",
+            "bump",
+            &[
+                crate::codec::ArtifactValue::Int(17),
+                crate::codec::ArtifactValue::Bytes(vec![1, 2, 3, 4]),
+                crate::codec::ArtifactValue::Bool(true),
+                crate::codec::ArtifactValue::Byte(1),
+            ],
+        )
+        .expect("portable bump sigscript builds");
+        let sil_bump = compiled
+            .build_sig_script("bump", vec![SilExpr::int(17), SilExpr::bytes(vec![1, 2, 3, 4]), SilExpr::bool(true), SilExpr::byte(1)])
+            .expect("Sil bump sigscript builds");
+        assert_eq!(portable_bump, sil_bump);
+
+        let portable_done =
+            crate::codec::encode_contract_entry_sig_script(&sil_abi, "Foo", "done", &[]).expect("portable done sigscript builds");
+        let sil_done = compiled.build_sig_script("done", vec![]).expect("Sil done sigscript builds");
+        assert_eq!(portable_done, sil_done);
     }
 
     #[test]
@@ -1794,6 +2705,86 @@ mod tests {
             actors: Vec::new(),
             apps: Vec::new(),
         }
+    }
+
+    fn actor_sil_for_model(model: &Model<'_>) -> BTreeMap<String, String> {
+        model.actors.iter().map(|actor| (actor.name.clone(), emit_actor(actor, model).expect("actor emits"))).collect()
+    }
+
+    fn assert_example_build_artifact(input: &str, name: &str, expected_hashes: &[(&str, &str)]) {
+        let out_dir = std::env::temp_dir().join(format!("argent-{name}-artifact-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new(input)).expect("example loads");
+        emit_build(&program, &out_dir).expect("example builds");
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+        artifact.check_schema_version().expect("artifact schema version is supported");
+        artifact.verify_template_plan().expect("template plan receipt verifies");
+
+        let expected_hashes = expected_hashes.iter().copied().collect::<BTreeMap<_, _>>();
+        assert!(!artifact.argent.actors.is_empty(), "artifact should contain Argent actors");
+        for actor in &artifact.argent.actors {
+            let sil_contract = artifact
+                .sil_abi
+                .contract(&actor.abi.actor)
+                .unwrap_or_else(|| panic!("actor `{}` should reference a Sil ABI contract", actor.name));
+            assert_compiled_projection(sil_contract.name.as_str(), &sil_contract.compiled);
+            assert_runtime_state_round_trip(sil_contract, &sil_contract.compiled);
+            if let Some(expected_hash) = expected_hashes.get(sil_contract.name.as_str()) {
+                assert_eq!(&sil_contract.compiled.template.hash_hex, expected_hash, "actor `{}` template hash changed", actor.name);
+            }
+        }
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+
+    fn assert_runtime_state_round_trip(actor: &SilContractArtifact, compiled: &CompiledContractArtifact) {
+        let script = crate::codec::decode_hex(&compiled.script_hex).expect("script hex decodes");
+        let state_start = compiled.state_span.offset;
+        let state_end = state_start + compiled.state_span.len;
+        let state_script = &script[state_start..state_end];
+        let state_values =
+            crate::codec::decode_runtime_state_script(&actor.runtime_state, state_script).expect("runtime state decodes");
+        let reencoded =
+            crate::codec::encode_runtime_state_script(&actor.runtime_state, &state_values).expect("runtime state re-encodes");
+        assert_eq!(reencoded, state_script, "actor `{}` runtime state must re-encode byte-for-byte", actor.name);
+    }
+
+    fn assert_compiled_projection(actor: &str, compiled: &CompiledContractArtifact) {
+        assert!(!compiled.script_hex.is_empty(), "actor `{actor}` should have script bytes");
+        assert!(compiled.state_span.len > 0, "actor `{actor}` should have a non-empty state span");
+        assert_eq!(compiled.template.hash_hex.len(), 64, "actor `{actor}` should have a 32-byte template hash");
+
+        let state_start = compiled.state_span.offset * 2;
+        let state_end = state_start + compiled.state_span.len * 2;
+        assert!(state_end <= compiled.script_hex.len(), "actor `{actor}` state span should fit inside script hex");
+        assert_eq!(
+            &compiled.script_hex[..state_start],
+            compiled.template.prefix_hex,
+            "actor `{actor}` prefix must be the bytes before the state span"
+        );
+        assert_eq!(
+            &compiled.script_hex[state_end..],
+            compiled.template.suffix_hex,
+            "actor `{actor}` suffix must be the bytes after the state span"
+        );
+
+        let state_hex = &compiled.script_hex[state_start..state_end];
+        assert_eq!(
+            format!("{}{}{}", compiled.template.prefix_hex, state_hex, compiled.template.suffix_hex),
+            compiled.script_hex,
+            "actor `{actor}` script must reconstruct from prefix, initial state, and suffix"
+        );
+
+        let prefix = crate::codec::decode_hex(&compiled.template.prefix_hex).expect("prefix hex decodes");
+        let suffix = crate::codec::decode_hex(&compiled.template.suffix_hex).expect("suffix hex decodes");
+        let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
+        assert_eq!(
+            encode_hex(template_hash.as_bytes()),
+            compiled.template.hash_hex,
+            "actor `{actor}` template hash must be blake2b(prefix || suffix)"
+        );
     }
 
     fn test_program() -> Program {

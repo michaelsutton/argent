@@ -29,10 +29,7 @@ contract Ticket(
     int redeemed = init_redeemed;
 
     // Entrypoints
-    entrypoint function redeem(sig owner_sig, pubkey owner_pk, byte[] gen__ticket_prefix, byte[] gen__ticket_suffix) {
-        int gen__ticket_prefix_len = gen__ticket_prefix.length;
-        int gen__ticket_suffix_len = gen__ticket_suffix.length;
-
+    entrypoint function redeem(sig owner_sig, pubkey owner_pk) {
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: Ticket
 
@@ -48,7 +45,7 @@ contract Ticket(
             serial: serial,
             redeemed: 1,
         };
-        validateOutputStateWithTemplate(gen__next_output_idx, redeemed_ticket, gen__ticket_prefix, gen__ticket_suffix, gen__template_ticket);
+        validateOutputState(gen__next_output_idx, redeemed_ticket);
     }
 
 }

@@ -5,7 +5,7 @@ import actor Player from "./player.ag";
 
 actor League owns LeagueState {
     entry register_player(owner_sig: sig, owner_pk: pubkey) emits {
-        lane: League;
+        league: League;
         player: Player;
     } {
         require(checkSig(owner_sig, owner_pk));
@@ -22,12 +22,12 @@ actor League owns LeagueState {
         };
 
         // Output handles are read-only transaction views, so value policy is ordinary code.
-        require(lane.value == self.value);
+        require(league.value == self.value);
         require(player.value > 0);
 
         // Atomic `become` lowers to output-count and template checks.
         become {
-            lane <- League(self.state);
+            league <- League(self.state);
             player <- Player(next_player);
         };
     }

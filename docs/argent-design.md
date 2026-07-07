@@ -221,7 +221,8 @@ Open questions:
 - Should output handles always be named, even for `emits one`?
 - How should output value policies be expressed without making `become` carry
   value rules?
-- Should `cov[n]` and `auth[n]` remain explicit indexes or become named lanes?
+- Should `cov[n]` and `auth[n]` remain explicit indexes or become named output
+  handles?
 - Do we need any source-level escape hatch for explicit cov-output transitions?
 
 ## Body Lowering
@@ -245,18 +246,20 @@ Open questions:
 - How much validation belongs in Argent before handing generated Silverscript to
   `silverc`?
 
-## Lane Protection
+## Exact Continuation Protection
 
-Chess-style player and league lanes show that multi-actor apps need state-lane
-discipline, not just template checks.
+Chess-style player and league continuations show that multi-actor apps need
+actor-instance preservation discipline, not just template checks.
 
 Open questions:
 
-- Which lane invariants should Argent infer from actor/state declarations?
+- Which continuation invariants should Argent infer from actor/state
+  declarations?
 - Which should remain explicit `require(...)` code?
-- Should "same lane, same hidden ABI state" become a reusable generated pattern?
+- Should "same actor instance, same hidden ABI state" become a reusable generated
+  pattern?
 - How should settlement actors prove they are closing exactly the intended live
-  lanes?
+  actors?
 
 ## Compiler Obligations
 

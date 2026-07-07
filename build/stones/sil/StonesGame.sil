@@ -99,9 +99,7 @@ contract StonesGame(
     int turn = init_turn;
 
     // Entrypoints
-    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
-        int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
-        int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
+    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
@@ -143,7 +141,7 @@ contract StonesGame(
                 max_take: max_take,
                 turn: other_side(turn),
             };
-            validateOutputStateWithTemplate(gen__next_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
+            validateOutputState(gen__next_output_idx, next_game);
         }
     }
 
