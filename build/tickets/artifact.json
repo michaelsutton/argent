@@ -46,7 +46,10 @@
         {
           "id": "witness/ticket/template_prefix_bytes",
           "template_id": "template/ticket",
-          "actor": "Ticket",
+          "subject": {
+            "kind": "actor",
+            "actor": "Ticket"
+          },
           "param": "gen__ticket_prefix",
           "purpose": {
             "kind": "template_prefix_bytes"
@@ -55,7 +58,10 @@
         {
           "id": "witness/ticket/template_suffix_bytes",
           "template_id": "template/ticket",
-          "actor": "Ticket",
+          "subject": {
+            "kind": "actor",
+            "actor": "Ticket"
+          },
           "param": "gen__ticket_suffix",
           "purpose": {
             "kind": "template_suffix_bytes"
@@ -191,7 +197,10 @@
                 "type": {
                   "kind": "bytes"
                 },
-                "actor": "Ticket",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Ticket"
+                },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
@@ -202,7 +211,10 @@
                 "type": {
                   "kind": "bytes"
                 },
-                "actor": "Ticket",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Ticket"
+                },
                 "purpose": {
                   "kind": "template_suffix_bytes"
                 }
@@ -212,7 +224,10 @@
               {
                 "recipe_id": "witness/ticket/template_prefix_bytes",
                 "param": "gen__ticket_prefix",
-                "actor": "Ticket",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Ticket"
+                },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
@@ -220,7 +235,10 @@
               {
                 "recipe_id": "witness/ticket/template_suffix_bytes",
                 "param": "gen__ticket_suffix",
-                "actor": "Ticket",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Ticket"
+                },
                 "purpose": {
                   "kind": "template_suffix_bytes"
                 }

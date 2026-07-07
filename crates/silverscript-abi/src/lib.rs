@@ -152,8 +152,16 @@ pub struct RuntimeFieldArtifact {
 pub enum RuntimeFieldRoleArtifact {
     Template { contract: String },
     TemplateTable { contracts: Vec<String> },
-    TemplateRoot { contracts: Vec<String> },
+    TemplateDigest { id: String },
+    TemplateRoot { leaves: Vec<RuntimeRouteLeafArtifact> },
     Source,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RuntimeRouteLeafArtifact {
+    Contract { contract: String },
+    Digest { id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

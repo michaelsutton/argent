@@ -372,11 +372,10 @@ Obstacle to handle:
 ### 11. Add Basic Template Merklization
 
 Status: in progress. Completed route-root receipts, canonical route tree
-receipts, generated opening witnesses, and tx-builder witness filling. Current
-step records direct route families inferred from shared owned state plus direct
-`become` edges, using `examples/toy_chess/app.ag` as the tracked fixture. Next
-step should use those families for one-level expansion/packing so upper layers
-can carry a family commitment without exposing every worker template.
+receipts, generated opening witnesses, and tx-builder witness filling. The
+current toy-chess fixture now infers direct route families from shared owned
+state plus direct `become` edges, then uses one-level expansion/packing so upper
+layers carry a family commitment without exposing every worker template.
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
@@ -389,7 +388,9 @@ The first version should support:
 - generated proof/opening witnesses for the leaves each entrypoint needs;
 - artifact-visible tree metadata and witness recipes;
 - inferred direct route-family metadata for actors that share owned state and
-  route to each other directly.
+  route to each other directly;
+- one-level route-family digest leaves that can be opened into an inner family
+  tree when routing into the family.
 
 Family inference should affect layout only, not meaning. The compiler still owns
 dependency analysis, validates every referenced template, and emits a receipt

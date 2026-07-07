@@ -4,49 +4,49 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract League(
-    byte[32] gen__init_template_root,
+    byte[32] gen__init_template_player,
+    byte[32] gen__init_template_mux,
+    byte[32] gen__init_route_family_board_state_mux_commitment,
     int init_nonce
 ) {
     // :: state layouts
     struct PlayerState {
-        byte[32] gen__template_root;
+        byte[32] gen__template_player;
+        byte[32] gen__template_mux;
+        byte[32] gen__route_family_board_state_mux_commitment;
         // :: gen__ ^ | src:
         int nonce;
     }
     struct BoardState {
-        byte[32] gen__template_root;
+        byte[32] gen__template_mux;
+        byte[64] gen__route_family_board_state_mux_templates;
         // :: gen__ ^ | src:
         int selector;
         int ply;
     }
 
     // :: route templates
-    byte[32] gen__template_root = gen__init_template_root;
+    byte[32] gen__template_player = gen__init_template_player;
+    byte[32] gen__template_mux = gen__init_template_mux;
+    byte[32] gen__route_family_board_state_mux_commitment = gen__init_route_family_board_state_mux_commitment;
 
     // :: state fields: League
     int nonce = init_nonce;
 
     // :: entrypoints
-    entrypoint function register(byte[] gen__player_prefix, byte[] gen__player_suffix, byte[64] gen__template_player_opening) {
+    entrypoint function register(byte[] gen__player_prefix, byte[] gen__player_suffix) {
         // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
-
-        // :: routes: Player
-        byte[32] gen__template_player = blake2b(gen__player_prefix + gen__player_suffix);
-        byte[32] gen__template_player_proof_root = gen__template_player;
-        byte[32] gen__template_player_sibling_0 = byte[32](gen__template_player_opening.slice(0, 32));
-        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_0);
-        byte[32] gen__template_player_sibling_1 = byte[32](gen__template_player_opening.slice(32, 64));
-        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_1);
-        require(gen__template_player_proof_root == gen__template_root);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Player
 
         PlayerState next_player = {
-            gen__template_root: gen__template_root,
+            gen__template_player: gen__template_player,
+            gen__template_mux: gen__template_mux,
+            gen__route_family_board_state_mux_commitment: gen__route_family_board_state_mux_commitment,
             // :: gen__ ^ | src:
             nonce: nonce + 1,
         };

@@ -4,7 +4,9 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesGame(
-    byte[32] gen__init_template_root,
+    byte[32] gen__init_template_player,
+    byte[32] gen__init_template_stones_game,
+    byte[32] gen__init_template_stones_settle,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_pile,
@@ -20,14 +22,18 @@ contract StonesGame(
 
     // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_root;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[32] gen__template_root;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // :: gen__ ^ | src:
         byte[32] owner;
         byte[32] player_id;
@@ -37,7 +43,9 @@ contract StonesGame(
         int losses;
     }
     struct SettleState {
-        byte[32] gen__template_root;
+        byte[32] gen__template_player;
+        byte[32] gen__template_stones_game;
+        byte[32] gen__template_stones_settle;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -74,7 +82,9 @@ contract StonesGame(
     }
 
     // :: route templates
-    byte[32] gen__template_root = gen__init_template_root;
+    byte[32] gen__template_player = gen__init_template_player;
+    byte[32] gen__template_stones_game = gen__init_template_stones_game;
+    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
 
     // :: state fields: StonesGame
     byte[32] player_a = init_player_a;
@@ -84,19 +94,10 @@ contract StonesGame(
     int turn = init_turn;
 
     // :: entrypoints
-    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix, byte[64] gen__template_stones_settle_opening) {
+    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
         // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
-
-        // :: routes: StonesSettle
-        byte[32] gen__template_stones_settle = blake2b(gen__stones_settle_prefix + gen__stones_settle_suffix);
-        byte[32] gen__template_stones_settle_proof_root = gen__template_stones_settle;
-        byte[32] gen__template_stones_settle_sibling_0 = byte[32](gen__template_stones_settle_opening.slice(0, 32));
-        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_proof_root + gen__template_stones_settle_sibling_0);
-        byte[32] gen__template_stones_settle_sibling_1 = byte[32](gen__template_stones_settle_opening.slice(32, 64));
-        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_sibling_1 + gen__template_stones_settle_proof_root);
-        require(gen__template_stones_settle_proof_root == gen__template_root);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -114,7 +115,9 @@ contract StonesGame(
         require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         if (next_pile == 0) {
             SettleState ticket = {
-                gen__template_root: gen__template_root,
+                gen__template_player: gen__template_player,
+                gen__template_stones_game: gen__template_stones_game,
+                gen__template_stones_settle: gen__template_stones_settle,
                 // :: gen__ ^ | src:
                 player_a: player_a,
                 player_b: player_b,
@@ -124,7 +127,9 @@ contract StonesGame(
             validateOutputStateWithTemplate(gen__next_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__template_stones_settle);
         } else {
             State next_game = {
-                gen__template_root: gen__template_root,
+                gen__template_player: gen__template_player,
+                gen__template_stones_game: gen__template_stones_game,
+                gen__template_stones_settle: gen__template_stones_settle,
                 // :: gen__ ^ | src:
                 player_a: player_a,
                 player_b: player_b,
@@ -137,19 +142,10 @@ contract StonesGame(
         }
     }
 
-    entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix, byte[64] gen__template_stones_settle_opening) {
+    entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
         // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
-
-        // :: routes: StonesSettle
-        byte[32] gen__template_stones_settle = blake2b(gen__stones_settle_prefix + gen__stones_settle_suffix);
-        byte[32] gen__template_stones_settle_proof_root = gen__template_stones_settle;
-        byte[32] gen__template_stones_settle_sibling_0 = byte[32](gen__template_stones_settle_opening.slice(0, 32));
-        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_proof_root + gen__template_stones_settle_sibling_0);
-        byte[32] gen__template_stones_settle_sibling_1 = byte[32](gen__template_stones_settle_opening.slice(32, 64));
-        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_sibling_1 + gen__template_stones_settle_proof_root);
-        require(gen__template_stones_settle_proof_root == gen__template_root);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -162,7 +158,9 @@ contract StonesGame(
         require(tx.outputs[gen__settle_output_idx].value == tx.inputs[this.activeInputIndex].value);
         int winner = other_side(turn);
         SettleState ticket = {
-            gen__template_root: gen__template_root,
+            gen__template_player: gen__template_player,
+            gen__template_stones_game: gen__template_stones_game,
+            gen__template_stones_settle: gen__template_stones_settle,
             // :: gen__ ^ | src:
             player_a: player_a,
             player_b: player_b,
