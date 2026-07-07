@@ -53,9 +53,9 @@ Template fields are hidden ABI state, not source-level user fields.
 The compiler may add fields such as:
 
 ```text
-__template_player
-__template_game
-__route_root
+gen__player_template
+gen__game_template
+gen__mux_routes_digest
 ```
 
 Ordinary transitions must preserve these exactly. Bootstrap or explicit handoff
@@ -101,8 +101,8 @@ material.
 Open questions:
 
 - What exactly lives in the app context?
-- Does the context own compiled template witnesses, route roots, launch proof
-  data, or all of them?
+- Does the context own compiled template witnesses, route proof receipts,
+  route-family table preimages, launch proof data, or all of them?
 - How does the builder choose the right route preimage for a union output?
 - Should the builder expose actor-level methods, entry-level methods, or both?
 - How much validation should happen client-side before building the transaction?
@@ -111,17 +111,27 @@ Open questions:
 
 ## Route Commitments
 
-Small apps can use an expanded route table. Larger apps probably need a Merkle
-root of template hashes and route metadata.
+The first implemented model uses deterministic route table/proof receipts plus
+one-level route-family packing. Upper states can store a family digest, while
+actors inside that family store the expanded fixed route table.
 
-The general pattern:
+Current chess-like pattern:
 
 ```text
-hidden state: route_root
-entry witness: route leaf + Merkle branch + template prefix/suffix
-generated check: leaf belongs to route_root
-generated validation: validateOutputStateWithTemplate(...)
+upper hidden state: gen__mux_template, gen__mux_routes_digest
+family hidden state: gen__mux_template, gen__mux_routes
+entry witness: route-family table, or template prefix/suffix for selected target
+generated checks: blake2b(table) == digest, or slice selected template from table
+generated validation: validateOutputStateWithTemplate(...) or validateOutputState(...)
 ```
+
+The artifact records the receipts behind this shape: route tables, canonical
+route proofs, route-family metadata, and witness recipes. The tx builder can
+fill the hidden witnesses from those receipts for tests and prototype tooling.
+
+Larger apps may still need deeper Merkle cuts later, but that should replace the
+receipt-planning algorithm behind the same artifact concepts instead of changing
+the Argent source model.
 
 Open questions:
 
