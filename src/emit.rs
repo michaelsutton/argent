@@ -53,10 +53,10 @@ impl<'a> Model<'a> {
         let all_actors = collect_actors(program)?;
 
         let app = program.apps().next();
-        let (app_name, template_actors) = if let Some(app) = app {
-            (app.name.clone(), app.actors.clone())
+        let (app_name, template_actors, route_groups) = if let Some(app) = app {
+            (app.name.clone(), app.actors.clone(), app.route_groups.clone())
         } else {
-            ("ArgentApp".to_string(), all_actors.keys().cloned().collect())
+            ("ArgentApp".to_string(), all_actors.keys().cloned().collect(), Vec::new())
         };
 
         let mut actors = Vec::new();
@@ -69,7 +69,8 @@ impl<'a> Model<'a> {
             actors.push(actor);
         }
 
-        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors)?;
+        validate_route_groups(&route_groups, &template_actors)?;
+        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors, &route_groups)?;
         let model =
             Self { app_name, template_actors, consts, functions, states, actors_by_name: all_actors, actors, state_template_deps };
         model.validate()?;
@@ -435,18 +436,44 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
     Ok(())
 }
 
+fn validate_route_groups(route_groups: &[RouteGroupDecl], template_actors: &[String]) -> Result<()> {
+    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let mut group_names = BTreeSet::new();
+    for group in route_groups {
+        if !group_names.insert(group.name.as_str()) {
+            return Err(ArgentError::new(format!("duplicate route group `{}`", group.name)));
+        }
+        if group.actors.len() < 2 {
+            return Err(ArgentError::new(format!("route group `{}` must contain a gateway and at least one member", group.name)));
+        }
+        let mut actors = BTreeSet::new();
+        for actor in &group.actors {
+            if !actors.insert(actor.as_str()) {
+                return Err(ArgentError::new(format!("route group `{}` repeats actor `{actor}`", group.name)));
+            }
+            if !template_actor_set.contains(actor) {
+                return Err(ArgentError::new(format!("route group `{}` references non-app actor `{actor}`", group.name)));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn compute_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
+    route_groups: &[RouteGroupDecl],
 ) -> Result<BTreeMap<String, Vec<String>>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
     let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut state_actors = BTreeMap::<String, BTreeSet<String>>::new();
 
     for actor in actors {
         direct.entry(actor.state.clone()).or_default();
         adjacency.entry(actor.state.clone()).or_default();
+        state_actors.entry(actor.state.clone()).or_default().insert(actor.name.clone());
 
         for entry in &actor.entries {
             for consume in &entry.consumes {
@@ -489,19 +516,45 @@ fn compute_state_template_deps<'a>(
             }
         }
 
-        let mut deps = BTreeSet::new();
+        let mut component_deps = BTreeSet::new();
         for component_state in &component {
             if let Some(state_deps) = direct.get(component_state) {
-                deps.extend(state_deps.iter().cloned());
+                component_deps.extend(state_deps.iter().cloned());
             }
         }
-        let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
         for component_state in component {
+            let deps = visible_route_deps_for_state(&component_state, &component_deps, &direct, &state_actors, route_groups);
+            let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
             result.insert(component_state, ordered.clone());
         }
     }
 
     Ok(result)
+}
+
+fn visible_route_deps_for_state(
+    state: &str,
+    component_deps: &BTreeSet<String>,
+    direct: &BTreeMap<String, BTreeSet<String>>,
+    state_actors: &BTreeMap<String, BTreeSet<String>>,
+    route_groups: &[RouteGroupDecl],
+) -> BTreeSet<String> {
+    let mut deps = component_deps.clone();
+    let direct_deps = direct.get(state);
+    let owners = state_actors.get(state);
+    for group in route_groups {
+        let is_group_state = owners.is_some_and(|owners| group.actors.iter().any(|actor| owners.contains(actor)));
+        if is_group_state {
+            continue;
+        }
+        for member in group.actors.iter().skip(1) {
+            let is_direct = direct_deps.is_some_and(|deps| deps.contains(member));
+            if !is_direct {
+                deps.remove(member);
+            }
+        }
+    }
+    deps
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -2614,7 +2667,7 @@ mod tests {
     fn rejects_duplicate_app_declarations() {
         let mut program = test_program();
         let mut duplicate = empty_module("second.ag");
-        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()] });
+        duplicate.apps.push(AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string()], route_groups: Vec::new() });
         program.modules.push(duplicate);
 
         let err = Model::from_program(&program).expect_err("duplicate app declaration must be rejected");
@@ -3123,6 +3176,172 @@ mod tests {
     }
 
     #[test]
+    fn route_group_hint_hides_mux_workers_from_upper_layers() {
+        let source_without_hint = chess_like_mux_source("");
+        let without_hint = inline_artifact("chess-like-mux-without-hint", &source_without_hint);
+        let source_with_hint = chess_like_mux_source("    route_group Moves: Mux, Pawn, Knight;\n");
+        let with_hint = inline_artifact("chess-like-mux-with-hint", &source_with_hint);
+
+        let player_without_hint = route_tree_leaf_actors(&without_hint, "PlayerState");
+        assert_eq!(player_without_hint, vec!["Player", "Mux", "Pawn", "Knight"]);
+
+        let league_with_hint = route_tree_leaf_actors(&with_hint, "LeagueState");
+        let player_with_hint = route_tree_leaf_actors(&with_hint, "PlayerState");
+        assert_eq!(league_with_hint, vec!["Player", "Mux"]);
+        assert_eq!(player_with_hint, vec!["Player", "Mux"]);
+
+        let mux_with_hint = route_tree_leaf_actors(&with_hint, "MuxState");
+        assert_eq!(mux_with_hint, vec!["Player", "Mux", "Pawn", "Knight"]);
+
+        let player = with_hint.sil_abi.contract("Player").expect("Player contract exists");
+        assert_eq!(
+            player.runtime_state.fields[0].role,
+            RuntimeFieldRoleArtifact::TemplateRoot { contracts: vec!["Player".to_string(), "Mux".to_string()] }
+        );
+        let player_route = with_hint
+            .argent
+            .actors
+            .iter()
+            .find(|actor| actor.name == "Player")
+            .expect("Player actor exists")
+            .entries
+            .iter()
+            .find(|entry| entry.name == "enter_mux")
+            .expect("enter_mux entry exists");
+        assert!(
+            player_route.hidden_params.iter().all(|param| param.actor != "Pawn" && param.actor != "Knight"),
+            "upper Player entry should not expose worker openings: {player_route:?}"
+        );
+
+        let mux_route = with_hint
+            .argent
+            .actors
+            .iter()
+            .find(|actor| actor.name == "Mux")
+            .expect("Mux actor exists")
+            .entries
+            .iter()
+            .find(|entry| entry.name == "choose_pawn")
+            .expect("choose_pawn entry exists");
+        assert!(
+            mux_route
+                .hidden_params
+                .iter()
+                .any(|param| param.actor == "Pawn" && param.purpose == HiddenParamPurposeArtifact::RouteTemplateOpening),
+            "Mux entry should still receive the selected worker opening"
+        );
+    }
+
+    fn inline_artifact(name: &str, source: &str) -> Artifact {
+        let path = PathBuf::from(format!("{name}.ag"));
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor_sil = actor_sil_for_model(&model);
+        emit_artifact(&program, &model, &actor_sil).expect("artifact emits")
+    }
+
+    fn route_tree_leaf_actors(artifact: &Artifact, state: &str) -> Vec<String> {
+        artifact
+            .argent
+            .template_plan
+            .route_trees
+            .iter()
+            .find(|tree| tree.id == route_template_tree_receipt_id(state, "gen__template_root"))
+            .expect("route tree exists")
+            .leaves
+            .iter()
+            .map(|leaf| leaf.actor.clone())
+            .collect()
+    }
+
+    fn chess_like_mux_source(route_group: &str) -> String {
+        format!(
+            r#"
+            state LeagueState {{
+                int nonce;
+            }}
+
+            state PlayerState {{
+                int nonce;
+            }}
+
+            state MuxState {{
+                int selector;
+            }}
+
+            state PawnState {{
+                int selector;
+            }}
+
+            state KnightState {{
+                int selector;
+            }}
+
+            actor League owns LeagueState {{
+                entry register() emits one Player {{
+                    PlayerState next_player = {{
+                        nonce: nonce,
+                    }};
+                    become Player(next_player);
+                }}
+            }}
+
+            actor Player owns PlayerState {{
+                entry enter_mux() emits one Mux {{
+                    MuxState next_mux = {{
+                        selector: nonce,
+                    }};
+                    become Mux(next_mux);
+                }}
+            }}
+
+            actor Mux owns MuxState {{
+                entry choose_pawn() emits one Pawn {{
+                    PawnState next_pawn = {{
+                        selector: selector,
+                    }};
+                    become Pawn(next_pawn);
+                }}
+
+                entry choose_knight() emits one Knight {{
+                    KnightState next_knight = {{
+                        selector: selector,
+                    }};
+                    become Knight(next_knight);
+                }}
+            }}
+
+            actor Pawn owns PawnState {{
+                entry back() emits one Mux {{
+                    MuxState next_mux = {{
+                        selector: selector,
+                    }};
+                    become Mux(next_mux);
+                }}
+            }}
+
+            actor Knight owns KnightState {{
+                entry back() emits one Mux {{
+                    MuxState next_mux = {{
+                        selector: selector,
+                    }};
+                    become Mux(next_mux);
+                }}
+            }}
+
+            app ChessLike {{
+                actor League;
+                actor Player;
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+{route_group}            }}
+            "#
+        )
+    }
+
+    #[test]
     fn artifact_codec_matches_silverscript_sigscript_builder() {
         let module = crate::parser::parse_module(
             PathBuf::from("test.ag"),
@@ -3339,7 +3558,11 @@ mod tests {
                     },
                     ActorDecl { name: "Game".to_string(), state: "GameState".to_string(), entries: Vec::new() },
                 ],
-                apps: vec![AppDecl { name: "Test".to_string(), actors: vec!["Player".to_string(), "Game".to_string()] }],
+                apps: vec![AppDecl {
+                    name: "Test".to_string(),
+                    actors: vec!["Player".to_string(), "Game".to_string()],
+                    route_groups: Vec::new(),
+                }],
             }],
         }
     }

@@ -173,13 +173,30 @@ impl Parser {
         let name = self.expect_any_ident()?;
         self.expect_symbol('{')?;
         let mut actors = Vec::new();
+        let mut route_groups = Vec::new();
         while !self.check_symbol('}') {
-            self.expect_ident("actor")?;
-            actors.push(self.expect_any_ident()?);
-            self.expect_symbol(';')?;
+            if self.consume_ident("actor") {
+                actors.push(self.expect_any_ident()?);
+                self.expect_symbol(';')?;
+            } else if self.consume_ident("route_group") {
+                route_groups.push(self.parse_route_group()?);
+            } else {
+                return Err(self.error(format!("expected `actor` or `route_group`, found {}", self.describe_current())));
+            }
         }
         self.expect_symbol('}')?;
-        Ok(AppDecl { name, actors })
+        Ok(AppDecl { name, actors, route_groups })
+    }
+
+    fn parse_route_group(&mut self) -> Result<RouteGroupDecl> {
+        let name = self.expect_any_ident()?;
+        self.expect_symbol(':')?;
+        let mut actors = vec![self.expect_any_ident()?];
+        while self.consume_symbol(',') {
+            actors.push(self.expect_any_ident()?);
+        }
+        self.expect_symbol(';')?;
+        Ok(RouteGroupDecl { name, actors })
     }
 
     fn parse_param_list(&mut self) -> Result<Vec<ParamDecl>> {

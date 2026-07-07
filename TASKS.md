@@ -371,7 +371,7 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
-Status: in progress. First step implemented route-family-scoped packed template
+Status: done. First step implemented route-family-scoped packed template
 tables (`byte[32 * N]`) so contracts can carry a deterministic capability table
 without exposing every template as an independent state field. Second step records those
 packed route tables in the template-plan receipt, including state field,
@@ -379,7 +379,9 @@ byte-length, entry order, offsets, and referenced template ids. Third step
 records canonical route tree receipts over each packed table, including roots,
 leaves, and deterministic openings. Fourth step replaced runtime packed tables
 with route roots and wired generated opening witnesses through Sil, the artifact,
-and the tx builder. Hint syntax remains follow-up work.
+and the tx builder. Final step added app-level `route_group` hints and a
+chess-like mux fixture that hides worker templates from upper layers while
+leaving mux-level worker openings available.
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
