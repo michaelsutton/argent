@@ -841,6 +841,86 @@ mod tests {
     }
 
     #[test]
+    fn toy_chess_builder_redeems_route_family_and_worker_paths() {
+        let artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-builder-family-paths");
+        let builder = ArtifactTxBuilder::new(&artifact).expect("builder accepts artifact");
+        let covenant_id = Hash::from_bytes([0x61; 32]);
+        let input_value = 1_000;
+
+        let player_initial = toy_player_state(7);
+        let mux_initial = board_state(7, 0);
+        let player_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x62; 32]), index: 0 };
+        let player_utxo = builder
+            .covenant_utxo("Player", player_initial.clone(), input_value, 0, false, Some(covenant_id))
+            .expect("Player utxo builds");
+        let mux_output = builder.covenant_output("Mux", mux_initial.clone(), input_value, 0, covenant_id).expect("Mux output builds");
+        let enter_mux_sigscript = builder
+            .p2sh_signature_script("Player", "enter_mux", player_initial.clone(), Vec::new())
+            .expect("enter_mux sigscript fills the family route table");
+        let enter_mux_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(player_outpoint, enter_mux_sigscript)],
+            vec![mux_output.clone()],
+        );
+        execute_input_with_covenants(&enter_mux_tx, vec![player_utxo.clone()], 0).expect("Player can enter the mux family");
+
+        let player_contract = builder.contract("Player").expect("Player contract exists");
+        let enter_mux = player_contract.entry("enter_mux").expect("enter_mux ABI exists");
+        let mux_template = &builder.contract("Mux").expect("Mux contract exists").compiled.template;
+        let mut wrong_routes = builder.route_family_table_bytes("route_family/BoardState/mux").expect("mux family route table builds");
+        wrong_routes[0] ^= 1;
+        let bad_route_table_sigscript = encode_entry_sig_script(
+            &artifact.sil_abi,
+            player_contract,
+            enter_mux,
+            &[
+                ArtifactValue::Bytes(decode_hex(&mux_template.prefix_hex).expect("Mux prefix decodes")),
+                ArtifactValue::Bytes(decode_hex(&mux_template.suffix_hex).expect("Mux suffix decodes")),
+                ArtifactValue::Bytes(wrong_routes),
+            ],
+        )
+        .expect("bad route table sigscript encodes");
+        let bad_route_table_sigscript = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("Player", player_initial).expect("Player redeem script builds"),
+            bad_route_table_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("bad route table p2sh sigscript builds");
+        let bad_route_table_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(player_outpoint, bad_route_table_sigscript)],
+            vec![mux_output],
+        );
+        assert!(
+            execute_input_with_covenants(&bad_route_table_tx, vec![player_utxo], 0).is_err(),
+            "Player must reject a route-family table that does not match the stored digest"
+        );
+
+        let pawn_next = board_state(7, 1);
+        let mux_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x63; 32]), index: 0 };
+        let mux_utxo =
+            builder.covenant_utxo("Mux", mux_initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
+        let pawn_output = builder.covenant_output("Pawn", pawn_next.clone(), input_value, 0, covenant_id).expect("Pawn output builds");
+        let choose_pawn_sigscript = builder
+            .p2sh_signature_script("Mux", "choose_pawn", mux_initial.clone(), Vec::new())
+            .expect("choose_pawn sigscript fills Pawn template lens");
+        let choose_pawn_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript.clone())],
+            vec![pawn_output],
+        );
+        execute_input_with_covenants(&choose_pawn_tx, vec![mux_utxo.clone()], 0).expect("Mux can route to Pawn by table slice");
+
+        let wrong_worker_output =
+            builder.covenant_output("Knight", pawn_next, input_value, 0, covenant_id).expect("wrong worker output builds");
+        let wrong_worker_tx = ArtifactTxBuilder::transaction(
+            vec![ArtifactTxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript)],
+            vec![wrong_worker_output],
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_worker_tx, vec![mux_utxo], 0).is_err(),
+            "choose_pawn must reject an output using the wrong worker template"
+        );
+    }
+
+    #[test]
     fn builder_rejects_template_plan_hash_mismatch() {
         let mut artifact = tickets_artifact();
         artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
@@ -1196,6 +1276,14 @@ mod tests {
 
     fn count_state(count: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([("count".to_string(), ArtifactValue::Int(count))])
+    }
+
+    fn toy_player_state(nonce: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("nonce".to_string(), ArtifactValue::Int(nonce))])
+    }
+
+    fn board_state(selector: i64, ply: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("selector".to_string(), ArtifactValue::Int(selector)), ("ply".to_string(), ArtifactValue::Int(ply))])
     }
 
     fn stones_player_id(outpoint: &TransactionOutpoint) -> Vec<u8> {

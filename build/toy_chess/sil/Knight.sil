@@ -43,6 +43,7 @@ contract Knight(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Mux
 
+        require(selector >= 0);
         State next_board = {
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,

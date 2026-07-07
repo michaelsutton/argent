@@ -65,6 +65,8 @@ actor Pawn owns BoardState {
 
 actor Knight owns BoardState {
     entry back_to_mux() emits one Mux {
+        require(selector >= 0);
+
         BoardState next_board = {
             selector: selector,
             ply: ply + 1,

@@ -3536,6 +3536,50 @@ mod tests {
     }
 
     #[test]
+    fn toy_chess_sil_uses_one_level_route_family_shape() {
+        let path = PathBuf::from("toy-chess-shape.ag");
+        let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("toy chess model validates");
+        let actor_sil = actor_sil_for_model(&model);
+
+        let league_sil = actor_sil.get("League").expect("League Sil is emitted");
+        assert!(league_sil.contains("byte[32] gen__init_mux_template"), "{league_sil}");
+        assert!(league_sil.contains("byte[32] gen__init_mux_routes_digest"), "{league_sil}");
+        assert!(league_sil.contains("byte[32] gen__mux_routes_digest = gen__init_mux_routes_digest;"), "{league_sil}");
+        assert!(!league_sil.contains("gen__pawn_template"), "{league_sil}");
+        assert!(!league_sil.contains("gen__knight_template"), "{league_sil}");
+        assert!(!league_sil.contains("byte[64] gen__init_mux_routes"), "{league_sil}");
+        assert!(!league_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{league_sil}");
+
+        let player_sil = actor_sil.get("Player").expect("Player Sil is emitted");
+        assert!(player_sil.contains("byte[32] gen__init_mux_template"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__init_mux_routes_digest"), "{player_sil}");
+        assert!(
+            player_sil
+                .contains("entrypoint function enter_mux(byte[] gen__mux_prefix, byte[] gen__mux_suffix, byte[64] gen__mux_routes)"),
+            "{player_sil}"
+        );
+        assert!(player_sil.contains("require(blake2b(gen__mux_routes) == gen__mux_routes_digest);"), "{player_sil}");
+        assert!(!player_sil.contains("gen__pawn_template"), "{player_sil}");
+        assert!(!player_sil.contains("gen__knight_template"), "{player_sil}");
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("byte[64] gen__init_mux_routes"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(32, 64));"), "{mux_sil}");
+        assert!(mux_sil.contains("validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__pawn_template);"), "{mux_sil}");
+        assert!(mux_sil.contains("validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__knight_prefix, gen__knight_suffix, gen__knight_template);"), "{mux_sil}");
+
+        let pawn_sil = actor_sil.get("Pawn").expect("Pawn Sil is emitted");
+        assert!(pawn_sil.contains("byte[64] gen__init_mux_routes"), "{pawn_sil}");
+        assert!(pawn_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{pawn_sil}");
+        assert!(!pawn_sil.contains("gen__pawn_template"), "{pawn_sil}");
+        assert!(!pawn_sil.contains("gen__knight_template"), "{pawn_sil}");
+    }
+
+    #[test]
     fn route_family_without_external_entry_uses_first_actor_as_anchor() {
         let artifact = inline_artifact(
             "genesis-route-family",
@@ -3875,6 +3919,8 @@ mod tests {
 
             actor Knight owns BoardState {
                 entry back_to_mux() emits one Mux {
+                    require(selector >= 0);
+
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
