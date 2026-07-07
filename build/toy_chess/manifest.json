@@ -5,11 +5,11 @@
     "examples/toy_chess/app.ag"
   ],
   "templates": [
-    { "actor": "League", "symbol": "gen__template_league", "hash": null },
-    { "actor": "Player", "symbol": "gen__template_player", "hash": null },
-    { "actor": "Mux", "symbol": "gen__template_mux", "hash": null },
-    { "actor": "Pawn", "symbol": "gen__template_pawn", "hash": null },
-    { "actor": "Knight", "symbol": "gen__template_knight", "hash": null }
+    { "actor": "League", "symbol": "gen__league_template", "hash": null },
+    { "actor": "Player", "symbol": "gen__player_template", "hash": null },
+    { "actor": "Mux", "symbol": "gen__mux_template", "hash": null },
+    { "actor": "Pawn", "symbol": "gen__pawn_template", "hash": null },
+    { "actor": "Knight", "symbol": "gen__knight_template", "hash": null }
   ],
   "actors": [
     {

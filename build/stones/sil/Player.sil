@@ -4,9 +4,9 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Player(
-    byte[32] gen__init_template_player,
-    byte[32] gen__init_template_stones_game,
-    byte[32] gen__init_template_stones_settle,
+    byte[32] gen__init_player_template,
+    byte[32] gen__init_stones_game_template,
+    byte[32] gen__init_stones_settle_template,
     byte[32] init_owner,
     byte[32] init_player_id,
     int init_open_games,
@@ -23,18 +23,18 @@ contract Player(
 
     // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
         // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct GameState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -43,9 +43,9 @@ contract Player(
         int turn;
     }
     struct SettleState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_stones_game;
-        byte[32] gen__template_stones_settle;
+        byte[32] gen__player_template;
+        byte[32] gen__stones_game_template;
+        byte[32] gen__stones_settle_template;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -82,9 +82,9 @@ contract Player(
     }
 
     // :: route templates
-    byte[32] gen__template_player = gen__init_template_player;
-    byte[32] gen__template_stones_game = gen__init_template_stones_game;
-    byte[32] gen__template_stones_settle = gen__init_template_stones_settle;
+    byte[32] gen__player_template = gen__init_player_template;
+    byte[32] gen__stones_game_template = gen__init_stones_game_template;
+    byte[32] gen__stones_settle_template = gen__init_stones_settle_template;
 
     // :: state fields: Player
     byte[32] owner = init_owner;
@@ -105,7 +105,7 @@ contract Player(
         require(OpCovInputCount(gen__cov_id) == 2);
         require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
         int gen__opponent_input_idx = OpCovInputIdx(gen__cov_id, 1); // input Player at cov[1]
-        State opponent = readInputStateWithTemplate(gen__opponent_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
+        State opponent = readInputStateWithTemplate(gen__opponent_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 3);
@@ -122,9 +122,9 @@ contract Player(
         byte[32] self_ref = player_ref(owner, player_id);
         byte[32] opponent_ref = player_ref(opponent.owner, opponent.player_id);
         State next_self = {
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
             // :: gen__ ^ | src:
             owner: owner,
             player_id: player_id,
@@ -134,9 +134,9 @@ contract Player(
             losses: losses,
         };
         State next_opponent = {
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
             // :: gen__ ^ | src:
             owner: opponent.owner,
             player_id: opponent.player_id,
@@ -146,9 +146,9 @@ contract Player(
             losses: opponent.losses,
         };
         GameState next_game = {
-            gen__template_player: gen__template_player,
-            gen__template_stones_game: gen__template_stones_game,
-            gen__template_stones_settle: gen__template_stones_settle,
+            gen__player_template: gen__player_template,
+            gen__stones_game_template: gen__stones_game_template,
+            gen__stones_settle_template: gen__stones_settle_template,
             // :: gen__ ^ | src:
             player_a: self_ref,
             player_b: opponent_ref,
@@ -164,7 +164,7 @@ contract Player(
         // :: become Player
         validateOutputState(gen__opponent_out_output_idx, next_opponent);
         // :: become StonesGame
-        validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
+        validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__stones_game_template);
     }
 
     entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len) {
@@ -173,7 +173,7 @@ contract Player(
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__starter_input_idx = OpCovInputIdx(gen__cov_id, 0); // input Player at cov[0]
-        State starter = readInputStateWithTemplate(gen__starter_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__template_player);
+        State starter = readInputStateWithTemplate(gen__starter_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
@@ -189,7 +189,7 @@ contract Player(
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__settle_input_idx = OpCovInputIdx(gen__cov_id, 0); // input StonesSettle at cov[0]
-        SettleState settle = readInputStateWithTemplate(gen__settle_input_idx, gen__stones_settle_prefix_len, gen__stones_settle_suffix_len, gen__template_stones_settle);
+        SettleState settle = readInputStateWithTemplate(gen__settle_input_idx, gen__stones_settle_prefix_len, gen__stones_settle_suffix_len, gen__stones_settle_template);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);

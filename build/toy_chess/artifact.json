@@ -14,27 +14,27 @@
       {
         "id": "template/league",
         "actor": "League",
-        "symbol": "gen__template_league"
+        "symbol": "gen__league_template"
       },
       {
         "id": "template/player",
         "actor": "Player",
-        "symbol": "gen__template_player"
+        "symbol": "gen__player_template"
       },
       {
         "id": "template/mux",
         "actor": "Mux",
-        "symbol": "gen__template_mux"
+        "symbol": "gen__mux_template"
       },
       {
         "id": "template/pawn",
         "actor": "Pawn",
-        "symbol": "gen__template_pawn"
+        "symbol": "gen__pawn_template"
       },
       {
         "id": "template/knight",
         "actor": "Knight",
-        "symbol": "gen__template_knight"
+        "symbol": "gen__knight_template"
       }
     ],
     "template_plan": {
@@ -43,43 +43,43 @@
           "id": "template/league",
           "actor": "League",
           "contract": "League",
-          "symbol": "gen__template_league",
+          "symbol": "gen__league_template",
           "hash_hex": "6284a85af3ce740e751b72ec82d880a4db57a5237990097f410fd4ee0d3a5d37"
         },
         {
           "id": "template/player",
           "actor": "Player",
           "contract": "Player",
-          "symbol": "gen__template_player",
+          "symbol": "gen__player_template",
           "hash_hex": "c606b79a176b9476968f3bb34e4a382ce9f0b61555e507db2913697d9fbb6c4a"
         },
         {
           "id": "template/mux",
           "actor": "Mux",
           "contract": "Mux",
-          "symbol": "gen__template_mux",
+          "symbol": "gen__mux_template",
           "hash_hex": "55918f7386bf9217fac71f7f34f79632f7a43a085f28ede1d8769bfff7a24771"
         },
         {
           "id": "template/pawn",
           "actor": "Pawn",
           "contract": "Pawn",
-          "symbol": "gen__template_pawn",
+          "symbol": "gen__pawn_template",
           "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
         },
         {
           "id": "template/knight",
           "actor": "Knight",
           "contract": "Knight",
-          "symbol": "gen__template_knight",
+          "symbol": "gen__knight_template",
           "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
         }
       ],
       "route_tables": [
         {
-          "id": "route_table/BoardState/gen__route_family_board_state_mux_templates",
+          "id": "route_table/BoardState/gen__mux_routes",
           "state": "BoardState",
-          "field": "gen__route_family_board_state_mux_templates",
+          "field": "gen__mux_routes",
           "byte_len": 64,
           "entries": [
             {
@@ -101,10 +101,10 @@
       ],
       "route_trees": [
         {
-          "id": "route_tree/BoardState/gen__route_family_board_state_mux_templates",
-          "table_id": "route_table/BoardState/gen__route_family_board_state_mux_templates",
+          "id": "route_tree/BoardState/gen__mux_routes",
+          "table_id": "route_table/BoardState/gen__mux_routes",
           "state": "BoardState",
-          "field": "gen__route_family_board_state_mux_templates",
+          "field": "gen__mux_routes",
           "root_hex": "a3ca31e60988716ede05c2a2b4de17994f3eac68419523d6aaa9f1c6f8249a86",
           "leaves": [
             {
@@ -141,7 +141,7 @@
           "id": "route_family/BoardState/mux",
           "state": "BoardState",
           "hub_actor": "Mux",
-          "table_id": "route_table/BoardState/gen__route_family_board_state_mux_templates",
+          "table_id": "route_table/BoardState/gen__mux_routes",
           "actors": [
             "Mux",
             "Pawn",
@@ -199,12 +199,12 @@
           }
         },
         {
-          "id": "witness/board_state_mux/route_family_table",
+          "id": "witness/mux/route_family_table",
           "subject": {
             "kind": "route_family",
             "family_id": "route_family/BoardState/mux"
           },
-          "param": "gen__route_family_board_state_mux_templates",
+          "param": "gen__mux_routes",
           "purpose": {
             "kind": "route_family_table"
           }
@@ -493,21 +493,21 @@
                       "witness_recipe_ids": [
                         "witness/mux/template_prefix_bytes",
                         "witness/mux/template_suffix_bytes",
-                        "witness/board_state_mux/route_family_table"
+                        "witness/mux/route_family_table"
                       ]
                     }
                   ],
                   "witness_recipe_ids": [
                     "witness/mux/template_prefix_bytes",
                     "witness/mux/template_suffix_bytes",
-                    "witness/board_state_mux/route_family_table"
+                    "witness/mux/route_family_table"
                   ]
                 }
               ],
               "witness_recipe_ids": [
                 "witness/mux/template_prefix_bytes",
                 "witness/mux/template_suffix_bytes",
-                "witness/board_state_mux/route_family_table"
+                "witness/mux/route_family_table"
               ]
             },
             "hidden_params": [
@@ -540,8 +540,8 @@
                 }
               },
               {
-                "recipe_id": "witness/board_state_mux/route_family_table",
-                "name": "gen__route_family_board_state_mux_templates",
+                "recipe_id": "witness/mux/route_family_table",
+                "name": "gen__mux_routes",
                 "type": {
                   "kind": "fixed_bytes",
                   "len": 64
@@ -579,8 +579,8 @@
                 }
               },
               {
-                "recipe_id": "witness/board_state_mux/route_family_table",
-                "param": "gen__route_family_board_state_mux_templates",
+                "recipe_id": "witness/mux/route_family_table",
+                "param": "gen__mux_routes",
                 "subject": {
                   "kind": "route_family",
                   "family_id": "route_family/BoardState/mux"
@@ -1244,7 +1244,7 @@
           "source": "LeagueState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1255,7 +1255,7 @@
               }
             },
             {
-              "name": "gen__template_mux",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1266,7 +1266,7 @@
               }
             },
             {
-              "name": "gen__route_family_board_state_mux_commitment",
+              "name": "gen__mux_routes_digest",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1327,7 +1327,7 @@
           "source": "PlayerState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1338,7 +1338,7 @@
               }
             },
             {
-              "name": "gen__template_mux",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1349,7 +1349,7 @@
               }
             },
             {
-              "name": "gen__route_family_board_state_mux_commitment",
+              "name": "gen__mux_routes_digest",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1388,7 +1388,7 @@
                 }
               },
               {
-                "name": "gen__route_family_board_state_mux_templates",
+                "name": "gen__mux_routes",
                 "type": {
                   "kind": "fixed_bytes",
                   "len": 64
@@ -1417,7 +1417,7 @@
           "source": "BoardState",
           "fields": [
             {
-              "name": "gen__template_mux",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1428,7 +1428,7 @@
               }
             },
             {
-              "name": "gen__route_family_board_state_mux_templates",
+              "name": "gen__mux_routes",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64
@@ -1519,7 +1519,7 @@
           "source": "BoardState",
           "fields": [
             {
-              "name": "gen__template_mux",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1530,7 +1530,7 @@
               }
             },
             {
-              "name": "gen__route_family_board_state_mux_templates",
+              "name": "gen__mux_routes",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64
@@ -1603,7 +1603,7 @@
           "source": "BoardState",
           "fields": [
             {
-              "name": "gen__template_mux",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1614,7 +1614,7 @@
               }
             },
             {
-              "name": "gen__route_family_board_state_mux_templates",
+              "name": "gen__mux_routes",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 64

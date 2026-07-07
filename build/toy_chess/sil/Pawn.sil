@@ -4,30 +4,30 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Pawn(
-    byte[32] gen__init_template_mux,
-    byte[64] gen__init_route_family_board_state_mux_templates,
+    byte[32] gen__init_mux_template,
+    byte[64] gen__init_mux_routes,
     int init_selector,
     int init_ply
 ) {
     // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_mux;
-        byte[32] gen__route_family_board_state_mux_commitment;
+        byte[32] gen__player_template;
+        byte[32] gen__mux_template;
+        byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:
         int nonce;
     }
     struct PlayerState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_mux;
-        byte[32] gen__route_family_board_state_mux_commitment;
+        byte[32] gen__player_template;
+        byte[32] gen__mux_template;
+        byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:
         int nonce;
     }
 
     // :: route templates
-    byte[32] gen__template_mux = gen__init_template_mux;
-    byte[64] gen__route_family_board_state_mux_templates = gen__init_route_family_board_state_mux_templates;
+    byte[32] gen__mux_template = gen__init_mux_template;
+    byte[64] gen__mux_routes = gen__init_mux_routes;
 
     // :: state fields: Pawn
     int selector = init_selector;
@@ -44,14 +44,14 @@ contract Pawn(
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Mux
 
         State next_board = {
-            gen__template_mux: gen__template_mux,
-            gen__route_family_board_state_mux_templates: gen__route_family_board_state_mux_templates,
+            gen__mux_template: gen__mux_template,
+            gen__mux_routes: gen__mux_routes,
             // :: gen__ ^ | src:
             selector: selector,
             ply: ply + 1,
         };
         // :: become Mux
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__mux_prefix, gen__mux_suffix, gen__template_mux);
+        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__mux_prefix, gen__mux_suffix, gen__mux_template);
     }
 
 }

@@ -530,10 +530,10 @@ mod tests {
 
         assert_eq!(decoded.get("owner"), source_state.get("owner"));
         assert_eq!(
-            decoded.get("gen__template_ticket"),
+            decoded.get("gen__ticket_template"),
             Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
-        assert!(!decoded.contains_key("gen__template_issuer"), "Ticket state should not carry unrelated Issuer template");
+        assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
     }
 
     #[test]
@@ -813,7 +813,7 @@ mod tests {
             .template_plan
             .route_tables
             .iter_mut()
-            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__route_family_board_state_mux_templates"))
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
             .expect("BoardState route table receipt exists");
         table.entries[1].offset = 33;
 
@@ -829,7 +829,7 @@ mod tests {
                     index: 1,
                     offset: 33,
                     expected: 32,
-                }) if id == "route_table/BoardState/gen__route_family_board_state_mux_templates"
+                }) if id == "route_table/BoardState/gen__mux_routes"
             ),
             "unexpected error: {err}"
         );
@@ -844,7 +844,7 @@ mod tests {
             .template_plan
             .route_trees
             .iter_mut()
-            .find(|tree| tree.id == route_template_tree_receipt_id("BoardState", "gen__route_family_board_state_mux_templates"))
+            .find(|tree| tree.id == route_template_tree_receipt_id("BoardState", "gen__mux_routes"))
             .expect("BoardState route tree receipt exists");
         tree.leaves[1].opening[0].hash_hex = "00".repeat(32);
 
@@ -859,7 +859,7 @@ mod tests {
                     ref id,
                     index: 1,
                     ..
-                }) if id == "route_tree/BoardState/gen__route_family_board_state_mux_templates"
+                }) if id == "route_tree/BoardState/gen__mux_routes"
             ),
             "unexpected error: {err}"
         );

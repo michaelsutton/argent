@@ -1119,7 +1119,7 @@ mod tests {
           "root": "examples/tiny.ag",
           "modules": ["examples/tiny.ag"],
           "argent": {
-            "templates": [{ "id": "template/foo", "actor": "Foo", "symbol": "gen__template_foo" }],
+            "templates": [{ "id": "template/foo", "actor": "Foo", "symbol": "gen__foo_template" }],
             "template_plan": {
               "templates": [],
               "witness_recipes": []
@@ -1155,7 +1155,7 @@ mod tests {
                   "source": "FooState",
                   "fields": [
                     {
-                      "name": "gen__template_foo",
+                      "name": "gen__foo_template",
                       "type": { "kind": "fixed_bytes", "len": 32 },
                       "role": { "kind": "template", "contract": "Foo" }
                     },
@@ -1234,7 +1234,7 @@ mod tests {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
             hub_actor: "Mux".to_string(),
-            table_id: "route_table/BoardState/gen__route_family_board_state_mux_templates".to_string(),
+            table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Mux".to_string()],
         }]);
 
@@ -1251,7 +1251,7 @@ mod tests {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
             hub_actor: "Mux".to_string(),
-            table_id: "route_table/BoardState/gen__route_family_board_state_mux_templates".to_string(),
+            table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Player".to_string()],
         }]);
 

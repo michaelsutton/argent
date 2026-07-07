@@ -4,21 +4,21 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Ticket(
-    byte[32] gen__init_template_ticket,
+    byte[32] gen__init_ticket_template,
     byte[32] init_owner,
     int init_serial,
     int init_redeemed
 ) {
     // :: state layouts
     struct IssuerState {
-        byte[32] gen__template_ticket;
+        byte[32] gen__ticket_template;
         // :: gen__ ^ | src:
         byte[32] admin;
         int next_serial;
     }
 
     // :: route templates
-    byte[32] gen__template_ticket = gen__init_template_ticket;
+    byte[32] gen__ticket_template = gen__init_ticket_template;
 
     // :: state fields: Ticket
     byte[32] owner = init_owner;
@@ -36,7 +36,7 @@ contract Ticket(
         require(redeemed == 0);
         require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         State redeemed_ticket = {
-            gen__template_ticket: gen__template_ticket,
+            gen__ticket_template: gen__ticket_template,
             // :: gen__ ^ | src:
             owner: owner,
             serial: serial,

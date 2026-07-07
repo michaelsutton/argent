@@ -4,30 +4,30 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Mux(
-    byte[32] gen__init_template_mux,
-    byte[64] gen__init_route_family_board_state_mux_templates,
+    byte[32] gen__init_mux_template,
+    byte[64] gen__init_mux_routes,
     int init_selector,
     int init_ply
 ) {
     // :: state layouts
     struct LeagueState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_mux;
-        byte[32] gen__route_family_board_state_mux_commitment;
+        byte[32] gen__player_template;
+        byte[32] gen__mux_template;
+        byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:
         int nonce;
     }
     struct PlayerState {
-        byte[32] gen__template_player;
-        byte[32] gen__template_mux;
-        byte[32] gen__route_family_board_state_mux_commitment;
+        byte[32] gen__player_template;
+        byte[32] gen__mux_template;
+        byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:
         int nonce;
     }
 
     // :: route templates
-    byte[32] gen__template_mux = gen__init_template_mux;
-    byte[64] gen__route_family_board_state_mux_templates = gen__init_route_family_board_state_mux_templates;
+    byte[32] gen__mux_template = gen__init_mux_template;
+    byte[64] gen__mux_routes = gen__init_mux_routes;
 
     // :: state fields: Mux
     int selector = init_selector;
@@ -40,21 +40,21 @@ contract Mux(
         int gen__pawn_suffix_len = gen__pawn_suffix.length;
 
         // :: routes: Pawn
-        byte[32] gen__template_pawn = byte[32](gen__route_family_board_state_mux_templates.slice(0, 32));
+        byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Pawn
 
         State next_board = {
-            gen__template_mux: gen__template_mux,
-            gen__route_family_board_state_mux_templates: gen__route_family_board_state_mux_templates,
+            gen__mux_template: gen__mux_template,
+            gen__mux_routes: gen__mux_routes,
             // :: gen__ ^ | src:
             selector: selector,
             ply: ply + 1,
         };
         // :: become Pawn
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__template_pawn);
+        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__pawn_template);
     }
 
     entrypoint function choose_knight(byte[] gen__knight_prefix, byte[] gen__knight_suffix) {
@@ -63,21 +63,21 @@ contract Mux(
         int gen__knight_suffix_len = gen__knight_suffix.length;
 
         // :: routes: Knight
-        byte[32] gen__template_knight = byte[32](gen__route_family_board_state_mux_templates.slice(32, 64));
+        byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(32, 64));
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Knight
 
         State next_board = {
-            gen__template_mux: gen__template_mux,
-            gen__route_family_board_state_mux_templates: gen__route_family_board_state_mux_templates,
+            gen__mux_template: gen__mux_template,
+            gen__mux_routes: gen__mux_routes,
             // :: gen__ ^ | src:
             selector: selector,
             ply: ply + 1,
         };
         // :: become Knight
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__knight_prefix, gen__knight_suffix, gen__template_knight);
+        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__knight_prefix, gen__knight_suffix, gen__knight_template);
     }
 
 }

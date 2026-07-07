@@ -2457,11 +2457,11 @@ fn hidden_actor_suffix(actor: &str) -> String {
 }
 
 fn hidden_template_init_name(actor: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}init_template_{}", hidden_actor_suffix(actor))
+    format!("{RESERVED_GENERATED_PREFIX}init_{}_template", hidden_actor_suffix(actor))
 }
 
 fn hidden_template_name(actor: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_template", hidden_actor_suffix(actor))
 }
 
 fn hidden_template_root_name() -> String {
@@ -2469,11 +2469,12 @@ fn hidden_template_root_name() -> String {
 }
 
 fn route_family_suffix_by_id(family_id: &str) -> String {
-    family_id.strip_prefix("route_family/").unwrap_or(family_id).split('/').map(to_snake).collect::<Vec<_>>().join("_")
+    let hub = family_id.strip_prefix("route_family/").and_then(|rest| rest.rsplit('/').next()).unwrap_or(family_id);
+    to_snake(hub)
 }
 
 fn hidden_route_family_commitment_init_name(family: &RouteFamily) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}init_route_family_{}_commitment", route_family_suffix_by_id(&family.id))
+    format!("{RESERVED_GENERATED_PREFIX}init_{}_routes_digest", route_family_suffix_by_id(&family.id))
 }
 
 fn hidden_route_family_commitment_name(family: &RouteFamily) -> String {
@@ -2481,11 +2482,11 @@ fn hidden_route_family_commitment_name(family: &RouteFamily) -> String {
 }
 
 fn hidden_route_family_commitment_name_by_id(family_id: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}route_family_{}_commitment", route_family_suffix_by_id(family_id))
+    format!("{RESERVED_GENERATED_PREFIX}{}_routes_digest", route_family_suffix_by_id(family_id))
 }
 
 fn hidden_route_family_table_init_name(family: &RouteFamily) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}init_route_family_{}_templates", route_family_suffix_by_id(&family.id))
+    format!("{RESERVED_GENERATED_PREFIX}init_{}_routes", route_family_suffix_by_id(&family.id))
 }
 
 fn hidden_route_family_table_name(family: &RouteFamily) -> String {
@@ -2493,7 +2494,7 @@ fn hidden_route_family_table_name(family: &RouteFamily) -> String {
 }
 
 fn hidden_route_family_table_name_by_id(family_id: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}route_family_{}_templates", route_family_suffix_by_id(family_id))
+    format!("{RESERVED_GENERATED_PREFIX}{}_routes", route_family_suffix_by_id(family_id))
 }
 
 fn route_leaves_contain_family(leaves: &[RouteRootLeaf], family_id: &str) -> bool {
@@ -2929,7 +2930,7 @@ mod tests {
     #[test]
     fn rejects_reserved_state_field_from_model() {
         let mut program = test_program();
-        program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "gen__template_player".to_string() });
+        program.modules[0].states[0].fields.push(FieldDecl { ty: TypeRef::new("int"), name: "gen__player_template".to_string() });
 
         let err = Model::from_program(&program).expect_err("reserved state field must be rejected");
         assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
@@ -3021,15 +3022,15 @@ mod tests {
         let sil = emit_actor(actor, &model).expect("actor emits");
         let manifest = emit_manifest(&program, &model);
 
-        assert!(!sil.contains("byte[32] gen__init_template_foo"), "{sil}");
-        assert!(!sil.contains("byte[32] gen__template_foo = gen__init_template_foo;"), "{sil}");
+        assert!(!sil.contains("byte[32] gen__init_foo_template"), "{sil}");
+        assert!(!sil.contains("byte[32] gen__foo_template = gen__init_foo_template;"), "{sil}");
         assert!(sil.contains("int gen__next_output_idx = OpAuthOutputIdx"), "{sil}");
         assert!(sil.contains("tx.outputs[gen__next_output_idx].value"), "{sil}");
         assert!(
             sil.contains("require(tx.outputs[gen__next_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);"),
             "{sil}"
         );
-        assert!(manifest.contains(r#""symbol": "gen__template_foo""#), "{manifest}");
+        assert!(manifest.contains(r#""symbol": "gen__foo_template""#), "{manifest}");
         assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
         assert!(!sil.contains("byte[] foo_prefix"), "{sil}");
@@ -3123,7 +3124,7 @@ mod tests {
         assert_eq!(artifact.generator.name, "argentc");
         assert_eq!(artifact.app, "Test");
         assert_eq!(artifact.root, "test.ag");
-        assert_eq!(artifact.argent.templates[0].symbol, "gen__template_foo");
+        assert_eq!(artifact.argent.templates[0].symbol, "gen__foo_template");
         assert_eq!(artifact.argent.templates[0].id, "template/foo");
         assert_eq!(artifact.argent.template_plan.templates[0].id, "template/foo");
         assert_eq!(
@@ -3239,13 +3240,13 @@ mod tests {
             "{player_sil}"
         );
         assert!(!player_sil.contains("byte[] gen__player_prefix"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__init_template_player"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__init_template_stones_game"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__init_template_stones_settle"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__template_player = gen__init_template_player;"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__template_stones_game = gen__init_template_stones_game;"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__init_player_template"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__init_stones_game_template"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__init_stones_settle_template"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__player_template = gen__init_player_template;"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__stones_game_template = gen__init_stones_game_template;"), "{player_sil}");
         assert!(!player_sil.contains("gen__template_root"), "{player_sil}");
-        assert!(!player_sil.contains("gen__template_player_opening"), "{player_sil}");
+        assert!(!player_sil.contains("gen__player_template_opening"), "{player_sil}");
         assert!(
             !player_sil.contains("gen__template_table") && !player_sil.contains("gen__init_template_table"),
             "ordinary direct-template state should not store a packed table: {player_sil}"
@@ -3255,7 +3256,7 @@ mod tests {
             "template roots/openings should use fixed bytes, not nested arrays: {player_sil}"
         );
         assert!(
-            !player_sil.contains("gen__template_league"),
+            !player_sil.contains("gen__league_template"),
             "Player route-family template root should not carry unrelated League template: {player_sil}"
         );
         assert!(player_sil.contains("validateOutputState(gen__self_out_output_idx, next_self);"), "{player_sil}");
@@ -3302,18 +3303,18 @@ mod tests {
         );
 
         let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
-        assert_eq!(player_contract.runtime_state.fields[0].name, "gen__template_player");
+        assert_eq!(player_contract.runtime_state.fields[0].name, "gen__player_template");
         assert_eq!(player_contract.runtime_state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
         assert_eq!(
             player_contract.runtime_state.fields[0].role,
             RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() }
         );
-        assert_eq!(player_contract.runtime_state.fields[1].name, "gen__template_stones_game");
+        assert_eq!(player_contract.runtime_state.fields[1].name, "gen__stones_game_template");
         assert_eq!(
             player_contract.runtime_state.fields[1].role,
             RuntimeFieldRoleArtifact::Template { contract: "StonesGame".to_string() }
         );
-        assert_eq!(player_contract.runtime_state.fields[2].name, "gen__template_stones_settle");
+        assert_eq!(player_contract.runtime_state.fields[2].name, "gen__stones_settle_template");
         assert_eq!(
             player_contract.runtime_state.fields[2].role,
             RuntimeFieldRoleArtifact::Template { contract: "StonesSettle".to_string() }
@@ -3372,7 +3373,7 @@ mod tests {
                 "route_family/BoardState/mux",
                 "BoardState",
                 "Mux",
-                "route_table/BoardState/gen__route_family_board_state_mux_templates",
+                "route_table/BoardState/gen__mux_routes",
                 vec!["Mux", "Pawn", "Knight"]
             )]
         );
@@ -3382,7 +3383,7 @@ mod tests {
             .template_plan
             .route_tables
             .iter()
-            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__route_family_board_state_mux_templates"))
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
             .expect("BoardState route table exists");
         assert_eq!(board_table.byte_len, 64);
         assert_eq!(
@@ -3400,12 +3401,9 @@ mod tests {
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
             vec![
-                ("gen__template_player", RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() }),
-                ("gen__template_mux", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
-                (
-                    "gen__route_family_board_state_mux_commitment",
-                    RuntimeFieldRoleArtifact::TemplateDigest { id: "route_family/BoardState/mux".to_string() }
-                ),
+                ("gen__player_template", RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() }),
+                ("gen__mux_template", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
+                ("gen__mux_routes_digest", RuntimeFieldRoleArtifact::TemplateDigest { id: "route_family/BoardState/mux".to_string() }),
             ]
         );
 
@@ -3413,9 +3411,9 @@ mod tests {
         assert_eq!(
             mux_contract.runtime_state.fields[..2].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
             vec![
-                ("gen__template_mux", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
+                ("gen__mux_template", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
                 (
-                    "gen__route_family_board_state_mux_templates",
+                    "gen__mux_routes",
                     RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["Pawn".to_string(), "Knight".to_string()] }
                 ),
             ]
@@ -3432,12 +3430,7 @@ mod tests {
             vec![
                 ("gen__mux_prefix", "Mux", HiddenParamPurposeArtifact::TemplatePrefixBytes, None),
                 ("gen__mux_suffix", "Mux", HiddenParamPurposeArtifact::TemplateSuffixBytes, None),
-                (
-                    "gen__route_family_board_state_mux_templates",
-                    "route_family/BoardState/mux",
-                    HiddenParamPurposeArtifact::RouteFamilyTable,
-                    None
-                ),
+                ("gen__mux_routes", "route_family/BoardState/mux", HiddenParamPurposeArtifact::RouteFamilyTable, None),
             ]
         );
         artifact.verify_template_plan().expect("template plan receipt verifies inferred route family");

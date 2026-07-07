@@ -836,7 +836,7 @@ mod tests {
             source: "FooState".to_string(),
             fields: vec![
                 RuntimeFieldArtifact {
-                    name: "gen__template_foo".to_string(),
+                    name: "gen__foo_template".to_string(),
                     ty: TypeArtifact::FixedBytes { len: 32 },
                     role: RuntimeFieldRoleArtifact::Template { contract: "Foo".to_string() },
                 },
@@ -845,7 +845,7 @@ mod tests {
             ],
         };
         let values = BTreeMap::from([
-            ("gen__template_foo".to_string(), ArtifactValue::Bytes(vec![7; 32])),
+            ("gen__foo_template".to_string(), ArtifactValue::Bytes(vec![7; 32])),
             ("count".to_string(), ArtifactValue::Int(-5)),
             ("flag".to_string(), ArtifactValue::Bool(true)),
         ]);

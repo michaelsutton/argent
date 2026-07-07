@@ -14,12 +14,12 @@
       {
         "id": "template/issuer",
         "actor": "Issuer",
-        "symbol": "gen__template_issuer"
+        "symbol": "gen__issuer_template"
       },
       {
         "id": "template/ticket",
         "actor": "Ticket",
-        "symbol": "gen__template_ticket"
+        "symbol": "gen__ticket_template"
       }
     ],
     "template_plan": {
@@ -28,14 +28,14 @@
           "id": "template/issuer",
           "actor": "Issuer",
           "contract": "Issuer",
-          "symbol": "gen__template_issuer",
+          "symbol": "gen__issuer_template",
           "hash_hex": "e91f3e3570438b064be220a2cc0f623450af006ef883810349d2fc07acf8814e"
         },
         {
           "id": "template/ticket",
           "actor": "Ticket",
           "contract": "Ticket",
-          "symbol": "gen__template_ticket",
+          "symbol": "gen__ticket_template",
           "hash_hex": "be416b25f340479bb31b271c28cdd230764a8595bc1298270736449a1edb4575"
         }
       ],
@@ -445,7 +445,7 @@
           "source": "IssuerState",
           "fields": [
             {
-              "name": "gen__template_ticket",
+              "name": "gen__ticket_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -534,7 +534,7 @@
           "source": "TicketState",
           "fields": [
             {
-              "name": "gen__template_ticket",
+              "name": "gen__ticket_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32

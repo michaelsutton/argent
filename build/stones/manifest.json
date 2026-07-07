@@ -10,10 +10,10 @@
     "examples/stones/settle.ag"
   ],
   "templates": [
-    { "actor": "League", "symbol": "gen__template_league", "hash": null },
-    { "actor": "Player", "symbol": "gen__template_player", "hash": null },
-    { "actor": "StonesGame", "symbol": "gen__template_stones_game", "hash": null },
-    { "actor": "StonesSettle", "symbol": "gen__template_stones_settle", "hash": null }
+    { "actor": "League", "symbol": "gen__league_template", "hash": null },
+    { "actor": "Player", "symbol": "gen__player_template", "hash": null },
+    { "actor": "StonesGame", "symbol": "gen__stones_game_template", "hash": null },
+    { "actor": "StonesSettle", "symbol": "gen__stones_settle_template", "hash": null }
   ],
   "actors": [
     {

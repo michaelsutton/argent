@@ -19,22 +19,22 @@
       {
         "id": "template/league",
         "actor": "League",
-        "symbol": "gen__template_league"
+        "symbol": "gen__league_template"
       },
       {
         "id": "template/player",
         "actor": "Player",
-        "symbol": "gen__template_player"
+        "symbol": "gen__player_template"
       },
       {
         "id": "template/stones_game",
         "actor": "StonesGame",
-        "symbol": "gen__template_stones_game"
+        "symbol": "gen__stones_game_template"
       },
       {
         "id": "template/stones_settle",
         "actor": "StonesSettle",
-        "symbol": "gen__template_stones_settle"
+        "symbol": "gen__stones_settle_template"
       }
     ],
     "template_plan": {
@@ -43,28 +43,28 @@
           "id": "template/league",
           "actor": "League",
           "contract": "League",
-          "symbol": "gen__template_league",
+          "symbol": "gen__league_template",
           "hash_hex": "b3ae4cbf8b838441c8b296e42948cad397d43bbcb95b836c0b897eab3a0bb2af"
         },
         {
           "id": "template/player",
           "actor": "Player",
           "contract": "Player",
-          "symbol": "gen__template_player",
+          "symbol": "gen__player_template",
           "hash_hex": "a239b9a99185bd185da32309551a4bef91a25aa0f7832f37e174a8601d75fd13"
         },
         {
           "id": "template/stones_game",
           "actor": "StonesGame",
           "contract": "StonesGame",
-          "symbol": "gen__template_stones_game",
+          "symbol": "gen__stones_game_template",
           "hash_hex": "38349a68dc180b40bd889bc7ff7288be45a0b89233711ef9c3f03ce73e1fb9dd"
         },
         {
           "id": "template/stones_settle",
           "actor": "StonesSettle",
           "contract": "StonesSettle",
-          "symbol": "gen__template_stones_settle",
+          "symbol": "gen__stones_settle_template",
           "hash_hex": "4bae3b1da2ddfec0e7fe740bd1969b076f1641fa25c52761ca77630432983859"
         }
       ],
@@ -1698,7 +1698,7 @@
           "source": "LeagueState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1709,7 +1709,7 @@
               }
             },
             {
-              "name": "gen__template_stones_game",
+              "name": "gen__stones_game_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1720,7 +1720,7 @@
               }
             },
             {
-              "name": "gen__template_stones_settle",
+              "name": "gen__stones_settle_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1812,7 +1812,7 @@
           "source": "PlayerState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1823,7 +1823,7 @@
               }
             },
             {
-              "name": "gen__template_stones_game",
+              "name": "gen__stones_game_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1834,7 +1834,7 @@
               }
             },
             {
-              "name": "gen__template_stones_settle",
+              "name": "gen__stones_settle_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2050,7 +2050,7 @@
           "source": "GameState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2061,7 +2061,7 @@
               }
             },
             {
-              "name": "gen__template_stones_game",
+              "name": "gen__stones_game_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2072,7 +2072,7 @@
               }
             },
             {
-              "name": "gen__template_stones_settle",
+              "name": "gen__stones_settle_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2233,7 +2233,7 @@
           "source": "SettleState",
           "fields": [
             {
-              "name": "gen__template_player",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2244,7 +2244,7 @@
               }
             },
             {
-              "name": "gen__template_stones_game",
+              "name": "gen__stones_game_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -2255,7 +2255,7 @@
               }
             },
             {
-              "name": "gen__template_stones_settle",
+              "name": "gen__stones_settle_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
