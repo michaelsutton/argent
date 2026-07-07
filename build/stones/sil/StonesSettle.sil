@@ -4,7 +4,7 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract StonesSettle(
-    byte[96] gen__init_template_table,
+    byte[32] gen__init_template_root,
     byte[32] init_player_a,
     byte[32] init_player_b,
     int init_status
@@ -18,14 +18,14 @@ contract StonesSettle(
 
     // :: state layouts
     struct LeagueState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct PlayerState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] owner;
         byte[32] player_id;
@@ -35,7 +35,7 @@ contract StonesSettle(
         int losses;
     }
     struct GameState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -73,8 +73,8 @@ contract StonesSettle(
         return result;
     }
 
-    // :: route template table
-    byte[96] gen__template_table = gen__init_template_table;
+    // :: route templates
+    byte[32] gen__template_root = gen__init_template_root;
 
     // :: state fields: StonesSettle
     byte[32] player_a = init_player_a;
@@ -82,13 +82,19 @@ contract StonesSettle(
     int status = init_status;
 
     // :: entrypoints
-    entrypoint function settle(byte[] gen__player_prefix, byte[] gen__player_suffix) {
+    entrypoint function settle(byte[] gen__player_prefix, byte[] gen__player_suffix, byte[64] gen__template_player_opening) {
         // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
 
-        // :: routes: [0]=Player
-        byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));
+        // :: routes: Player
+        byte[32] gen__template_player = blake2b(gen__player_prefix + gen__player_suffix);
+        byte[32] gen__template_player_proof_root = gen__template_player;
+        byte[32] gen__template_player_sibling_0 = byte[32](gen__template_player_opening.slice(0, 32));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_0);
+        byte[32] gen__template_player_sibling_1 = byte[32](gen__template_player_opening.slice(32, 64));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_1);
+        require(gen__template_player_proof_root == gen__template_root);
 
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
@@ -127,7 +133,7 @@ contract StonesSettle(
             require(tx.outputs[gen__player_b_out_output_idx].value == tx.inputs[gen__player_b_in_input_idx].value + tx.inputs[this.activeInputIndex].value);
         }
         PlayerState next_player_a = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             owner: player_a_in.owner,
             player_id: player_a_in.player_id,
@@ -137,7 +143,7 @@ contract StonesSettle(
             losses: player_a_losses,
         };
         PlayerState next_player_b = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             owner: player_b_in.owner,
             player_id: player_b_in.player_id,

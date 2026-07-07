@@ -17,7 +17,7 @@ contract Issuer(
         int redeemed;
     }
 
-    // :: route template table
+    // :: route templates
     byte[32] gen__template_ticket = gen__init_template_ticket;
 
     // :: state fields: Issuer

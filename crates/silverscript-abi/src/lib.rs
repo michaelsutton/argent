@@ -152,6 +152,7 @@ pub struct RuntimeFieldArtifact {
 pub enum RuntimeFieldRoleArtifact {
     Template { contract: String },
     TemplateTable { contracts: Vec<String> },
+    TemplateRoot { contracts: Vec<String> },
     Source,
 }
 

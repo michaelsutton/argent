@@ -4,7 +4,7 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Player(
-    byte[96] gen__init_template_table,
+    byte[32] gen__init_template_root,
     byte[32] init_owner,
     byte[32] init_player_id,
     int init_open_games,
@@ -21,14 +21,14 @@ contract Player(
 
     // :: state layouts
     struct LeagueState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] admin;
         int default_pile;
         int default_max_take;
     }
     struct GameState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -37,7 +37,7 @@ contract Player(
         int turn;
     }
     struct SettleState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -73,8 +73,8 @@ contract Player(
         return result;
     }
 
-    // :: route template table
-    byte[96] gen__template_table = gen__init_template_table;
+    // :: route templates
+    byte[32] gen__template_root = gen__init_template_root;
 
     // :: state fields: Player
     byte[32] owner = init_owner;
@@ -85,14 +85,26 @@ contract Player(
     int losses = init_losses;
 
     // :: entrypoints
-    entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix) {
+    entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[32] gen__template_player_leaf, byte[64] gen__template_player_opening, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix, byte[64] gen__template_stones_game_opening) {
         // :: witness lens
         int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
         int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
 
-        // :: routes: [0]=Player [1]=StonesGame
-        byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));
-        byte[32] gen__template_stones_game = byte[32](gen__template_table.slice(32, 64));
+        // :: routes: Player StonesGame
+        byte[32] gen__template_player = gen__template_player_leaf;
+        byte[32] gen__template_player_proof_root = gen__template_player;
+        byte[32] gen__template_player_sibling_0 = byte[32](gen__template_player_opening.slice(0, 32));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_0);
+        byte[32] gen__template_player_sibling_1 = byte[32](gen__template_player_opening.slice(32, 64));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_1);
+        require(gen__template_player_proof_root == gen__template_root);
+        byte[32] gen__template_stones_game = blake2b(gen__stones_game_prefix + gen__stones_game_suffix);
+        byte[32] gen__template_stones_game_proof_root = gen__template_stones_game;
+        byte[32] gen__template_stones_game_sibling_0 = byte[32](gen__template_stones_game_opening.slice(0, 32));
+        gen__template_stones_game_proof_root = blake2b(gen__template_stones_game_sibling_0 + gen__template_stones_game_proof_root);
+        byte[32] gen__template_stones_game_sibling_1 = byte[32](gen__template_stones_game_opening.slice(32, 64));
+        gen__template_stones_game_proof_root = blake2b(gen__template_stones_game_proof_root + gen__template_stones_game_sibling_1);
+        require(gen__template_stones_game_proof_root == gen__template_root);
 
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
@@ -116,7 +128,7 @@ contract Player(
         byte[32] self_ref = player_ref(owner, player_id);
         byte[32] opponent_ref = player_ref(opponent.owner, opponent.player_id);
         State next_self = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             owner: owner,
             player_id: player_id,
@@ -126,7 +138,7 @@ contract Player(
             losses: losses,
         };
         State next_opponent = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             owner: opponent.owner,
             player_id: opponent.player_id,
@@ -136,7 +148,7 @@ contract Player(
             losses: opponent.losses,
         };
         GameState next_game = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             player_a: self_ref,
             player_b: opponent_ref,
@@ -155,9 +167,15 @@ contract Player(
         validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__template_stones_game);
     }
 
-    entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len) {
-        // :: routes: [0]=Player
-        byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));
+    entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len, byte[32] gen__template_player_leaf, byte[64] gen__template_player_opening) {
+        // :: routes: Player
+        byte[32] gen__template_player = gen__template_player_leaf;
+        byte[32] gen__template_player_proof_root = gen__template_player;
+        byte[32] gen__template_player_sibling_0 = byte[32](gen__template_player_opening.slice(0, 32));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_0);
+        byte[32] gen__template_player_sibling_1 = byte[32](gen__template_player_opening.slice(32, 64));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_1);
+        require(gen__template_player_proof_root == gen__template_root);
 
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
@@ -174,9 +192,15 @@ contract Player(
         require(starter.player_id != player_id);
     }
 
-    entrypoint function settle(int gen__stones_settle_prefix_len, int gen__stones_settle_suffix_len) {
-        // :: routes: [2]=StonesSettle
-        byte[32] gen__template_stones_settle = byte[32](gen__template_table.slice(64, 96));
+    entrypoint function settle(int gen__stones_settle_prefix_len, int gen__stones_settle_suffix_len, byte[32] gen__template_stones_settle_leaf, byte[64] gen__template_stones_settle_opening) {
+        // :: routes: StonesSettle
+        byte[32] gen__template_stones_settle = gen__template_stones_settle_leaf;
+        byte[32] gen__template_stones_settle_proof_root = gen__template_stones_settle;
+        byte[32] gen__template_stones_settle_sibling_0 = byte[32](gen__template_stones_settle_opening.slice(0, 32));
+        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_proof_root + gen__template_stones_settle_sibling_0);
+        byte[32] gen__template_stones_settle_sibling_1 = byte[32](gen__template_stones_settle_opening.slice(32, 64));
+        gen__template_stones_settle_proof_root = blake2b(gen__template_stones_settle_sibling_1 + gen__template_stones_settle_proof_root);
+        require(gen__template_stones_settle_proof_root == gen__template_root);
 
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);

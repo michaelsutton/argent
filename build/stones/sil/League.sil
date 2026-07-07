@@ -4,7 +4,7 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract League(
-    byte[96] gen__init_template_table,
+    byte[32] gen__init_template_root,
     byte[32] init_admin,
     int init_default_pile,
     int init_default_max_take
@@ -18,7 +18,7 @@ contract League(
 
     // :: state layouts
     struct PlayerState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] owner;
         byte[32] player_id;
@@ -28,7 +28,7 @@ contract League(
         int losses;
     }
     struct GameState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -37,7 +37,7 @@ contract League(
         int turn;
     }
     struct SettleState {
-        byte[96] gen__template_table;
+        byte[32] gen__template_root;
         // :: gen__ ^ | src:
         byte[32] player_a;
         byte[32] player_b;
@@ -73,8 +73,8 @@ contract League(
         return result;
     }
 
-    // :: route template table
-    byte[96] gen__template_table = gen__init_template_table;
+    // :: route templates
+    byte[32] gen__template_root = gen__init_template_root;
 
     // :: state fields: League
     byte[32] admin = init_admin;
@@ -82,13 +82,19 @@ contract League(
     int default_max_take = init_default_max_take;
 
     // :: entrypoints
-    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix) {
+    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix, byte[64] gen__template_player_opening) {
         // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
 
-        // :: routes: [0]=Player
-        byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));
+        // :: routes: Player
+        byte[32] gen__template_player = blake2b(gen__player_prefix + gen__player_suffix);
+        byte[32] gen__template_player_proof_root = gen__template_player;
+        byte[32] gen__template_player_sibling_0 = byte[32](gen__template_player_opening.slice(0, 32));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_0);
+        byte[32] gen__template_player_sibling_1 = byte[32](gen__template_player_opening.slice(32, 64));
+        gen__template_player_proof_root = blake2b(gen__template_player_proof_root + gen__template_player_sibling_1);
+        require(gen__template_player_proof_root == gen__template_root);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
@@ -99,7 +105,7 @@ contract League(
         byte[32] owner = blake2b(owner_pk);
         byte[32] player_id = blake2b(bytes("StonesPlayer") + OpOutpointTxId(this.activeInputIndex) + byte[4](OpOutpointIndex(this.activeInputIndex)));
         PlayerState next_player = {
-            gen__template_table: gen__template_table,
+            gen__template_root: gen__template_root,
             // :: gen__ ^ | src:
             owner: owner,
             player_id: player_id,

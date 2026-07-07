@@ -535,7 +535,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     emit_state_layouts(&mut out, actor, model)?;
     emit_shared_functions(&mut out, model);
 
-    emit_section_header(&mut out, "Route template table");
+    emit_section_header(&mut out, "Route templates");
     emit_route_template_table(&mut out, &actor.state, model);
     out.push('\n');
 
@@ -712,23 +712,53 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
 }
 
 fn emit_entry_template_locals(out: &mut String, actor: &ActorDecl, witness_specs: &[TemplateWitnessSpec], model: &Model<'_>) -> bool {
-    if !uses_packed_template_table(&actor.state, model) {
+    if !uses_template_root(&actor.state, model) {
         return false;
     }
-    let deps = model.template_deps_for_state(&actor.state);
-    let needed = witness_specs.iter().map(|spec| spec.actor.as_str()).collect::<BTreeSet<_>>();
-    let table = hidden_template_table_name();
-    let locals = deps.iter().enumerate().filter(|(_, dep)| needed.contains(dep.as_str())).collect::<Vec<_>>();
+    let locals = witness_specs.iter().filter(|spec| spec.route_proof.is_some()).collect::<Vec<_>>();
     if locals.is_empty() {
         return false;
     }
 
-    let labels = locals.iter().map(|(idx, dep)| format!("[{idx}]={dep}")).collect::<Vec<_>>().join(" ");
+    let labels = locals.iter().map(|spec| spec.actor.as_str()).collect::<Vec<_>>().join(" ");
     out.push_str(&format!("        // :: routes: {labels}\n"));
-    for (idx, dep) in locals {
-        let start = idx * 32;
-        let end = start + 32;
-        out.push_str(&format!("        byte[32] {} = byte[32]({table}.slice({start}, {end}));\n", hidden_template_name(dep)));
+    for spec in locals {
+        let Some(proof) = &spec.route_proof else {
+            continue;
+        };
+        let template = hidden_template_name(&spec.actor);
+        match spec.form {
+            TemplateWitnessForm::Bytes => {
+                let prefix = hidden_witness_prefix_name(&spec.actor);
+                let suffix = hidden_witness_suffix_name(&spec.actor);
+                out.push_str(&format!("        byte[32] {template} = blake2b({prefix} + {suffix});\n"));
+            }
+            TemplateWitnessForm::Len => {
+                out.push_str(&format!("        byte[32] {template} = {};\n", hidden_template_leaf_name(&spec.actor)));
+            }
+        }
+
+        let proof_root = hidden_template_proof_root_name(&spec.actor);
+        out.push_str(&format!("        byte[32] {proof_root} = {template};\n"));
+        let sides = route_template_opening_sides(&actor.state, &spec.actor, model)
+            .expect("route proof specs are derived from route tree membership");
+        debug_assert_eq!(proof.opening_bytes, sides.len() * 32);
+        let opening = hidden_template_opening_name(&spec.actor);
+        for (level, side) in sides.iter().enumerate() {
+            let sibling = hidden_template_sibling_name(&spec.actor, level);
+            let start = level * 32;
+            let end = start + 32;
+            out.push_str(&format!("        byte[32] {sibling} = byte[32]({opening}.slice({start}, {end}));\n"));
+            match side {
+                RouteTemplateTreeOpeningSideArtifact::Left => {
+                    out.push_str(&format!("        {proof_root} = blake2b({sibling} + {proof_root});\n"));
+                }
+                RouteTemplateTreeOpeningSideArtifact::Right => {
+                    out.push_str(&format!("        {proof_root} = blake2b({proof_root} + {sibling});\n"));
+                }
+            }
+        }
+        out.push_str(&format!("        require({proof_root} == {});\n", hidden_template_root_name()));
     }
     true
 }
@@ -1328,6 +1358,13 @@ enum TemplateWitnessForm {
 struct TemplateWitnessSpec {
     actor: String,
     form: TemplateWitnessForm,
+    route_proof: Option<RouteTemplateProofSpec>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RouteTemplateProofSpec {
+    tree_id: String,
+    opening_bytes: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1369,6 +1406,14 @@ fn lower_entry_params(params: &[ParamDecl], witness_specs: &[TemplateWitnessSpec
                 out.push(format!("int {}", hidden_witness_suffix_len_name(&spec.actor)));
             }
         }
+        if let Some(proof) = &spec.route_proof {
+            if spec.form == TemplateWitnessForm::Len {
+                out.push(format!("byte[32] {}", hidden_template_leaf_name(&spec.actor)));
+            }
+            if proof.opening_bytes > 0 {
+                out.push(format!("byte[{}] {}", proof.opening_bytes, hidden_template_opening_name(&spec.actor)));
+            }
+        }
     }
     out
 }
@@ -1381,7 +1426,28 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
-    template_witness_specs(model, read_actors, byte_actors)
+    template_witness_specs_for_actor(actor, model, read_actors, byte_actors)
+}
+
+fn template_witness_specs_for_actor(
+    actor: &ActorDecl,
+    model: &Model<'_>,
+    read_actors: BTreeSet<String>,
+    byte_actors: BTreeSet<String>,
+) -> Vec<TemplateWitnessSpec> {
+    let mut specs = template_witness_specs(model, read_actors, byte_actors);
+    let proof_tree_id =
+        uses_template_root(&actor.state, model).then(|| route_template_tree_receipt_id(&actor.state, &hidden_template_root_name()));
+    for spec in &mut specs {
+        let Some(tree_id) = &proof_tree_id else {
+            continue;
+        };
+        let Some(opening_bytes) = route_template_opening_bytes(&actor.state, &spec.actor, model) else {
+            continue;
+        };
+        spec.route_proof = Some(RouteTemplateProofSpec { tree_id: tree_id.clone(), opening_bytes });
+    }
+    specs
 }
 
 fn template_witness_specs(
@@ -1393,12 +1459,12 @@ fn template_witness_specs(
     let mut ordered = Vec::new();
     for actor in &model.template_actors {
         if required.remove(actor) {
-            ordered.push(TemplateWitnessSpec { actor: actor.clone(), form: witness_form(actor, &byte_actors) });
+            ordered.push(TemplateWitnessSpec { actor: actor.clone(), form: witness_form(actor, &byte_actors), route_proof: None });
         }
     }
     ordered.extend(required.into_iter().map(|actor| {
         let form = witness_form(&actor, &byte_actors);
-        TemplateWitnessSpec { actor, form }
+        TemplateWitnessSpec { actor, form, route_proof: None }
     }));
     ordered
 }
@@ -1579,6 +1645,7 @@ fn template_plan_artifact(
                         actor: param.actor.clone(),
                         param: param.name.clone(),
                         purpose: param.purpose,
+                        route_tree_id: param.route_tree_id.clone(),
                     });
                 }
             }
@@ -1592,16 +1659,14 @@ fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Resu
     let mut tables = BTreeMap::<String, RouteTemplateTableArtifact>::new();
     for contract in sil_contracts {
         for field in &contract.runtime_state.fields {
-            let RuntimeFieldRoleArtifact::TemplateTable { contracts } = &field.role else {
-                continue;
-            };
-            let TypeArtifact::FixedBytes { len: byte_len } = field.ty else {
-                return Err(ArgentError::new(format!(
-                    "runtime route template table field `{}` in contract `{}` must be fixed bytes",
-                    field.name, contract.name
-                )));
+            let contracts = match &field.role {
+                RuntimeFieldRoleArtifact::TemplateRoot { contracts } | RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+                    contracts
+                }
+                _ => continue,
             };
             let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
+            let byte_len = contracts.len() * 32;
             let entries = contracts
                 .iter()
                 .enumerate()
@@ -1688,7 +1753,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
     match deps {
         [] => {}
         [_] => args.push(zero_byte_array_expr(32)),
-        deps => args.push(zero_byte_array_expr(deps.len() * 32)),
+        _ => args.push(zero_byte_array_expr(32)),
     }
     for field in &state.fields {
         args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
@@ -1767,9 +1832,9 @@ fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFiel
         }
         deps => {
             fields.push(RuntimeFieldArtifact {
-                name: hidden_template_table_name(),
-                ty: TypeArtifact::from_parts("byte", Some(deps.len() * 32)),
-                role: RuntimeFieldRoleArtifact::TemplateTable { contracts: deps.to_vec() },
+                name: hidden_template_root_name(),
+                ty: TypeArtifact::from_parts("byte", Some(32)),
+                role: RuntimeFieldRoleArtifact::TemplateRoot { contracts: deps.to_vec() },
             });
         }
     }
@@ -1795,6 +1860,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Bytes,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                    route_tree_id: None,
                 });
                 hidden_params.push(HiddenParamArtifact {
                     recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes),
@@ -1802,6 +1868,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Bytes,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                    route_tree_id: None,
                 });
             }
             TemplateWitnessForm::Len => {
@@ -1811,6 +1878,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Int,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
+                    route_tree_id: None,
                 });
                 hidden_params.push(HiddenParamArtifact {
                     recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen),
@@ -1818,6 +1886,37 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Int,
                     actor: spec.actor.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
+                    route_tree_id: None,
+                });
+            }
+        }
+        if let Some(proof) = &spec.route_proof {
+            if spec.form == TemplateWitnessForm::Len {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: route_template_witness_recipe_id(
+                        &proof.tree_id,
+                        &spec.actor,
+                        HiddenParamPurposeArtifact::RouteTemplateLeaf,
+                    ),
+                    name: hidden_template_leaf_name(&spec.actor),
+                    ty: TypeArtifact::FixedBytes { len: 32 },
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::RouteTemplateLeaf,
+                    route_tree_id: Some(proof.tree_id.clone()),
+                });
+            }
+            if proof.opening_bytes > 0 {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: route_template_witness_recipe_id(
+                        &proof.tree_id,
+                        &spec.actor,
+                        HiddenParamPurposeArtifact::RouteTemplateOpening,
+                    ),
+                    name: hidden_template_opening_name(&spec.actor),
+                    ty: TypeArtifact::FixedBytes { len: proof.opening_bytes },
+                    actor: spec.actor.clone(),
+                    purpose: HiddenParamPurposeArtifact::RouteTemplateOpening,
+                    route_tree_id: Some(proof.tree_id.clone()),
                 });
             }
         }
@@ -1834,6 +1933,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             param: param.name.clone(),
             actor: param.actor.clone(),
             purpose: param.purpose,
+            route_tree_id: param.route_tree_id.clone(),
         })
         .collect::<Vec<_>>();
     Ok(EntryArtifact {
@@ -1938,7 +2038,7 @@ fn planned_terminal_path_artifact(
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
 
-    let witness_recipe_ids = witness_recipe_ids_for_specs(template_witness_specs(model, read_actors, byte_actors));
+    let witness_recipe_ids = witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors, byte_actors));
     let routes = routes
         .iter()
         .map(|route| {
@@ -1950,7 +2050,8 @@ fn planned_terminal_path_artifact(
                 template_id: template_receipt_id(&route.actor),
                 state_expr: compact_expr(&route.state),
                 witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
-                    witness_recipe_ids_for_specs(template_witness_specs(
+                    witness_recipe_ids_for_specs(template_witness_specs_for_actor(
+                        actor,
                         model,
                         BTreeSet::new(),
                         [route.actor.clone()].into_iter().collect(),
@@ -1982,6 +2083,14 @@ fn push_actor_witness_recipe_ids(out: &mut Vec<String>, spec: &TemplateWitnessSp
         TemplateWitnessForm::Len => {
             out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen));
             out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen));
+        }
+    }
+    if let Some(proof) = &spec.route_proof {
+        if spec.form == TemplateWitnessForm::Len {
+            out.push(route_template_witness_recipe_id(&proof.tree_id, &spec.actor, HiddenParamPurposeArtifact::RouteTemplateLeaf));
+        }
+        if proof.opening_bytes > 0 {
+            out.push(route_template_witness_recipe_id(&proof.tree_id, &spec.actor, HiddenParamPurposeArtifact::RouteTemplateOpening));
         }
     }
 }
@@ -2130,12 +2239,12 @@ fn hidden_template_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}template_{}", hidden_actor_suffix(actor))
 }
 
-fn hidden_template_table_init_name() -> String {
-    format!("{RESERVED_GENERATED_PREFIX}init_template_table")
+fn hidden_template_root_init_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}init_template_root")
 }
 
-fn hidden_template_table_name() -> String {
-    format!("{RESERVED_GENERATED_PREFIX}template_table")
+fn hidden_template_root_name() -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_root")
 }
 
 fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
@@ -2143,11 +2252,11 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
     match deps {
         [] => Vec::new(),
         [actor] => vec![format!("byte[32] {}", hidden_template_init_name(actor))],
-        deps => vec![format!("byte[{}] {}", deps.len() * 32, hidden_template_table_init_name())],
+        _ => vec![format!("byte[32] {}", hidden_template_root_init_name())],
     }
 }
 
-fn uses_packed_template_table(state: &str, model: &Model<'_>) -> bool {
+fn uses_template_root(state: &str, model: &Model<'_>) -> bool {
     model.template_deps_for_state(state).len() > 1
 }
 
@@ -2158,9 +2267,8 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
         [actor] => {
             out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
         }
-        deps => {
-            let table = hidden_template_table_name();
-            out.push_str(&format!("    byte[{}] {table} = {};\n", deps.len() * 32, hidden_template_table_init_name()));
+        _ => {
+            out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_root_name(), hidden_template_root_init_name()));
         }
     }
 }
@@ -2174,8 +2282,8 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
             out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
-        deps => {
-            out.push_str(&format!("{field_indent}byte[{}] {};\n", deps.len() * 32, hidden_template_table_name()));
+        _ => {
+            out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_root_name()));
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
     }
@@ -2186,8 +2294,38 @@ fn hidden_template_object_fields_for_state(state: &str, model: &Model<'_>) -> Ve
     match deps {
         [] => Vec::new(),
         [actor] => vec![(hidden_template_name(actor), hidden_template_name(actor))],
-        _ => vec![(hidden_template_table_name(), hidden_template_table_name())],
+        _ => vec![(hidden_template_root_name(), hidden_template_root_name())],
     }
+}
+
+fn route_template_opening_bytes(state: &str, actor: &str, model: &Model<'_>) -> Option<usize> {
+    let deps = model.template_deps_for_state(state);
+    deps.iter().position(|dep| dep == actor)?;
+    let mut width = deps.len();
+    let mut depth = 0;
+    while width > 1 {
+        depth += 1;
+        width = width.div_ceil(2);
+    }
+    Some(depth * 32)
+}
+
+fn route_template_opening_sides(state: &str, actor: &str, model: &Model<'_>) -> Option<Vec<RouteTemplateTreeOpeningSideArtifact>> {
+    let deps = model.template_deps_for_state(state);
+    let mut index = deps.iter().position(|dep| dep == actor)?;
+    let mut width = deps.len();
+    let mut sides = Vec::new();
+    while width > 1 {
+        let is_left_child = index.is_multiple_of(2);
+        sides.push(if is_left_child {
+            RouteTemplateTreeOpeningSideArtifact::Right
+        } else {
+            RouteTemplateTreeOpeningSideArtifact::Left
+        });
+        index /= 2;
+        width = width.div_ceil(2);
+    }
+    Some(sides)
 }
 
 fn template_receipt_id(actor: &str) -> String {
@@ -2198,12 +2336,18 @@ fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) 
     format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
 
+fn route_template_witness_recipe_id(route_tree_id: &str, actor: &str, purpose: HiddenParamPurposeArtifact) -> String {
+    format!("witness/{route_tree_id}/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
+}
+
 fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
     match purpose {
         HiddenParamPurposeArtifact::TemplatePrefixBytes => "template_prefix_bytes",
         HiddenParamPurposeArtifact::TemplateSuffixBytes => "template_suffix_bytes",
         HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
         HiddenParamPurposeArtifact::TemplateSuffixLen => "template_suffix_len",
+        HiddenParamPurposeArtifact::RouteTemplateLeaf => "route_template_leaf",
+        HiddenParamPurposeArtifact::RouteTemplateOpening => "route_template_opening",
     }
 }
 
@@ -2221,6 +2365,22 @@ fn hidden_witness_prefix_len_name(actor: &str) -> String {
 
 fn hidden_witness_suffix_len_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{}_suffix_len", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_leaf_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_{}_leaf", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_opening_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_{}_opening", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_proof_root_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_{}_proof_root", hidden_actor_suffix(actor))
+}
+
+fn hidden_template_sibling_name(actor: &str, level: usize) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}template_{}_sibling_{level}", hidden_actor_suffix(actor))
 }
 
 fn hidden_cov_id_name() -> String {
@@ -2754,42 +2914,41 @@ mod tests {
 
         assert!(
             player_sil.contains(
-                "entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len)"
+                "entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len, byte[32] gen__template_player_leaf, byte[64] gen__template_player_opening)"
             ),
             "{player_sil}"
         );
         assert!(!player_sil.contains("entrypoint function accept_start(sig owner_sig, pubkey owner_pk, byte[]"), "{player_sil}");
         assert!(
             player_sil.contains(
-                "entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix)"
+                "entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[32] gen__template_player_leaf, byte[64] gen__template_player_opening, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix, byte[64] gen__template_stones_game_opening)"
             ),
             "{player_sil}"
         );
         assert!(!player_sil.contains("byte[] gen__player_prefix"), "{player_sil}");
-        assert!(player_sil.contains("byte[96] gen__init_template_table"), "{player_sil}");
-        assert!(player_sil.contains("byte[96] gen__template_table = gen__init_template_table;"), "{player_sil}");
-        assert!(player_sil.contains("byte[32] gen__template_player = byte[32](gen__template_table.slice(0, 32));"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__init_template_root"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__template_root = gen__init_template_root;"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__template_player = gen__template_player_leaf;"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__template_player_sibling_0"), "{player_sil}");
+        assert!(player_sil.contains("require(gen__template_player_proof_root == gen__template_root);"), "{player_sil}");
+        assert!(player_sil.contains("byte[32] gen__template_stones_game = blake2b"), "{player_sil}");
         assert!(
-            player_sil.contains("byte[32] gen__template_stones_game = byte[32](gen__template_table.slice(32, 64));"),
-            "{player_sil}"
-        );
-        assert!(
-            player_sil.contains("byte[32] gen__template_stones_settle = byte[32](gen__template_table.slice(64, 96));"),
-            "{player_sil}"
+            !player_sil.contains("gen__template_table") && !player_sil.contains("gen__init_template_table"),
+            "generated state should store a route root instead of a packed table: {player_sil}"
         );
         assert!(
             !player_sil.contains("byte[32][]") && !player_sil.contains("byte[][]"),
-            "template tables should use fixed packed bytes, not nested arrays: {player_sil}"
+            "template roots/openings should use fixed bytes, not nested arrays: {player_sil}"
         );
         assert!(
             !player_sil.contains("gen__template_league"),
-            "Player route-family template table should not carry unrelated League template: {player_sil}"
+            "Player route-family template root should not carry unrelated League template: {player_sil}"
         );
         assert!(player_sil.contains("validateOutputState(gen__self_out_output_idx, next_self);"), "{player_sil}");
         assert!(player_sil.contains("validateOutputState(gen__opponent_out_output_idx, next_opponent);"), "{player_sil}");
         assert!(player_sil.contains("validateOutputStateWithTemplate(gen__game_output_idx, next_game"), "{player_sil}");
         assert!(
-            league_sil.contains("entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix)"),
+            league_sil.contains("entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix, byte[64] gen__template_player_opening)"),
             "{league_sil}"
         );
         assert!(!league_sil.contains("gen__league_prefix"), "{league_sil}");
@@ -2803,7 +2962,7 @@ mod tests {
 
         let player_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Player").expect("Player actor exists");
         let accept_start = player_actor.entries.iter().find(|entry| entry.name == "accept_start").expect("accept_start ABI exists");
-        assert_eq!(accept_start.hidden_params.len(), 2);
+        assert_eq!(accept_start.hidden_params.len(), 4);
         assert_eq!(accept_start.hidden_params[0].name, "gen__player_prefix_len");
         assert_eq!(accept_start.hidden_params[0].ty, TypeArtifact::Int);
         assert_eq!(accept_start.hidden_params[0].actor, "Player");
@@ -2812,6 +2971,16 @@ mod tests {
         assert_eq!(accept_start.hidden_params[1].ty, TypeArtifact::Int);
         assert_eq!(accept_start.hidden_params[1].actor, "Player");
         assert_eq!(accept_start.hidden_params[1].purpose, HiddenParamPurposeArtifact::TemplateSuffixLen);
+        assert_eq!(accept_start.hidden_params[2].name, "gen__template_player_leaf");
+        assert_eq!(accept_start.hidden_params[2].ty, TypeArtifact::FixedBytes { len: 32 });
+        assert_eq!(accept_start.hidden_params[2].actor, "Player");
+        assert_eq!(accept_start.hidden_params[2].purpose, HiddenParamPurposeArtifact::RouteTemplateLeaf);
+        assert_eq!(accept_start.hidden_params[2].route_tree_id.as_deref(), Some("route_tree/PlayerState/gen__template_root"));
+        assert_eq!(accept_start.hidden_params[3].name, "gen__template_player_opening");
+        assert_eq!(accept_start.hidden_params[3].ty, TypeArtifact::FixedBytes { len: 64 });
+        assert_eq!(accept_start.hidden_params[3].actor, "Player");
+        assert_eq!(accept_start.hidden_params[3].purpose, HiddenParamPurposeArtifact::RouteTemplateOpening);
+        assert_eq!(accept_start.hidden_params[3].route_tree_id.as_deref(), Some("route_tree/PlayerState/gen__template_root"));
 
         let start_game = player_actor.entries.iter().find(|entry| entry.name == "start_game").expect("start_game ABI exists");
         assert_eq!(
@@ -2823,17 +2992,35 @@ mod tests {
             vec![
                 ("gen__player_prefix_len", TypeArtifact::Int, "Player", HiddenParamPurposeArtifact::TemplatePrefixLen),
                 ("gen__player_suffix_len", TypeArtifact::Int, "Player", HiddenParamPurposeArtifact::TemplateSuffixLen),
+                (
+                    "gen__template_player_leaf",
+                    TypeArtifact::FixedBytes { len: 32 },
+                    "Player",
+                    HiddenParamPurposeArtifact::RouteTemplateLeaf,
+                ),
+                (
+                    "gen__template_player_opening",
+                    TypeArtifact::FixedBytes { len: 64 },
+                    "Player",
+                    HiddenParamPurposeArtifact::RouteTemplateOpening,
+                ),
                 ("gen__stones_game_prefix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplatePrefixBytes),
                 ("gen__stones_game_suffix", TypeArtifact::Bytes, "StonesGame", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                (
+                    "gen__template_stones_game_opening",
+                    TypeArtifact::FixedBytes { len: 64 },
+                    "StonesGame",
+                    HiddenParamPurposeArtifact::RouteTemplateOpening,
+                ),
             ]
         );
 
         let player_contract = artifact.sil_abi.contract("Player").expect("Player Sil ABI contract exists");
-        assert_eq!(player_contract.runtime_state.fields[0].name, "gen__template_table");
-        assert_eq!(player_contract.runtime_state.fields[0].ty, TypeArtifact::FixedBytes { len: 96 });
+        assert_eq!(player_contract.runtime_state.fields[0].name, "gen__template_root");
+        assert_eq!(player_contract.runtime_state.fields[0].ty, TypeArtifact::FixedBytes { len: 32 });
         assert_eq!(
             player_contract.runtime_state.fields[0].role,
-            RuntimeFieldRoleArtifact::TemplateTable {
+            RuntimeFieldRoleArtifact::TemplateRoot {
                 contracts: vec!["Player".to_string(), "StonesGame".to_string(), "StonesSettle".to_string()]
             }
         );
@@ -2843,10 +3030,10 @@ mod tests {
             .template_plan
             .route_tables
             .iter()
-            .find(|table| table.id == route_template_table_receipt_id("PlayerState", "gen__template_table"))
+            .find(|table| table.id == route_template_table_receipt_id("PlayerState", "gen__template_root"))
             .expect("PlayerState route table receipt exists");
         assert_eq!(player_table.state, "PlayerState");
-        assert_eq!(player_table.field, "gen__template_table");
+        assert_eq!(player_table.field, "gen__template_root");
         assert_eq!(player_table.byte_len, 96);
         assert_eq!(
             player_table
@@ -2866,11 +3053,11 @@ mod tests {
             .template_plan
             .route_trees
             .iter()
-            .find(|tree| tree.id == route_template_tree_receipt_id("PlayerState", "gen__template_table"))
+            .find(|tree| tree.id == route_template_tree_receipt_id("PlayerState", "gen__template_root"))
             .expect("PlayerState route tree receipt exists");
         assert_eq!(player_tree.table_id, player_table.id);
         assert_eq!(player_tree.state, "PlayerState");
-        assert_eq!(player_tree.field, "gen__template_table");
+        assert_eq!(player_tree.field, "gen__template_root");
         assert_eq!(player_tree.root_hex.len(), 64);
         assert_eq!(
             player_tree
@@ -2902,6 +3089,8 @@ mod tests {
                 ("owner_pk", TypeArtifact::Pubkey),
                 ("gen__player_prefix_len", TypeArtifact::Int),
                 ("gen__player_suffix_len", TypeArtifact::Int),
+                ("gen__template_player_leaf", TypeArtifact::FixedBytes { len: 32 }),
+                ("gen__template_player_opening", TypeArtifact::FixedBytes { len: 64 }),
             ]
         );
 
@@ -2917,6 +3106,12 @@ mod tests {
             vec![
                 ("gen__player_prefix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplatePrefixBytes),
                 ("gen__player_suffix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                (
+                    "gen__template_player_opening",
+                    TypeArtifact::FixedBytes { len: 64 },
+                    "Player",
+                    HiddenParamPurposeArtifact::RouteTemplateOpening,
+                ),
             ]
         );
         assert!(

@@ -134,6 +134,8 @@ pub struct TemplateWitnessRecipeArtifact {
     pub actor: String,
     pub param: String,
     pub purpose: HiddenParamPurposeArtifact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_tree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +179,8 @@ pub struct WitnessArtifact {
     pub param: String,
     pub actor: String,
     pub purpose: HiddenParamPurposeArtifact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_tree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -187,6 +191,8 @@ pub struct HiddenParamArtifact {
     pub ty: TypeArtifact,
     pub actor: String,
     pub purpose: HiddenParamPurposeArtifact,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_tree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -196,6 +202,8 @@ pub enum HiddenParamPurposeArtifact {
     TemplateSuffixBytes,
     TemplatePrefixLen,
     TemplateSuffixLen,
+    RouteTemplateLeaf,
+    RouteTemplateOpening,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -333,6 +341,8 @@ pub enum TemplatePlanError {
     RouteTreeOpeningMismatch { id: String, index: usize, expected: String, found: String },
     #[error("witness recipe `{id}` references missing template receipt `{template_id}`")]
     MissingWitnessTemplate { id: String, template_id: String },
+    #[error("witness recipe `{id}` references missing route tree receipt `{route_tree_id}`")]
+    MissingWitnessRouteTree { id: String, route_tree_id: String },
     #[error("witness recipe `{id}` actor `{actor}` does not match template receipt actor `{template_actor}`")]
     WitnessTemplateMismatch { id: String, actor: String, template_actor: String },
     #[error("hidden param `{entry}::{param}` points at missing witness recipe `{recipe_id}`")]
@@ -458,8 +468,12 @@ impl TemplatePlanArtifact {
         let mut referenced_route_table_ids = BTreeSet::new();
         for contract in &artifact.sil_abi.contracts {
             for field in &contract.runtime_state.fields {
-                let RuntimeFieldRoleArtifact::TemplateTable { contracts } = &field.role else {
-                    continue;
+                let (contracts, expected_field_ty) = match &field.role {
+                    RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+                        (contracts, TypeArtifact::FixedBytes { len: contracts.len() * 32 })
+                    }
+                    RuntimeFieldRoleArtifact::TemplateRoot { contracts } => (contracts, TypeArtifact::FixedBytes { len: 32 }),
+                    _ => continue,
                 };
                 let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
                 let Some(table) = route_tables_by_id.get(id.as_str()) else {
@@ -475,7 +489,8 @@ impl TemplatePlanArtifact {
                 if table.state != contract.runtime_state.source
                     || table.field != field.name
                     || table_contracts != role_contracts
-                    || field.ty != (TypeArtifact::FixedBytes { len: table.byte_len })
+                    || table.byte_len != contracts.len() * 32
+                    || field.ty != expected_field_ty
                 {
                     return Err(TemplatePlanError::RuntimeRouteTableMismatch {
                         contract: contract.name.clone(),
@@ -527,6 +542,14 @@ impl TemplatePlanArtifact {
                     template_actor: template.actor.clone(),
                 });
             }
+            if let Some(route_tree_id) = &recipe.route_tree_id
+                && !route_tree_ids.contains(route_tree_id.as_str())
+            {
+                return Err(TemplatePlanError::MissingWitnessRouteTree {
+                    id: recipe.id.clone(),
+                    route_tree_id: route_tree_id.clone(),
+                });
+            }
             recipes_by_id.insert(recipe.id.as_str(), recipe);
         }
 
@@ -543,7 +566,11 @@ impl TemplatePlanArtifact {
                             recipe_id: param.recipe_id.clone(),
                         });
                     };
-                    if recipe.param != param.name || recipe.actor != param.actor || recipe.purpose != param.purpose {
+                    if recipe.param != param.name
+                        || recipe.actor != param.actor
+                        || recipe.purpose != param.purpose
+                        || recipe.route_tree_id != param.route_tree_id
+                    {
                         return Err(TemplatePlanError::HiddenParamRecipeMismatch {
                             entry: entry_id.clone(),
                             param: param.name.clone(),
@@ -560,7 +587,11 @@ impl TemplatePlanArtifact {
                             recipe_id: witness.recipe_id.clone(),
                         });
                     };
-                    if recipe.param != witness.param || recipe.actor != witness.actor || recipe.purpose != witness.purpose {
+                    if recipe.param != witness.param
+                        || recipe.actor != witness.actor
+                        || recipe.purpose != witness.purpose
+                        || recipe.route_tree_id != witness.route_tree_id
+                    {
                         return Err(TemplatePlanError::EntryWitnessRecipeMismatch {
                             entry: entry_id.clone(),
                             param: witness.param.clone(),
