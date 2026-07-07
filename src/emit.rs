@@ -870,10 +870,18 @@ fn template_selector_from_actor_enum_value(
     })
 }
 
-fn expand_entry_routes(actor: &ActorDecl, entry: &EntryDecl, actor_enums: &BTreeMap<String, ActorEnumInfo>) -> Result<Vec<RouteCall>> {
+fn expand_entry_template_routes(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    actor_enums: &BTreeMap<String, ActorEnumInfo>,
+) -> Result<Vec<RouteCall>> {
     let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
+    Ok(expand_route_set_for_template_deps(&entry.routes, &selectors))
+}
+
+fn expand_route_set(routes: &[RouteCall], selectors: &BTreeMap<String, TemplateSelector>) -> Vec<RouteCall> {
     let mut out = Vec::new();
-    for route in &entry.routes {
+    for route in routes {
         if let Some(selector) = selectors.get(&route.actor) {
             out.extend(selector.route_actors().into_iter().map(|variant| RouteCall {
                 output: route.output.clone(),
@@ -884,14 +892,14 @@ fn expand_entry_routes(actor: &ActorDecl, entry: &EntryDecl, actor_enums: &BTree
             out.push(route.clone());
         }
     }
-    Ok(out)
+    out
 }
 
-fn expand_route_set(routes: &[RouteCall], selectors: &BTreeMap<String, TemplateSelector>) -> Vec<RouteCall> {
+fn expand_route_set_for_template_deps(routes: &[RouteCall], selectors: &BTreeMap<String, TemplateSelector>) -> Vec<RouteCall> {
     let mut out = Vec::new();
     for route in routes {
         if let Some(selector) = selectors.get(&route.actor) {
-            out.extend(selector.route_actors().into_iter().map(|variant| RouteCall {
+            out.extend(selector.variants.iter().cloned().map(|variant| RouteCall {
                 output: route.output.clone(),
                 actor: variant,
                 state: route.state.clone(),
@@ -934,7 +942,7 @@ fn compute_state_template_deps<'a>(
                 }
             }
 
-            for route in expand_entry_routes(actor, entry, actor_enums)? {
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
@@ -999,7 +1007,7 @@ fn compute_direct_state_template_deps<'a>(
                     direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
                 }
             }
-            for route in expand_entry_routes(actor, entry, actor_enums)? {
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
@@ -1064,7 +1072,7 @@ fn infer_direct_route_families<'a>(
         for entry in &actor.entries {
             let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
             selectors_by_actor.entry(actor.name.clone()).or_default().extend(selectors.values().cloned());
-            for route in expand_entry_routes(actor, entry, actor_enums)? {
+            for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
@@ -4590,6 +4598,96 @@ mod tests {
         assert!(mux_sil.contains("int gen__target_selector = 0 /*KNIGHT*/;"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(0, 32));"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(32, 64));"), "{mux_sil}");
+    }
+
+    #[test]
+    fn fixed_actor_enum_selector_still_builds_full_selector_table() {
+        let path = PathBuf::from("fixed-selector-table.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state BoardState {
+                int ply;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Mux owns BoardState {
+                entry choose_knight_const() emits one MoveActor {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+
+                    actor<BoardState> target = MoveActor::Knight;
+                    become target(next_board);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            app FixedSelectorTable {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("fixed selector still infers the full enum table");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        let board_table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == route_template_table_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route table exists");
+        assert_eq!(
+            board_table.entries.iter().map(|entry| entry.leaf.clone()).collect::<Vec<_>>(),
+            vec![
+                RouteTemplateLeafArtifact::Template { actor: "Pawn".to_string(), template_id: "template/pawn".to_string() },
+                RouteTemplateLeafArtifact::Template { actor: "Knight".to_string(), template_id: "template/knight".to_string() },
+            ]
+        );
+
+        let mux_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Mux").expect("Mux actor exists");
+        let choose_knight_const = mux_actor.entries.iter().find(|entry| entry.name == "choose_knight_const").expect("entry exists");
+        assert_eq!(
+            choose_knight_const
+                .template_selectors
+                .iter()
+                .map(|selector| (selector.name.as_str(), selector.fixed_actor.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("target", Some("Knight"))]
+        );
+        assert_eq!(choose_knight_const.routes.iter().map(|route| route.actor.as_str()).collect::<Vec<_>>(), vec!["Knight"]);
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
+        assert!(
+            mux_sil.contains(
+                "byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));"
+            ),
+            "{mux_sil}"
+        );
+        artifact.verify_template_plan().expect("template plan receipt verifies");
     }
 
     #[test]
