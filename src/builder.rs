@@ -279,6 +279,7 @@ fn covenant_engine_flags() -> EngineFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::artifact::route_template_table_receipt_id;
     use std::{
         fs,
         path::PathBuf,
@@ -656,6 +657,37 @@ mod tests {
         };
         assert!(
             matches!(err, BuilderError::TemplatePlan(TemplatePlanError::TemplateHashMismatch { ref id, .. }) if id == "template/ticket"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn builder_rejects_route_template_table_mismatch() {
+        let mut artifact = example_artifact("examples/stones/app.ag", "stones-route-table-plan");
+        artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+        let table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter_mut()
+            .find(|table| table.id == route_template_table_receipt_id("PlayerState", "gen__template_table"))
+            .expect("PlayerState route table receipt exists");
+        table.entries[1].offset = 33;
+
+        let err = match ArtifactTxBuilder::new(&artifact) {
+            Ok(_) => panic!("builder must reject a corrupted route template table receipt"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                BuilderError::TemplatePlan(TemplatePlanError::RouteTableOffsetMismatch {
+                    ref id,
+                    index: 1,
+                    offset: 33,
+                    expected: 32,
+                }) if id == "route_table/PlayerState/gen__template_table"
+            ),
             "unexpected error: {err}"
         );
     }

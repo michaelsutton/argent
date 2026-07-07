@@ -39,6 +39,7 @@
           "hash_hex": "be416b25f340479bb31b271c28cdd230764a8595bc1298270736449a1edb4575"
         }
       ],
+      "route_tables": [],
       "witness_recipes": [
         {
           "id": "witness/ticket/template_prefix_bytes",

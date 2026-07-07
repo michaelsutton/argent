@@ -68,6 +68,112 @@
           "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661"
         }
       ],
+      "route_tables": [
+        {
+          "id": "route_table/GameState/gen__template_table",
+          "state": "GameState",
+          "field": "gen__template_table",
+          "byte_len": 96,
+          "entries": [
+            {
+              "index": 0,
+              "offset": 0,
+              "actor": "Player",
+              "template_id": "template/player"
+            },
+            {
+              "index": 1,
+              "offset": 32,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game"
+            },
+            {
+              "index": 2,
+              "offset": 64,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle"
+            }
+          ]
+        },
+        {
+          "id": "route_table/LeagueState/gen__template_table",
+          "state": "LeagueState",
+          "field": "gen__template_table",
+          "byte_len": 96,
+          "entries": [
+            {
+              "index": 0,
+              "offset": 0,
+              "actor": "Player",
+              "template_id": "template/player"
+            },
+            {
+              "index": 1,
+              "offset": 32,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game"
+            },
+            {
+              "index": 2,
+              "offset": 64,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle"
+            }
+          ]
+        },
+        {
+          "id": "route_table/PlayerState/gen__template_table",
+          "state": "PlayerState",
+          "field": "gen__template_table",
+          "byte_len": 96,
+          "entries": [
+            {
+              "index": 0,
+              "offset": 0,
+              "actor": "Player",
+              "template_id": "template/player"
+            },
+            {
+              "index": 1,
+              "offset": 32,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game"
+            },
+            {
+              "index": 2,
+              "offset": 64,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle"
+            }
+          ]
+        },
+        {
+          "id": "route_table/SettleState/gen__template_table",
+          "state": "SettleState",
+          "field": "gen__template_table",
+          "byte_len": 96,
+          "entries": [
+            {
+              "index": 0,
+              "offset": 0,
+              "actor": "Player",
+              "template_id": "template/player"
+            },
+            {
+              "index": 1,
+              "offset": 32,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game"
+            },
+            {
+              "index": 2,
+              "offset": 64,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle"
+            }
+          ]
+        }
+      ],
       "witness_recipes": [
         {
           "id": "witness/player/template_prefix_bytes",

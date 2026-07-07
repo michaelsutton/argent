@@ -1564,6 +1564,8 @@ fn template_plan_artifact(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let route_tables = route_template_tables_artifact(sil_contracts)?;
+
     let mut seen = BTreeSet::new();
     let mut witness_recipes = Vec::new();
     for actor in actors {
@@ -1582,7 +1584,50 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, witness_recipes })
+    Ok(TemplatePlanArtifact { templates, route_tables, witness_recipes })
+}
+
+fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Result<Vec<RouteTemplateTableArtifact>> {
+    let mut tables = BTreeMap::<String, RouteTemplateTableArtifact>::new();
+    for contract in sil_contracts {
+        for field in &contract.runtime_state.fields {
+            let RuntimeFieldRoleArtifact::TemplateTable { contracts } = &field.role else {
+                continue;
+            };
+            let TypeArtifact::FixedBytes { len: byte_len } = field.ty else {
+                return Err(ArgentError::new(format!(
+                    "runtime route template table field `{}` in contract `{}` must be fixed bytes",
+                    field.name, contract.name
+                )));
+            };
+            let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
+            let entries = contracts
+                .iter()
+                .enumerate()
+                .map(|(index, actor)| RouteTemplateTableEntryArtifact {
+                    index,
+                    offset: index * 32,
+                    actor: actor.clone(),
+                    template_id: template_receipt_id(actor),
+                })
+                .collect::<Vec<_>>();
+            let table = RouteTemplateTableArtifact {
+                id: id.clone(),
+                state: contract.runtime_state.source.clone(),
+                field: field.name.clone(),
+                byte_len,
+                entries,
+            };
+            if let Some(existing) = tables.get(&id) {
+                if existing != &table {
+                    return Err(ArgentError::new(format!("runtime route template table `{id}` is emitted with conflicting layouts")));
+                }
+                continue;
+            }
+            tables.insert(id, table);
+        }
+    }
+    Ok(tables.into_values().collect())
 }
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
@@ -2780,6 +2825,29 @@ mod tests {
             RuntimeFieldRoleArtifact::TemplateTable {
                 contracts: vec!["Player".to_string(), "StonesGame".to_string(), "StonesSettle".to_string()]
             }
+        );
+        assert_eq!(artifact.argent.template_plan.route_tables.len(), 4);
+        let player_table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == route_template_table_receipt_id("PlayerState", "gen__template_table"))
+            .expect("PlayerState route table receipt exists");
+        assert_eq!(player_table.state, "PlayerState");
+        assert_eq!(player_table.field, "gen__template_table");
+        assert_eq!(player_table.byte_len, 96);
+        assert_eq!(
+            player_table
+                .entries
+                .iter()
+                .map(|entry| (entry.index, entry.offset, entry.actor.as_str(), entry.template_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, 0, "Player", "template/player"),
+                (1, 32, "StonesGame", "template/stones_game"),
+                (2, 64, "StonesSettle", "template/stones_settle"),
+            ]
         );
         let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
         assert_eq!(

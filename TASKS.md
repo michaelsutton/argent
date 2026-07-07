@@ -374,7 +374,9 @@ Obstacle to handle:
 Status: in progress. First step implemented route-family-scoped packed template
 tables (`byte[32 * N]`) so contracts can carry a deterministic capability table
 without exposing every template as an independent state field. Merkle roots,
-openings, and hint syntax remain follow-up work.
+openings, and hint syntax remain follow-up work. Second step records those
+packed route tables in the template-plan receipt, including state field,
+byte-length, entry order, offsets, and referenced template ids.
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable

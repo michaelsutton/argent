@@ -62,6 +62,8 @@ pub struct TemplateRefArtifact {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplatePlanArtifact {
     pub templates: Vec<TemplatePlanTemplateArtifact>,
+    #[serde(default)]
+    pub route_tables: Vec<RouteTemplateTableArtifact>,
     pub witness_recipes: Vec<TemplateWitnessRecipeArtifact>,
 }
 
@@ -72,6 +74,23 @@ pub struct TemplatePlanTemplateArtifact {
     pub contract: String,
     pub symbol: String,
     pub hash_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateTableArtifact {
+    pub id: String,
+    pub state: String,
+    pub field: String,
+    pub byte_len: usize,
+    pub entries: Vec<RouteTemplateTableEntryArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateTableEntryArtifact {
+    pub index: usize,
+    pub offset: usize,
+    pub actor: String,
+    pub template_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +249,8 @@ pub struct TerminalPathArtifact {
 pub enum TemplatePlanError {
     #[error("duplicate template receipt id `{0}`")]
     DuplicateTemplateId(String),
+    #[error("duplicate route template table id `{0}`")]
+    DuplicateRouteTableId(String),
     #[error("duplicate witness recipe id `{0}`")]
     DuplicateWitnessRecipeId(String),
     #[error("template ref `{actor}` points at missing receipt `{id}`")]
@@ -246,6 +267,22 @@ pub enum TemplatePlanError {
     TemplateHashMismatch { id: String, expected: String, found: String },
     #[error("invalid hex in template receipt `{id}`: {message}")]
     InvalidHex { id: String, message: String },
+    #[error("route template table `{id}` has byte_len `{byte_len}`, expected `{expected}`")]
+    RouteTableLenMismatch { id: String, byte_len: usize, expected: usize },
+    #[error("route template table `{id}` entry for actor `{actor}` points at missing template receipt `{template_id}`")]
+    MissingRouteTableTemplate { id: String, actor: String, template_id: String },
+    #[error(
+        "route template table `{id}` entry for actor `{actor}` points at template receipt `{template_id}` for actor `{template_actor}`"
+    )]
+    RouteTableTemplateMismatch { id: String, actor: String, template_id: String, template_actor: String },
+    #[error("route template table `{id}` entry {index} has offset `{offset}`, expected `{expected}`")]
+    RouteTableOffsetMismatch { id: String, index: usize, offset: usize, expected: usize },
+    #[error("runtime state `{contract}` field `{field}` points at missing route template table `{id}`")]
+    MissingRuntimeRouteTable { contract: String, field: String, id: String },
+    #[error("runtime state `{contract}` field `{field}` route table `{id}` has contracts that do not match the field role")]
+    RuntimeRouteTableMismatch { contract: String, field: String, id: String },
+    #[error("route template table `{id}` is not referenced by any runtime state field")]
+    UnreferencedRouteTable { id: String },
     #[error("witness recipe `{id}` references missing template receipt `{template_id}`")]
     MissingWitnessTemplate { id: String, template_id: String },
     #[error("witness recipe `{id}` actor `{actor}` does not match template receipt actor `{template_actor}`")]
@@ -324,6 +361,85 @@ impl TemplatePlanArtifact {
         for template in &self.templates {
             if !referenced_template_ids.contains(template.id.as_str()) {
                 return Err(TemplatePlanError::UnreferencedTemplateReceipt { id: template.id.clone() });
+            }
+        }
+
+        let mut route_table_ids = BTreeSet::new();
+        let mut route_tables_by_id = BTreeMap::new();
+        for table in &self.route_tables {
+            if !route_table_ids.insert(table.id.as_str()) {
+                return Err(TemplatePlanError::DuplicateRouteTableId(table.id.clone()));
+            }
+            let expected_byte_len = table.entries.len() * 32;
+            if table.byte_len != expected_byte_len {
+                return Err(TemplatePlanError::RouteTableLenMismatch {
+                    id: table.id.clone(),
+                    byte_len: table.byte_len,
+                    expected: expected_byte_len,
+                });
+            }
+            for (expected_index, entry) in table.entries.iter().enumerate() {
+                let expected_offset = expected_index * 32;
+                if entry.index != expected_index || entry.offset != expected_offset {
+                    return Err(TemplatePlanError::RouteTableOffsetMismatch {
+                        id: table.id.clone(),
+                        index: entry.index,
+                        offset: entry.offset,
+                        expected: expected_offset,
+                    });
+                }
+                let Some(template) = templates_by_id.get(entry.template_id.as_str()) else {
+                    return Err(TemplatePlanError::MissingRouteTableTemplate {
+                        id: table.id.clone(),
+                        actor: entry.actor.clone(),
+                        template_id: entry.template_id.clone(),
+                    });
+                };
+                if template.actor != entry.actor {
+                    return Err(TemplatePlanError::RouteTableTemplateMismatch {
+                        id: table.id.clone(),
+                        actor: entry.actor.clone(),
+                        template_id: entry.template_id.clone(),
+                        template_actor: template.actor.clone(),
+                    });
+                }
+            }
+            route_tables_by_id.insert(table.id.as_str(), table);
+        }
+
+        let mut referenced_route_table_ids = BTreeSet::new();
+        for contract in &artifact.sil_abi.contracts {
+            for field in &contract.runtime_state.fields {
+                let RuntimeFieldRoleArtifact::TemplateTable { contracts } = &field.role else {
+                    continue;
+                };
+                let id = route_template_table_receipt_id(&contract.runtime_state.source, &field.name);
+                let Some(table) = route_tables_by_id.get(id.as_str()) else {
+                    return Err(TemplatePlanError::MissingRuntimeRouteTable {
+                        contract: contract.name.clone(),
+                        field: field.name.clone(),
+                        id,
+                    });
+                };
+                referenced_route_table_ids.insert(table.id.as_str());
+                let table_contracts = table.entries.iter().map(|entry| entry.actor.as_str()).collect::<Vec<_>>();
+                let role_contracts = contracts.iter().map(String::as_str).collect::<Vec<_>>();
+                if table.state != contract.runtime_state.source
+                    || table.field != field.name
+                    || table_contracts != role_contracts
+                    || field.ty != (TypeArtifact::FixedBytes { len: table.byte_len })
+                {
+                    return Err(TemplatePlanError::RuntimeRouteTableMismatch {
+                        contract: contract.name.clone(),
+                        field: field.name.clone(),
+                        id: table.id.clone(),
+                    });
+                }
+            }
+        }
+        for table in &self.route_tables {
+            if !referenced_route_table_ids.contains(table.id.as_str()) {
+                return Err(TemplatePlanError::UnreferencedRouteTable { id: table.id.clone() });
             }
         }
 
@@ -459,6 +575,10 @@ fn template_hash_hex(id: &str, prefix_hex: &str, suffix_hex: &str) -> std::resul
     let suffix = decode_hex_for_template(id, suffix_hex)?;
     let hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
     Ok(encode_hex(hash.as_bytes()))
+}
+
+pub fn route_template_table_receipt_id(state: &str, field: &str) -> String {
+    format!("route_table/{state}/{field}")
 }
 
 fn decode_hex_for_template(id: &str, hex: &str) -> std::result::Result<Vec<u8>, TemplatePlanError> {
