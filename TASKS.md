@@ -371,11 +371,11 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
-Status: in progress. Completed route-root receipts, canonical route proof
-receipts, generated proof witnesses, and tx-builder witness filling. The
-current toy-chess fixture now infers direct route families from shared owned
-state plus direct `become` edges, then uses one-level expansion/packing so upper
-layers carry a family commitment without exposing every worker template.
+Status: done. The first version has route-root receipts, canonical route proof
+receipts, generated proof witnesses, tx-builder witness filling, and toy-chess
+E2E coverage. The toy-chess fixture infers direct route families from shared
+owned state plus direct `become` edges, then uses one-level expansion/packing so
+upper layers carry a family commitment without exposing every worker template.
 
 Replace the flat hidden-template field model with a deterministic default Merkle
 plan, without trying to optimize layout yet. This should be a simple, stable
@@ -394,9 +394,9 @@ The first version should support:
 
 Family inference should affect layout only, not meaning. The compiler still owns
 dependency analysis, validates every referenced template, and emits a receipt
-proving the final tree. If manual tuning is needed later, prefer a narrow
-attribute such as `infrequent` on a `become` edge over source-level group
-declarations.
+proving the final tree. Manual tuning, if needed later, should be a follow-up
+task with a narrow attribute such as `infrequent` on a `become` edge rather than
+source-level group declarations.
 
 End-to-end test:
 
