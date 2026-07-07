@@ -174,6 +174,236 @@
           ]
         }
       ],
+      "route_trees": [
+        {
+          "id": "route_tree/GameState/gen__template_table",
+          "table_id": "route_table/GameState/gen__template_table",
+          "state": "GameState",
+          "field": "gen__template_table",
+          "root_hex": "9cc8c6f21350014d8775c8fd7928c976960481f4dc6939cb707007dfa92ac5b5",
+          "leaves": [
+            {
+              "index": 0,
+              "actor": "Player",
+              "template_id": "template/player",
+              "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game",
+              "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956",
+              "opening": [
+                {
+                  "side": "left",
+                  "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle",
+              "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661"
+                },
+                {
+                  "side": "left",
+                  "hash_hex": "e1f61a8dad1416d04816e2ea46c004efcba2ea5b9e3d80507caf4034330e532a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "route_tree/LeagueState/gen__template_table",
+          "table_id": "route_table/LeagueState/gen__template_table",
+          "state": "LeagueState",
+          "field": "gen__template_table",
+          "root_hex": "9cc8c6f21350014d8775c8fd7928c976960481f4dc6939cb707007dfa92ac5b5",
+          "leaves": [
+            {
+              "index": 0,
+              "actor": "Player",
+              "template_id": "template/player",
+              "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game",
+              "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956",
+              "opening": [
+                {
+                  "side": "left",
+                  "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle",
+              "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661"
+                },
+                {
+                  "side": "left",
+                  "hash_hex": "e1f61a8dad1416d04816e2ea46c004efcba2ea5b9e3d80507caf4034330e532a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "route_tree/PlayerState/gen__template_table",
+          "table_id": "route_table/PlayerState/gen__template_table",
+          "state": "PlayerState",
+          "field": "gen__template_table",
+          "root_hex": "9cc8c6f21350014d8775c8fd7928c976960481f4dc6939cb707007dfa92ac5b5",
+          "leaves": [
+            {
+              "index": 0,
+              "actor": "Player",
+              "template_id": "template/player",
+              "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game",
+              "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956",
+              "opening": [
+                {
+                  "side": "left",
+                  "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle",
+              "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661"
+                },
+                {
+                  "side": "left",
+                  "hash_hex": "e1f61a8dad1416d04816e2ea46c004efcba2ea5b9e3d80507caf4034330e532a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "route_tree/SettleState/gen__template_table",
+          "table_id": "route_table/SettleState/gen__template_table",
+          "state": "SettleState",
+          "field": "gen__template_table",
+          "root_hex": "9cc8c6f21350014d8775c8fd7928c976960481f4dc6939cb707007dfa92ac5b5",
+          "leaves": [
+            {
+              "index": 0,
+              "actor": "Player",
+              "template_id": "template/player",
+              "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 1,
+              "actor": "StonesGame",
+              "template_id": "template/stones_game",
+              "hash_hex": "100427cd882db0f950be7eca462d068f82ed818120428d71a490455d90c67956",
+              "opening": [
+                {
+                  "side": "left",
+                  "hash_hex": "5f85d0ad9b5c5209542a03cbd3e5adb84f566513c2c389de5fb4e8ceece4f49a"
+                },
+                {
+                  "side": "right",
+                  "hash_hex": "890c1c51f3404cf0d1f3457e2b37588262e33b3a8abb0fefb5c4e4ee153fe3a1"
+                }
+              ]
+            },
+            {
+              "index": 2,
+              "actor": "StonesSettle",
+              "template_id": "template/stones_settle",
+              "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661",
+              "opening": [
+                {
+                  "side": "right",
+                  "hash_hex": "4fdd2194a7fc0c2c3764a1a711c95675782deb2e3964a5830dcc777448f28661"
+                },
+                {
+                  "side": "left",
+                  "hash_hex": "e1f61a8dad1416d04816e2ea46c004efcba2ea5b9e3d80507caf4034330e532a"
+                }
+              ]
+            }
+          ]
+        }
+      ],
       "witness_recipes": [
         {
           "id": "witness/player/template_prefix_bytes",

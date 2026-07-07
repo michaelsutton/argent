@@ -279,7 +279,7 @@ fn covenant_engine_flags() -> EngineFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::route_template_table_receipt_id;
+    use crate::artifact::{route_template_table_receipt_id, route_template_tree_receipt_id};
     use std::{
         fs,
         path::PathBuf,
@@ -687,6 +687,36 @@ mod tests {
                     offset: 33,
                     expected: 32,
                 }) if id == "route_table/PlayerState/gen__template_table"
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn builder_rejects_route_template_tree_opening_mismatch() {
+        let mut artifact = example_artifact("examples/stones/app.ag", "stones-route-tree-plan");
+        artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+        let tree = artifact
+            .argent
+            .template_plan
+            .route_trees
+            .iter_mut()
+            .find(|tree| tree.id == route_template_tree_receipt_id("PlayerState", "gen__template_table"))
+            .expect("PlayerState route tree receipt exists");
+        tree.leaves[1].opening[0].hash_hex = "00".repeat(32);
+
+        let err = match ArtifactTxBuilder::new(&artifact) {
+            Ok(_) => panic!("builder must reject a corrupted route template tree receipt"),
+            Err(err) => err,
+        };
+        assert!(
+            matches!(
+                err,
+                BuilderError::TemplatePlan(TemplatePlanError::RouteTreeOpeningMismatch {
+                    ref id,
+                    index: 1,
+                    ..
+                }) if id == "route_tree/PlayerState/gen__template_table"
             ),
             "unexpected error: {err}"
         );

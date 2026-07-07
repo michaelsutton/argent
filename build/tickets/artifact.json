@@ -40,6 +40,7 @@
         }
       ],
       "route_tables": [],
+      "route_trees": [],
       "witness_recipes": [
         {
           "id": "witness/ticket/template_prefix_bytes",

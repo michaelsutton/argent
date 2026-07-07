@@ -1565,6 +1565,7 @@ fn template_plan_artifact(
         .collect::<Result<Vec<_>>>()?;
 
     let route_tables = route_template_tables_artifact(sil_contracts)?;
+    let route_trees = route_template_trees_artifact(&route_tables, &templates)?;
 
     let mut seen = BTreeSet::new();
     let mut witness_recipes = Vec::new();
@@ -1584,7 +1585,7 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, route_tables, witness_recipes })
+    Ok(TemplatePlanArtifact { templates, route_tables, route_trees, witness_recipes })
 }
 
 fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Result<Vec<RouteTemplateTableArtifact>> {
@@ -1628,6 +1629,16 @@ fn route_template_tables_artifact(sil_contracts: &[SilContractArtifact]) -> Resu
         }
     }
     Ok(tables.into_values().collect())
+}
+
+fn route_template_trees_artifact(
+    route_tables: &[RouteTemplateTableArtifact],
+    templates: &[TemplatePlanTemplateArtifact],
+) -> Result<Vec<RouteTemplateTreeArtifact>> {
+    route_tables
+        .iter()
+        .map(|table| route_template_tree_from_table(table, templates).map_err(|err| ArgentError::new(err.to_string())))
+        .collect()
 }
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
@@ -2849,6 +2860,40 @@ mod tests {
                 (2, 64, "StonesSettle", "template/stones_settle"),
             ]
         );
+        assert_eq!(artifact.argent.template_plan.route_trees.len(), 4);
+        let player_tree = artifact
+            .argent
+            .template_plan
+            .route_trees
+            .iter()
+            .find(|tree| tree.id == route_template_tree_receipt_id("PlayerState", "gen__template_table"))
+            .expect("PlayerState route tree receipt exists");
+        assert_eq!(player_tree.table_id, player_table.id);
+        assert_eq!(player_tree.state, "PlayerState");
+        assert_eq!(player_tree.field, "gen__template_table");
+        assert_eq!(player_tree.root_hex.len(), 64);
+        assert_eq!(
+            player_tree
+                .leaves
+                .iter()
+                .map(|leaf| (leaf.index, leaf.actor.as_str(), leaf.template_id.as_str(), leaf.opening.len()))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, "Player", "template/player", 2),
+                (1, "StonesGame", "template/stones_game", 2),
+                (2, "StonesSettle", "template/stones_settle", 2),
+            ]
+        );
+        for leaf in &player_tree.leaves {
+            let template = artifact
+                .argent
+                .template_plan
+                .templates
+                .iter()
+                .find(|template| template.id == leaf.template_id)
+                .expect("route tree leaf points at template receipt");
+            assert_eq!(leaf.hash_hex, template.hash_hex);
+        }
         let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
         assert_eq!(
             sil_accept_start.params.iter().map(|param| (param.name.as_str(), param.ty.clone())).collect::<Vec<_>>(),

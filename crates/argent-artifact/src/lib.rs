@@ -64,6 +64,8 @@ pub struct TemplatePlanArtifact {
     pub templates: Vec<TemplatePlanTemplateArtifact>,
     #[serde(default)]
     pub route_tables: Vec<RouteTemplateTableArtifact>,
+    #[serde(default)]
+    pub route_trees: Vec<RouteTemplateTreeArtifact>,
     pub witness_recipes: Vec<TemplateWitnessRecipeArtifact>,
 }
 
@@ -91,6 +93,38 @@ pub struct RouteTemplateTableEntryArtifact {
     pub offset: usize,
     pub actor: String,
     pub template_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateTreeArtifact {
+    pub id: String,
+    pub table_id: String,
+    pub state: String,
+    pub field: String,
+    pub root_hex: String,
+    pub leaves: Vec<RouteTemplateTreeLeafArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateTreeLeafArtifact {
+    pub index: usize,
+    pub actor: String,
+    pub template_id: String,
+    pub hash_hex: String,
+    pub opening: Vec<RouteTemplateTreeOpeningStepArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RouteTemplateTreeOpeningStepArtifact {
+    pub side: RouteTemplateTreeOpeningSideArtifact,
+    pub hash_hex: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteTemplateTreeOpeningSideArtifact {
+    Left,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +285,8 @@ pub enum TemplatePlanError {
     DuplicateTemplateId(String),
     #[error("duplicate route template table id `{0}`")]
     DuplicateRouteTableId(String),
+    #[error("duplicate route template tree id `{0}`")]
+    DuplicateRouteTreeId(String),
     #[error("duplicate witness recipe id `{0}`")]
     DuplicateWitnessRecipeId(String),
     #[error("template ref `{actor}` points at missing receipt `{id}`")]
@@ -283,6 +319,18 @@ pub enum TemplatePlanError {
     RuntimeRouteTableMismatch { contract: String, field: String, id: String },
     #[error("route template table `{id}` is not referenced by any runtime state field")]
     UnreferencedRouteTable { id: String },
+    #[error("route template tree `{id}` points at missing route template table `{table_id}`")]
+    MissingRouteTreeTable { id: String, table_id: String },
+    #[error("route template table `{table_id}` has no route template tree receipt")]
+    MissingRouteTree { table_id: String },
+    #[error("route template tree `{id}` does not match route template table `{table_id}`")]
+    RouteTreeTableMismatch { id: String, table_id: String },
+    #[error("route template tree `{id}` leaf {index} hash mismatch: expected `{expected}`, found `{found}`")]
+    RouteTreeLeafHashMismatch { id: String, index: usize, expected: String, found: String },
+    #[error("route template tree `{id}` root mismatch: expected `{expected}`, found `{found}`")]
+    RouteTreeRootMismatch { id: String, expected: String, found: String },
+    #[error("route template tree `{id}` leaf {index} opening resolves to `{found}`, expected root `{expected}`")]
+    RouteTreeOpeningMismatch { id: String, index: usize, expected: String, found: String },
     #[error("witness recipe `{id}` references missing template receipt `{template_id}`")]
     MissingWitnessTemplate { id: String, template_id: String },
     #[error("witness recipe `{id}` actor `{actor}` does not match template receipt actor `{template_actor}`")]
@@ -443,6 +491,23 @@ impl TemplatePlanArtifact {
             }
         }
 
+        let mut route_tree_ids = BTreeSet::new();
+        for tree in &self.route_trees {
+            if !route_tree_ids.insert(tree.id.as_str()) {
+                return Err(TemplatePlanError::DuplicateRouteTreeId(tree.id.clone()));
+            }
+            let Some(table) = route_tables_by_id.get(tree.table_id.as_str()) else {
+                return Err(TemplatePlanError::MissingRouteTreeTable { id: tree.id.clone(), table_id: tree.table_id.clone() });
+            };
+            verify_route_template_tree(tree, table, &templates_by_id)?;
+        }
+        for table in &self.route_tables {
+            let expected_tree_id = route_template_tree_receipt_id(&table.state, &table.field);
+            if !route_tree_ids.contains(expected_tree_id.as_str()) {
+                return Err(TemplatePlanError::MissingRouteTree { table_id: table.id.clone() });
+            }
+        }
+
         let mut recipe_ids = BTreeSet::new();
         let mut recipes_by_id = BTreeMap::new();
         for recipe in &self.witness_recipes {
@@ -579,6 +644,208 @@ fn template_hash_hex(id: &str, prefix_hex: &str, suffix_hex: &str) -> std::resul
 
 pub fn route_template_table_receipt_id(state: &str, field: &str) -> String {
     format!("route_table/{state}/{field}")
+}
+
+pub fn route_template_tree_receipt_id(state: &str, field: &str) -> String {
+    format!("route_tree/{state}/{field}")
+}
+
+pub fn route_template_tree_from_table(
+    table: &RouteTemplateTableArtifact,
+    templates: &[TemplatePlanTemplateArtifact],
+) -> std::result::Result<RouteTemplateTreeArtifact, TemplatePlanError> {
+    let templates_by_id =
+        templates.iter().map(|template| (template.id.as_str(), template)).collect::<std::collections::BTreeMap<_, _>>();
+    let mut leaf_hashes = Vec::with_capacity(table.entries.len());
+    let mut leaves = Vec::with_capacity(table.entries.len());
+    for entry in &table.entries {
+        let Some(template) = templates_by_id.get(entry.template_id.as_str()) else {
+            return Err(TemplatePlanError::MissingRouteTableTemplate {
+                id: table.id.clone(),
+                actor: entry.actor.clone(),
+                template_id: entry.template_id.clone(),
+            });
+        };
+        if template.actor != entry.actor {
+            return Err(TemplatePlanError::RouteTableTemplateMismatch {
+                id: table.id.clone(),
+                actor: entry.actor.clone(),
+                template_id: entry.template_id.clone(),
+                template_actor: template.actor.clone(),
+            });
+        }
+        let leaf_hash = decode_hash_hex(&template.id, &template.hash_hex)?;
+        leaf_hashes.push(leaf_hash);
+    }
+
+    let layers = route_template_tree_layers(&leaf_hashes);
+    let root_hex = route_template_tree_root_hex(&layers);
+    for (position, (entry, template_hash)) in table.entries.iter().zip(leaf_hashes.iter()).enumerate() {
+        leaves.push(RouteTemplateTreeLeafArtifact {
+            index: entry.index,
+            actor: entry.actor.clone(),
+            template_id: entry.template_id.clone(),
+            hash_hex: encode_hex(template_hash),
+            opening: route_template_tree_opening(&layers, position),
+        });
+    }
+
+    Ok(RouteTemplateTreeArtifact {
+        id: route_template_tree_receipt_id(&table.state, &table.field),
+        table_id: table.id.clone(),
+        state: table.state.clone(),
+        field: table.field.clone(),
+        root_hex,
+        leaves,
+    })
+}
+
+fn verify_route_template_tree(
+    tree: &RouteTemplateTreeArtifact,
+    table: &RouteTemplateTableArtifact,
+    templates_by_id: &std::collections::BTreeMap<&str, &TemplatePlanTemplateArtifact>,
+) -> std::result::Result<(), TemplatePlanError> {
+    let expected_id = route_template_tree_receipt_id(&table.state, &table.field);
+    if tree.id != expected_id
+        || tree.table_id != table.id
+        || tree.state != table.state
+        || tree.field != table.field
+        || tree.leaves.len() != table.entries.len()
+    {
+        return Err(TemplatePlanError::RouteTreeTableMismatch { id: tree.id.clone(), table_id: tree.table_id.clone() });
+    }
+
+    let mut expected_leaf_hashes = Vec::with_capacity(table.entries.len());
+    for entry in &table.entries {
+        let Some(template) = templates_by_id.get(entry.template_id.as_str()) else {
+            return Err(TemplatePlanError::MissingRouteTableTemplate {
+                id: table.id.clone(),
+                actor: entry.actor.clone(),
+                template_id: entry.template_id.clone(),
+            });
+        };
+        expected_leaf_hashes.push(decode_hash_hex(&template.id, &template.hash_hex)?);
+    }
+    let expected_layers = route_template_tree_layers(&expected_leaf_hashes);
+    let expected_root_hex = route_template_tree_root_hex(&expected_layers);
+    if tree.root_hex != expected_root_hex {
+        return Err(TemplatePlanError::RouteTreeRootMismatch {
+            id: tree.id.clone(),
+            expected: expected_root_hex,
+            found: tree.root_hex.clone(),
+        });
+    }
+
+    let root = decode_hash_hex(&tree.id, &tree.root_hex)?;
+    for (index, (leaf, entry)) in tree.leaves.iter().zip(table.entries.iter()).enumerate() {
+        if leaf.index != entry.index || leaf.actor != entry.actor || leaf.template_id != entry.template_id {
+            return Err(TemplatePlanError::RouteTreeTableMismatch { id: tree.id.clone(), table_id: tree.table_id.clone() });
+        }
+        let expected_hash_hex = encode_hex(&expected_leaf_hashes[index]);
+        if leaf.hash_hex != expected_hash_hex {
+            return Err(TemplatePlanError::RouteTreeLeafHashMismatch {
+                id: tree.id.clone(),
+                index,
+                expected: expected_hash_hex,
+                found: leaf.hash_hex.clone(),
+            });
+        }
+        let expected_opening = route_template_tree_opening(&expected_layers, index);
+        if leaf.opening != expected_opening {
+            let resolved = route_template_tree_opening_root(&tree.id, &leaf.hash_hex, &leaf.opening)?;
+            return Err(TemplatePlanError::RouteTreeOpeningMismatch {
+                id: tree.id.clone(),
+                index,
+                expected: encode_hex(&root),
+                found: encode_hex(&resolved),
+            });
+        }
+        let resolved = route_template_tree_opening_root(&tree.id, &leaf.hash_hex, &leaf.opening)?;
+        if resolved != root {
+            return Err(TemplatePlanError::RouteTreeOpeningMismatch {
+                id: tree.id.clone(),
+                index,
+                expected: encode_hex(&root),
+                found: encode_hex(&resolved),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn route_template_tree_layers(leaves: &[[u8; 32]]) -> Vec<Vec<[u8; 32]>> {
+    if leaves.is_empty() {
+        return Vec::new();
+    }
+
+    let mut layers = vec![leaves.to_vec()];
+    while layers.last().expect("layers is non-empty").len() > 1 {
+        let current = layers.last().expect("layers is non-empty");
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
+        for pair in current.chunks(2) {
+            let left = pair[0];
+            let right = pair.get(1).copied().unwrap_or(left);
+            next.push(route_template_tree_parent(&left, &right));
+        }
+        layers.push(next);
+    }
+    layers
+}
+
+fn route_template_tree_root_hex(layers: &[Vec<[u8; 32]>]) -> String {
+    layers.last().and_then(|layer| layer.first()).map(|hash| encode_hex(hash)).unwrap_or_else(route_template_empty_tree_root_hex)
+}
+
+fn route_template_empty_tree_root_hex() -> String {
+    let hash = blake2b_simd::Params::new().hash_length(32).to_state().finalize();
+    encode_hex(hash.as_bytes())
+}
+
+fn route_template_tree_opening(layers: &[Vec<[u8; 32]>], mut index: usize) -> Vec<RouteTemplateTreeOpeningStepArtifact> {
+    let mut opening = Vec::new();
+    for layer in layers.iter().take(layers.len().saturating_sub(1)) {
+        let is_left_child = index.is_multiple_of(2);
+        let sibling_index = if is_left_child { (index + 1).min(layer.len() - 1) } else { index - 1 };
+        opening.push(RouteTemplateTreeOpeningStepArtifact {
+            side: if is_left_child { RouteTemplateTreeOpeningSideArtifact::Right } else { RouteTemplateTreeOpeningSideArtifact::Left },
+            hash_hex: encode_hex(&layer[sibling_index]),
+        });
+        index /= 2;
+    }
+    opening
+}
+
+fn route_template_tree_opening_root(
+    id: &str,
+    leaf_hash_hex: &str,
+    opening: &[RouteTemplateTreeOpeningStepArtifact],
+) -> std::result::Result<[u8; 32], TemplatePlanError> {
+    let mut resolved = decode_hash_hex(id, leaf_hash_hex)?;
+    for step in opening {
+        let sibling = decode_hash_hex(id, &step.hash_hex)?;
+        resolved = match step.side {
+            RouteTemplateTreeOpeningSideArtifact::Left => route_template_tree_parent(&sibling, &resolved),
+            RouteTemplateTreeOpeningSideArtifact::Right => route_template_tree_parent(&resolved, &sibling),
+        };
+    }
+    Ok(resolved)
+}
+
+fn route_template_tree_parent(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+    let hash = blake2b_simd::Params::new().hash_length(32).to_state().update(left).update(right).finalize();
+    hash.as_bytes().try_into().expect("hash length is fixed at 32 bytes")
+}
+
+fn decode_hash_hex(id: &str, hex: &str) -> std::result::Result<[u8; 32], TemplatePlanError> {
+    let bytes = decode_hex_for_template(id, hex)?;
+    if bytes.len() != 32 {
+        return Err(TemplatePlanError::InvalidHex {
+            id: id.to_string(),
+            message: format!("expected 32-byte hash, found {} bytes", bytes.len()),
+        });
+    }
+    Ok(bytes.try_into().expect("checked hash byte length"))
 }
 
 fn decode_hex_for_template(id: &str, hex: &str) -> std::result::Result<Vec<u8>, TemplatePlanError> {
