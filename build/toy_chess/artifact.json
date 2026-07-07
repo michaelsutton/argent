@@ -140,7 +140,10 @@
         {
           "id": "route_family/BoardState/mux",
           "state": "BoardState",
-          "hub_actor": "Mux",
+          "anchor_actor": "Mux",
+          "entry_actors": [
+            "Mux"
+          ],
           "table_id": "route_table/BoardState/gen__mux_routes",
           "actors": [
             "Mux",

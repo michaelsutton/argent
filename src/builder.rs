@@ -43,10 +43,14 @@ pub enum BuilderError {
     MissingHiddenRouteTree { param: String },
     #[error("unknown route tree `{0}`")]
     UnknownRouteTree(String),
+    #[error("unknown route table `{0}`")]
+    UnknownRouteTable(String),
     #[error("route tree `{route_tree_id}` has no leaf `{leaf}`")]
     MissingRouteTreeLeaf { route_tree_id: String, leaf: String },
     #[error("unknown route family `{0}`")]
     UnknownRouteFamily(String),
+    #[error("route family table `{table_id}` contains nested route family `{family_id}`")]
+    NestedRouteFamilyTableLeaf { table_id: String, family_id: String },
     #[error("hidden param `{param}` has the wrong subject kind; expected {expected}")]
     UnexpectedHiddenSubject { param: String, expected: &'static str },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -351,9 +355,27 @@ impl<'a> ArtifactTxBuilder<'a> {
             .iter()
             .find(|family| family.id == family_id)
             .ok_or_else(|| BuilderError::UnknownRouteFamily(family_id.to_string()))?;
-        let mut table = Vec::with_capacity(family.actors.len().saturating_sub(1) * 32);
-        for actor in family.actors.iter().skip(1) {
-            table.extend_from_slice(&decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?);
+        let route_table = self
+            .artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == family.table_id)
+            .ok_or_else(|| BuilderError::UnknownRouteTable(family.table_id.clone()))?;
+        let mut table = Vec::with_capacity(route_table.byte_len);
+        for entry in &route_table.entries {
+            match &entry.leaf {
+                RouteTemplateLeafArtifact::Template { actor, .. } => {
+                    table.extend_from_slice(&decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?);
+                }
+                RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => {
+                    return Err(BuilderError::NestedRouteFamilyTableLeaf {
+                        table_id: route_table.id.clone(),
+                        family_id: family_id.clone(),
+                    });
+                }
+            }
         }
         Ok(table)
     }

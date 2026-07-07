@@ -50,15 +50,22 @@ struct RouteFamily {
     id: String,
     state: String,
     actors: Vec<String>,
+    entry_actors: Vec<String>,
+    direct_template_actors: Vec<String>,
+    table_actors: Vec<String>,
 }
 
 impl RouteFamily {
-    fn hub_actor(&self) -> &str {
-        self.actors.first().map(String::as_str).expect("route families contain at least two actors")
+    fn anchor_actor(&self) -> &str {
+        self.direct_template_actors.first().map(String::as_str).expect("route families contain at least one direct template actor")
+    }
+
+    fn direct_template_actors(&self) -> &[String] {
+        &self.direct_template_actors
     }
 
     fn table_actors(&self) -> &[String] {
-        &self.actors[1..]
+        &self.table_actors
     }
 
     fn table_byte_len(&self) -> usize {
@@ -599,7 +606,10 @@ fn compute_state_route_leaves(
         for actor in deps {
             let family = route_families.iter().find(|family| family_actor_sets[family.id.as_str()].contains(actor.as_str()));
             if let Some(family) = family {
-                if actor == family.hub_actor() || family.state == *state || direct.is_some_and(|direct| direct.contains(actor)) {
+                if family.direct_template_actors().contains(actor)
+                    || family.state == *state
+                    || direct.is_some_and(|direct| direct.contains(actor))
+                {
                     leaves.push(RouteRootLeaf::Actor(actor.clone()));
                 }
                 if emitted_families.insert(family.id.as_str()) {
@@ -621,6 +631,7 @@ fn infer_direct_route_families<'a>(
 ) -> Result<Vec<RouteFamily>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut edges_by_state = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
+    let mut directed_routes = Vec::<(String, String)>::new();
 
     for actor in actors {
         for entry in &actor.entries {
@@ -628,10 +639,13 @@ fn infer_direct_route_families<'a>(
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
-                if actor.name == target.name || actor.state != target.state {
+                if !template_actor_set.contains(&actor.name) || !template_actor_set.contains(&target.name) {
                     continue;
                 }
-                if !template_actor_set.contains(&actor.name) || !template_actor_set.contains(&target.name) {
+                if actor.name != target.name {
+                    directed_routes.push((actor.name.clone(), target.name.clone()));
+                }
+                if actor.name == target.name || actor.state != target.state {
                     continue;
                 }
                 edges_by_state
@@ -672,7 +686,29 @@ fn infer_direct_route_families<'a>(
                 continue;
             }
             let actors = template_actors.iter().filter(|actor| component.contains(*actor)).cloned().collect::<Vec<_>>();
-            families.push(RouteFamily { id: route_template_family_receipt_id(&state, &actors), state: state.clone(), actors });
+            let entry_actors = template_actors
+                .iter()
+                .filter(|actor| {
+                    component.contains(*actor)
+                        && directed_routes.iter().any(|(source, target)| target == *actor && !component.contains(source))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let anchor_actor = entry_actors.first().or_else(|| actors.first()).expect("component has at least two actors");
+            let direct_template_actors = if entry_actors.is_empty() { vec![anchor_actor.clone()] } else { entry_actors.clone() };
+            let direct_template_actor_set = direct_template_actors.iter().cloned().collect::<BTreeSet<_>>();
+            let table_actors = actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
+            if table_actors.is_empty() {
+                continue;
+            }
+            families.push(RouteFamily {
+                id: route_template_family_receipt_id(&state, anchor_actor),
+                state: state.clone(),
+                actors,
+                entry_actors,
+                direct_template_actors,
+                table_actors,
+            });
         }
     }
 
@@ -1649,7 +1685,7 @@ fn template_source_for_actor(state: &str, actor: &str, model: &Model<'_>) -> Tem
     let Some(family) = model.route_family_for_actor(actor) else {
         return TemplateWitnessSource::Field;
     };
-    if family.state != state || actor == family.hub_actor() {
+    if family.state != state || family.direct_template_actors().iter().any(|direct_actor| direct_actor == actor) {
         return TemplateWitnessSource::Field;
     }
     family
@@ -1854,7 +1890,8 @@ fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamil
         .map(|family| RouteTemplateFamilyArtifact {
             id: family.id.clone(),
             state: family.state.clone(),
-            hub_actor: family.hub_actor().to_string(),
+            anchor_actor: family.anchor_actor().to_string(),
+            entry_actors: family.entry_actors.clone(),
             table_id: route_template_table_receipt_id(&family.state, &hidden_route_family_table_name(family)),
             actors: family.actors.clone(),
         })
@@ -1986,7 +2023,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
             args.extend(family_commitments.into_iter().map(|_| zero_byte_array_expr(32)));
         }
         RouteFieldKind::FamilyTable { family } => {
-            args.push(zero_byte_array_expr(32));
+            args.extend(family.direct_template_actors().iter().map(|_| zero_byte_array_expr(32)));
             args.push(zero_byte_array_expr(family.table_byte_len()));
         }
     }
@@ -2074,11 +2111,13 @@ fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFiel
             }
         }
         RouteFieldKind::FamilyTable { family } => {
-            fields.push(RuntimeFieldArtifact {
-                name: hidden_template_name(family.hub_actor()),
-                ty: TypeArtifact::from_parts("byte", Some(32)),
-                role: RuntimeFieldRoleArtifact::Template { contract: family.hub_actor().to_string() },
-            });
+            for actor in family.direct_template_actors() {
+                fields.push(RuntimeFieldArtifact {
+                    name: hidden_template_name(actor),
+                    ty: TypeArtifact::from_parts("byte", Some(32)),
+                    role: RuntimeFieldRoleArtifact::Template { contract: actor.to_string() },
+                });
+            }
             fields.push(RuntimeFieldArtifact {
                 name: hidden_route_family_table_name(family),
                 ty: TypeArtifact::from_parts("byte", Some(family.table_byte_len())),
@@ -2563,10 +2602,15 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
             );
             args
         }
-        RouteFieldKind::FamilyTable { family } => vec![
-            format!("byte[32] {}", hidden_template_init_name(family.hub_actor())),
-            format!("byte[{}] {}", family.table_byte_len(), hidden_route_family_table_init_name(family)),
-        ],
+        RouteFieldKind::FamilyTable { family } => {
+            let mut args = family
+                .direct_template_actors()
+                .iter()
+                .map(|actor| format!("byte[32] {}", hidden_template_init_name(actor)))
+                .collect::<Vec<_>>();
+            args.push(format!("byte[{}] {}", family.table_byte_len(), hidden_route_family_table_init_name(family)));
+            args
+        }
     }
 }
 
@@ -2586,11 +2630,9 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
             }
         }
         RouteFieldKind::FamilyTable { family } => {
-            out.push_str(&format!(
-                "    byte[32] {} = {};\n",
-                hidden_template_name(family.hub_actor()),
-                hidden_template_init_name(family.hub_actor())
-            ));
+            for actor in family.direct_template_actors() {
+                out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
+            }
             out.push_str(&format!(
                 "    byte[{}] {} = {};\n",
                 family.table_byte_len(),
@@ -2615,7 +2657,9 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
         RouteFieldKind::FamilyTable { family } => {
-            out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(family.hub_actor())));
+            for actor in family.direct_template_actors() {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
+            }
             out.push_str(&format!("{field_indent}byte[{}] {};\n", family.table_byte_len(), hidden_route_family_table_name(family)));
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
@@ -2639,10 +2683,13 @@ fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &s
         }
         RouteFieldKind::FamilyTable { family } => {
             let table_expr = hidden_route_family_table_name(family);
-            vec![
-                (hidden_template_name(family.hub_actor()), hidden_template_name(family.hub_actor())),
-                (hidden_route_family_table_name(family), table_expr),
-            ]
+            let mut fields = family
+                .direct_template_actors()
+                .iter()
+                .map(|actor| (hidden_template_name(actor), hidden_template_name(actor)))
+                .collect::<Vec<_>>();
+            fields.push((hidden_route_family_table_name(family), table_expr));
+            fields
         }
     }
 }
@@ -2655,9 +2702,8 @@ fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) 
     format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
 
-fn route_template_family_receipt_id(state: &str, actors: &[String]) -> String {
-    let first = actors.first().map(|actor| hidden_actor_suffix(actor)).unwrap_or_else(|| "empty".to_string());
-    format!("route_family/{state}/{first}")
+fn route_template_family_receipt_id(state: &str, anchor_actor: &str) -> String {
+    format!("route_family/{state}/{}", hidden_actor_suffix(anchor_actor))
 }
 
 fn route_family_witness_recipe_id(family_id: &str, purpose: HiddenParamPurposeArtifact) -> String {
@@ -3361,7 +3407,8 @@ mod tests {
             (
                 family.id.as_str(),
                 family.state.as_str(),
-                family.hub_actor.as_str(),
+                family.anchor_actor.as_str(),
+                family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>(),
                 family.table_id.as_str(),
                 family.actors.iter().map(String::as_str).collect::<Vec<_>>(),
             )
@@ -3373,6 +3420,7 @@ mod tests {
                 "route_family/BoardState/mux",
                 "BoardState",
                 "Mux",
+                vec!["Mux"],
                 "route_table/BoardState/gen__mux_routes",
                 vec!["Mux", "Pawn", "Knight"]
             )]
@@ -3434,6 +3482,152 @@ mod tests {
             ]
         );
         artifact.verify_template_plan().expect("template plan receipt verifies inferred route family");
+    }
+
+    #[test]
+    fn route_family_without_external_entry_uses_first_actor_as_anchor() {
+        let artifact = inline_artifact(
+            "genesis-route-family",
+            r#"
+            state BoardState {
+                int n;
+            }
+
+            actor A owns BoardState {
+                entry to_b() emits one B {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become B(next);
+                }
+            }
+
+            actor B owns BoardState {
+                entry to_a() emits one A {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become A(next);
+                }
+            }
+
+            app GenesisFamily {
+                actor A;
+                actor B;
+            }
+            "#,
+        );
+
+        let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
+        assert_eq!(family.id, "route_family/BoardState/a");
+        assert_eq!(family.anchor_actor, "A");
+        assert!(family.entry_actors.is_empty());
+        assert_eq!(family.actors, vec!["A", "B"]);
+        assert_eq!(family.table_id, "route_table/BoardState/gen__a_routes");
+
+        let contract = artifact.sil_abi.contract("A").expect("A contract exists");
+        assert_eq!(
+            contract.runtime_state.fields[..2].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
+            vec![
+                ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
+                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string()] }),
+            ]
+        );
+        artifact.verify_template_plan().expect("zero-entry route family receipt verifies");
+    }
+
+    #[test]
+    fn route_family_with_multiple_external_entries_uses_first_entry_as_anchor() {
+        let artifact = inline_artifact(
+            "multi-entry-route-family",
+            r#"
+            state PlayerState {
+                int n;
+            }
+
+            state BoardState {
+                int n;
+            }
+
+            actor PlayerA owns PlayerState {
+                entry enter_a() emits one HubA {
+                    BoardState next = {
+                        n: n,
+                    };
+
+                    become HubA(next);
+                }
+            }
+
+            actor PlayerB owns PlayerState {
+                entry enter_b() emits one HubB {
+                    BoardState next = {
+                        n: n,
+                    };
+
+                    become HubB(next);
+                }
+            }
+
+            actor HubB owns BoardState {
+                entry to_leaf() emits one Leaf {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become Leaf(next);
+                }
+            }
+
+            actor HubA owns BoardState {
+                entry to_leaf() emits one Leaf {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become Leaf(next);
+                }
+            }
+
+            actor Leaf owns BoardState {
+                entry to_a() emits one HubA {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become HubA(next);
+                }
+            }
+
+            app MultiEntryFamily {
+                actor PlayerA;
+                actor PlayerB;
+                actor HubB;
+                actor HubA;
+                actor Leaf;
+            }
+            "#,
+        );
+
+        let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
+        assert_eq!(family.id, "route_family/BoardState/hub_b");
+        assert_eq!(family.anchor_actor, "HubB");
+        assert_eq!(family.entry_actors, vec!["HubB", "HubA"]);
+        assert_eq!(family.actors, vec!["HubB", "HubA", "Leaf"]);
+        assert_eq!(family.table_id, "route_table/BoardState/gen__hub_b_routes");
+
+        let contract = artifact.sil_abi.contract("HubB").expect("HubB contract exists");
+        assert_eq!(
+            contract.runtime_state.fields[..3].iter().map(|field| (field.name.as_str(), field.role.clone())).collect::<Vec<_>>(),
+            vec![
+                ("gen__hub_b_template", RuntimeFieldRoleArtifact::Template { contract: "HubB".to_string() }),
+                ("gen__hub_a_template", RuntimeFieldRoleArtifact::Template { contract: "HubA".to_string() }),
+                ("gen__hub_b_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["Leaf".to_string()] }),
+            ]
+        );
+        artifact.verify_template_plan().expect("multi-entry route family receipt verifies");
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {

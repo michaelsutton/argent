@@ -127,7 +127,8 @@ pub enum RouteTemplateLeafArtifact {
 pub struct RouteTemplateFamilyArtifact {
     pub id: String,
     pub state: String,
-    pub hub_actor: String,
+    pub anchor_actor: String,
+    pub entry_actors: Vec<String>,
     pub table_id: String,
     pub actors: Vec<String>,
 }
@@ -381,6 +382,12 @@ pub enum TemplatePlanError {
     DuplicateRouteFamilyActor { id: String, actor: String },
     #[error("route template family `{id}` references unknown actor `{actor}`")]
     MissingRouteFamilyActor { id: String, actor: String },
+    #[error("route template family `{id}` anchor actor `{anchor}` should be `{expected}`")]
+    RouteFamilyAnchorMismatch { id: String, anchor: String, expected: String },
+    #[error("route template family `{id}` repeats entry actor `{actor}`")]
+    DuplicateRouteFamilyEntryActor { id: String, actor: String },
+    #[error("route template family `{id}` entry actor `{actor}` is not in the family")]
+    MissingRouteFamilyEntryActor { id: String, actor: String },
     #[error("route template family `{id}` actor `{actor}` owns state `{found}`, expected `{expected}`")]
     RouteFamilyStateMismatch { id: String, actor: String, expected: String, found: String },
     #[error("route template family `{id}` points at missing tree `{tree_id}`")]
@@ -483,18 +490,31 @@ impl TemplatePlanArtifact {
             if family.actors.len() < 2 {
                 return Err(TemplatePlanError::RouteFamilyTooSmall { id: family.id.clone() });
             }
-            if family.hub_actor != family.actors[0] {
-                return Err(TemplatePlanError::RouteFamilyTreeMismatch {
-                    id: family.id.clone(),
-                    tree_id: family.table_id.clone(),
-                    expected: format!("hub actor {}", family.actors[0]),
-                });
-            }
             let mut family_actors = BTreeSet::new();
             for actor in &family.actors {
                 if !family_actors.insert(actor.as_str()) {
                     return Err(TemplatePlanError::DuplicateRouteFamilyActor { id: family.id.clone(), actor: actor.clone() });
                 }
+            }
+            let mut entry_actors = BTreeSet::new();
+            for actor in &family.entry_actors {
+                if !entry_actors.insert(actor.as_str()) {
+                    return Err(TemplatePlanError::DuplicateRouteFamilyEntryActor { id: family.id.clone(), actor: actor.clone() });
+                }
+                if !family_actors.contains(actor.as_str()) {
+                    return Err(TemplatePlanError::MissingRouteFamilyEntryActor { id: family.id.clone(), actor: actor.clone() });
+                }
+            }
+            let expected_anchor =
+                family.entry_actors.first().or_else(|| family.actors.first()).expect("family has at least two actors");
+            if family.anchor_actor != *expected_anchor {
+                return Err(TemplatePlanError::RouteFamilyAnchorMismatch {
+                    id: family.id.clone(),
+                    anchor: family.anchor_actor.clone(),
+                    expected: expected_anchor.clone(),
+                });
+            }
+            for actor in &family.actors {
                 let Some(found_state) = actor_states.get(actor.as_str()) else {
                     return Err(TemplatePlanError::MissingRouteFamilyActor { id: family.id.clone(), actor: actor.clone() });
                 };
@@ -668,11 +688,19 @@ impl TemplatePlanArtifact {
                     RouteTemplateLeafArtifact::RouteFamily { .. } => None,
                 })
                 .collect::<Vec<_>>();
-            if table.state != family.state || table_actors != family.actors[1..] {
+            let direct_template_actors = if family.entry_actors.is_empty() {
+                vec![family.anchor_actor.as_str()]
+            } else {
+                family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>()
+            };
+            let direct_template_actor_set = direct_template_actors.into_iter().collect::<BTreeSet<_>>();
+            let expected_table_actors =
+                family.actors.iter().filter(|actor| !direct_template_actor_set.contains(actor.as_str())).cloned().collect::<Vec<_>>();
+            if table.state != family.state || table_actors != expected_table_actors {
                 return Err(TemplatePlanError::RouteFamilyTreeMismatch {
                     id: family.id.clone(),
                     tree_id: family.table_id.clone(),
-                    expected: format!("state {} table actors {:?}", family.state, &family.actors[1..]),
+                    expected: format!("state {} table actors {:?}", family.state, expected_table_actors),
                 });
             }
         }
@@ -1233,7 +1261,8 @@ mod tests {
         let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
-            hub_actor: "Mux".to_string(),
+            anchor_actor: "Mux".to_string(),
+            entry_actors: vec!["Mux".to_string()],
             table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Mux".to_string()],
         }]);
@@ -1250,7 +1279,8 @@ mod tests {
         let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
-            hub_actor: "Mux".to_string(),
+            anchor_actor: "Mux".to_string(),
+            entry_actors: vec!["Mux".to_string()],
             table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Player".to_string()],
         }]);
