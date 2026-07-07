@@ -1,0 +1,484 @@
+//! Runtime helpers for compiled Argent artifacts.
+//!
+//! This crate provides the consumer-side transaction-building surface for
+//! Argent artifacts: hidden witness material, template receipts, route-family
+//! data, and covenant transaction helpers.
+//!
+//! It intentionally has no dependency on the Argent compiler or
+//! `silverscript-lang`. Treat it as a thin, copyable runtime layer for any
+//! language or SDK that can speak Kaspa transactions and scripts. It is still
+//! Argent-specific for now; lower-level Silverscript runtime abstractions can
+//! split out later if the artifact model becomes generic enough.
+
+use std::collections::BTreeMap;
+
+pub use argent_artifact::Artifact;
+pub use silverscript_abi::ArtifactValue;
+
+use argent_artifact::{
+    ActorArtifact, ArtifactVersionError, EntryArtifact, HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
+    RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact,
+    TemplatePlanError, route_template_proof_receipt_id,
+};
+use kaspa_consensus_core::{
+    Hash,
+    hashing::sighash::SigHashReusedValuesUnsync,
+    tx::{
+        CovenantBinding, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint, TransactionOutput, UtxoEntry,
+        VerifiableTransaction,
+    },
+};
+use kaspa_txscript::{
+    EngineCtx, EngineFlags, TxScriptEngine, caches::Cache, covenants::CovenantsContext, pay_to_script_hash_script,
+    pay_to_script_hash_signature_script_with_flags, script_builder::ScriptBuilderError,
+};
+use kaspa_txscript_errors::TxScriptError;
+use silverscript_abi::{CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script};
+use thiserror::Error;
+
+pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
+
+#[derive(Debug, Error)]
+pub enum BuilderError {
+    #[error(transparent)]
+    ArtifactVersion(#[from] ArtifactVersionError),
+    #[error(transparent)]
+    TemplatePlan(#[from] TemplatePlanError),
+    #[error(transparent)]
+    Codec(#[from] CodecError),
+    #[error(transparent)]
+    ScriptBuilder(#[from] ScriptBuilderError),
+    #[error(transparent)]
+    TxScript(#[from] TxScriptError),
+    #[error("unknown actor `{0}`")]
+    UnknownActor(String),
+    #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
+    RuntimeStatePlanMismatch { contract: String, message: String },
+    #[error("hidden param `{param}` is missing route proof metadata")]
+    MissingHiddenRouteProof { param: String },
+    #[error("unknown route proof `{0}`")]
+    UnknownRouteProof(String),
+    #[error("unknown route table `{0}`")]
+    UnknownRouteTable(String),
+    #[error("route proof `{route_proof_id}` has no leaf `{leaf}`")]
+    MissingRouteProofLeaf { route_proof_id: String, leaf: String },
+    #[error("unknown route family `{0}`")]
+    UnknownRouteFamily(String),
+    #[error("route family table `{table_id}` contains nested route family `{family_id}`")]
+    NestedRouteFamilyTableLeaf { table_id: String, family_id: String },
+    #[error("hidden param `{param}` has the wrong subject kind; expected {expected}")]
+    UnexpectedHiddenSubject { param: String, expected: &'static str },
+    #[error("unknown entry `{actor}::{entry}`")]
+    UnknownEntry { actor: String, entry: String },
+    #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
+    UnknownTerminalPath { actor: String, entry: String, path_index: usize },
+    #[error("missing output `{0}`")]
+    MissingOutput(String),
+    #[error("unknown output `{0}`")]
+    UnknownOutput(String),
+    #[error("duplicate output `{0}`")]
+    DuplicateOutput(String),
+    #[error("unsupported route without a named output")]
+    UnnamedRouteOutput,
+}
+
+pub struct TxBuilder<'a> {
+    artifact: &'a Artifact,
+}
+
+pub struct TerminalPathOutputRequest<'a> {
+    pub actor_name: &'a str,
+    pub entry_name: &'a str,
+    pub path_index: usize,
+    pub output_states: BTreeMap<String, BTreeMap<String, ArtifactValue>>,
+    pub output_values: BTreeMap<String, u64>,
+    pub authorizing_input: u16,
+    pub covenant_id: Hash,
+}
+
+impl<'a> TxBuilder<'a> {
+    pub fn new(artifact: &'a Artifact) -> BuilderResult<Self> {
+        artifact.check_schema_version()?;
+        artifact.verify_template_plan()?;
+        Ok(Self { artifact })
+    }
+
+    pub fn redeem_script(&self, actor_name: &str, source_state: BTreeMap<String, ArtifactValue>) -> BuilderResult<Vec<u8>> {
+        let actor = self.contract(actor_name)?;
+        let state = self.runtime_state_values(actor, source_state)?;
+        let state_script = encode_runtime_state_script(&actor.runtime_state, &state)?;
+
+        let mut script = decode_hex(&actor.compiled.template.prefix_hex)?;
+        script.extend_from_slice(&state_script);
+        script.extend_from_slice(&decode_hex(&actor.compiled.template.suffix_hex)?);
+        Ok(script)
+    }
+
+    pub fn script_public_key(
+        &self,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<kaspa_consensus_core::tx::ScriptPublicKey> {
+        Ok(pay_to_script_hash_script(&self.redeem_script(actor_name, source_state)?))
+    }
+
+    pub fn p2sh_signature_script(
+        &self,
+        actor_name: &str,
+        entry_name: &str,
+        input_source_state: BTreeMap<String, ArtifactValue>,
+        user_args: Vec<ArtifactValue>,
+    ) -> BuilderResult<Vec<u8>> {
+        let contract = self.contract(actor_name)?;
+        let sil_entry = contract
+            .entry(entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
+        let argent_entry = self.entry(actor_name, entry_name)?;
+        let mut args = user_args;
+        for hidden in &argent_entry.hidden_params {
+            args.push(match &hidden.purpose {
+                HiddenParamPurposeArtifact::TemplatePrefixBytes => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?)
+                }
+                HiddenParamPurposeArtifact::TemplateSuffixBytes => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?)
+                }
+                HiddenParamPurposeArtifact::TemplatePrefixLen => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?.len() as i64)
+                }
+                HiddenParamPurposeArtifact::TemplateSuffixLen => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?.len() as i64)
+                }
+                HiddenParamPurposeArtifact::RouteTemplateLeaf => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?)
+                }
+                HiddenParamPurposeArtifact::RouteTemplateProof => {
+                    let actor = hidden_actor_subject(hidden)?;
+                    let route_proof_id = hidden
+                        .route_proof_id
+                        .as_deref()
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes_for_actor(route_proof_id, actor)?)
+                }
+                HiddenParamPurposeArtifact::RouteFamilyTable => {
+                    let family_id = hidden_family_subject(hidden)?;
+                    ArtifactValue::Bytes(self.route_family_table_bytes(family_id)?)
+                }
+                HiddenParamPurposeArtifact::RouteFamilyProof => {
+                    let family_id = hidden_family_subject(hidden)?;
+                    let route_proof_id = hidden
+                        .route_proof_id
+                        .as_deref()
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes(
+                        route_proof_id,
+                        &RouteTemplateLeafArtifact::RouteFamily {
+                            family_id: family_id.to_string(),
+                            proof_id: route_proof_id.to_string(),
+                        },
+                    )?)
+                }
+            });
+        }
+
+        let sigscript = encode_entry_sig_script(&self.artifact.sil_abi, contract, sil_entry, &args)?;
+        Ok(pay_to_script_hash_signature_script_with_flags(
+            self.redeem_script(actor_name, input_source_state)?,
+            sigscript,
+            covenant_engine_flags(),
+        )?)
+    }
+
+    pub fn covenant_output(
+        &self,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+        authorizing_input: u16,
+        covenant_id: Hash,
+    ) -> BuilderResult<TransactionOutput> {
+        Ok(TransactionOutput {
+            value,
+            script_public_key: self.script_public_key(actor_name, source_state)?,
+            covenant: Some(CovenantBinding { authorizing_input, covenant_id }),
+        })
+    }
+
+    pub fn covenant_utxo(
+        &self,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+        block_daa_score: u64,
+        is_coinbase: bool,
+        covenant_id: Option<Hash>,
+    ) -> BuilderResult<UtxoEntry> {
+        Ok(UtxoEntry::new(value, self.script_public_key(actor_name, source_state)?, block_daa_score, is_coinbase, covenant_id))
+    }
+
+    pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
+        let entry = self.entry(request.actor_name, request.entry_name)?;
+        let path = entry.route_plan.terminal_paths.get(request.path_index).ok_or_else(|| BuilderError::UnknownTerminalPath {
+            actor: request.actor_name.to_string(),
+            entry: request.entry_name.to_string(),
+            path_index: request.path_index,
+        })?;
+        for output in request.output_states.keys().chain(request.output_values.keys()) {
+            if path.routes.iter().all(|route| route.output.as_ref() != Some(output)) {
+                return Err(BuilderError::UnknownOutput(output.clone()));
+            }
+        }
+
+        let mut outputs = Vec::with_capacity(path.routes.len());
+        for route in &path.routes {
+            let output = route.output.as_ref().ok_or(BuilderError::UnnamedRouteOutput)?;
+            let state = request.output_states.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?.clone();
+            let value = *request.output_values.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?;
+            outputs.push((
+                route.auth_index,
+                output.clone(),
+                self.covenant_output(&route.actor, state, value, request.authorizing_input, request.covenant_id)?,
+            ));
+        }
+        outputs.sort_by_key(|(auth_index, _, _)| *auth_index);
+        for window in outputs.windows(2) {
+            if window[0].0 == window[1].0 {
+                return Err(BuilderError::DuplicateOutput(window[0].1.clone()));
+            }
+        }
+        Ok(outputs.into_iter().map(|(_, _, output)| output).collect())
+    }
+
+    pub fn transaction_input(previous_outpoint: TransactionOutpoint, signature_script: Vec<u8>) -> TransactionInput {
+        TransactionInput::new_with_compute_budget(previous_outpoint, signature_script, 0, 0)
+    }
+
+    pub fn transaction(inputs: Vec<TransactionInput>, outputs: Vec<TransactionOutput>) -> Transaction {
+        Transaction::new(1, inputs, outputs, 0, Default::default(), 0, vec![])
+    }
+
+    pub fn populated_transaction<'tx>(&self, tx: &'tx Transaction, entries: Vec<UtxoEntry>) -> PopulatedTransaction<'tx> {
+        PopulatedTransaction::new(tx, entries)
+    }
+
+    pub fn contract(&self, name: &str) -> BuilderResult<&'a SilContractArtifact> {
+        self.artifact.sil_abi.contract(name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    }
+
+    fn runtime_state_plan(&self, contract_name: &str) -> Option<&'a RuntimeStatePlanArtifact> {
+        self.artifact.argent.template_plan.runtime_states.iter().find(|state| state.contract == contract_name)
+    }
+
+    fn argent_actor(&self, name: &str) -> BuilderResult<&'a ActorArtifact> {
+        self.artifact.argent.actors.iter().find(|actor| actor.name == name).ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    }
+
+    pub fn entry(&self, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {
+        self.argent_actor(actor_name)?
+            .entries
+            .iter()
+            .find(|entry| entry.name == entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })
+    }
+
+    fn runtime_state_values(
+        &self,
+        contract: &SilContractArtifact,
+        mut source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<BTreeMap<String, ArtifactValue>> {
+        let mut role_by_field = BTreeMap::new();
+        if let Some(runtime_plan) = self.runtime_state_plan(&contract.name) {
+            if runtime_plan.source != contract.runtime_state.source {
+                return Err(BuilderError::RuntimeStatePlanMismatch {
+                    contract: contract.name.clone(),
+                    message: format!(
+                        "source `{}` does not match Sil ABI source `{}`",
+                        runtime_plan.source, contract.runtime_state.source
+                    ),
+                });
+            }
+            let sil_fields_by_name =
+                contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<std::collections::BTreeSet<_>>();
+            for field_role in &runtime_plan.field_roles {
+                if !sil_fields_by_name.contains(field_role.name.as_str()) {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` does not match any Sil ABI runtime field", field_role.name),
+                    });
+                }
+                if role_by_field.insert(field_role.name.as_str(), &field_role.role).is_some() {
+                    return Err(BuilderError::RuntimeStatePlanMismatch {
+                        contract: contract.name.clone(),
+                        message: format!("field role `{}` is duplicated", field_role.name),
+                    });
+                }
+            }
+        }
+
+        let mut values = BTreeMap::new();
+        for field in &contract.runtime_state.fields {
+            match role_by_field.get(field.name.as_str()) {
+                None => {
+                    let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
+                    values.insert(field.name.clone(), value);
+                }
+                Some(RuntimeFieldRoleArtifact::Template { contract }) => {
+                    values.insert(
+                        field.name.clone(),
+                        ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
+                    );
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateTable { contracts }) => {
+                    let mut table = Vec::with_capacity(contracts.len() * 32);
+                    for contract in contracts {
+                        table.extend_from_slice(&decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?);
+                    }
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(table));
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateDigest { id }) => {
+                    let table = self.route_family_table_bytes(id)?;
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
+                }
+                Some(RuntimeFieldRoleArtifact::TemplateRoot { .. }) => {
+                    let proof_id = route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
+                    let proof = self.route_template_proof(&proof_id)?;
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
+                }
+            }
+        }
+        if let Some(extra) = source_state.into_keys().next() {
+            return Err(CodecError::UnknownField(extra).into());
+        }
+        Ok(values)
+    }
+
+    fn route_template_proof(&self, route_proof_id: &str) -> BuilderResult<&RouteTemplateProofArtifact> {
+        self.artifact
+            .argent
+            .template_plan
+            .route_proofs
+            .iter()
+            .find(|proof| proof.id == route_proof_id)
+            .ok_or_else(|| BuilderError::UnknownRouteProof(route_proof_id.to_string()))
+    }
+
+    fn route_template_proof_bytes(&self, route_proof_id: &str, wanted_leaf: &RouteTemplateLeafArtifact) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt.leaves.iter().find(|leaf| &leaf.leaf == wanted_leaf).ok_or_else(|| {
+            BuilderError::MissingRouteProofLeaf { route_proof_id: route_proof_id.to_string(), leaf: route_leaf_label(wanted_leaf) }
+        })?;
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
+        }
+        Ok(proof)
+    }
+
+    fn route_template_proof_bytes_for_actor(&self, route_proof_id: &str, actor: &str) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt
+            .leaves
+            .iter()
+            .find(|leaf| matches!(&leaf.leaf, RouteTemplateLeafArtifact::Template { actor: leaf_actor, .. } if leaf_actor == actor))
+            .ok_or_else(|| BuilderError::MissingRouteProofLeaf {
+                route_proof_id: route_proof_id.to_string(),
+                leaf: actor.to_string(),
+            })?;
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
+        }
+        Ok(proof)
+    }
+
+    pub fn route_family_table_bytes(&self, family_id: &str) -> BuilderResult<Vec<u8>> {
+        let family = self
+            .artifact
+            .argent
+            .template_plan
+            .route_families
+            .iter()
+            .find(|family| family.id == family_id)
+            .ok_or_else(|| BuilderError::UnknownRouteFamily(family_id.to_string()))?;
+        let route_table = self
+            .artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == family.table_id)
+            .ok_or_else(|| BuilderError::UnknownRouteTable(family.table_id.clone()))?;
+        let mut table = Vec::with_capacity(route_table.byte_len);
+        for entry in &route_table.entries {
+            match &entry.leaf {
+                RouteTemplateLeafArtifact::Template { actor, .. } => {
+                    table.extend_from_slice(&decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?);
+                }
+                RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => {
+                    return Err(BuilderError::NestedRouteFamilyTableLeaf {
+                        table_id: route_table.id.clone(),
+                        family_id: family_id.clone(),
+                    });
+                }
+            }
+        }
+        Ok(table)
+    }
+}
+
+fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
+    match &hidden.subject {
+        HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
+        HiddenParamSubjectArtifact::RouteFamily { .. } => {
+            Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
+        }
+    }
+}
+
+fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
+    match &hidden.subject {
+        HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
+        HiddenParamSubjectArtifact::Actor { .. } => {
+            Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
+        }
+    }
+}
+
+fn route_leaf_label(leaf: &RouteTemplateLeafArtifact) -> String {
+    match leaf {
+        RouteTemplateLeafArtifact::Template { actor, .. } => actor.clone(),
+        RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => family_id.clone(),
+    }
+}
+
+fn blake2b32(data: &[u8]) -> Vec<u8> {
+    blake2b_simd::Params::new().hash_length(32).to_state().update(data).finalize().as_bytes().to_vec()
+}
+
+pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
+    let reused_values = SigHashReusedValuesUnsync::new();
+    let sig_cache = Cache::new(10_000);
+    let input = tx.inputs[input_idx].clone();
+    let populated = PopulatedTransaction::new(tx, entries);
+    let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
+    let utxo = populated.utxo(input_idx).expect("selected input utxo");
+
+    TxScriptEngine::from_transaction_input(
+        &populated,
+        &input,
+        input_idx,
+        utxo,
+        EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
+        covenant_engine_flags(),
+    )
+    .execute()
+}
+
+pub fn covenant_engine_flags() -> EngineFlags {
+    EngineFlags { covenants_enabled: true, ..Default::default() }
+}

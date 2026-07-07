@@ -1,0 +1,14 @@
+[package]
+name = "argent-runtime"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+
+[dependencies]
+argent-artifact = { workspace = true }
+blake2b_simd = { workspace = true }
+kaspa-consensus-core = { workspace = true }
+kaspa-txscript = { workspace = true }
+kaspa-txscript-errors = { workspace = true }
+silverscript-abi = { workspace = true }
+thiserror = { workspace = true }

@@ -39,7 +39,7 @@ What works today:
 - generated `validateOutputStateWithTemplate` calls for successor actors
 - same-template `validateOutputState` shortcuts for exact continuations
 - portable artifact JSON with an inner Sil ABI artifact
-- artifact-driven transaction-building helpers for tests and prototypes
+- `argent-runtime` transaction-building helpers for compiled artifacts
 - template table/proof receipts and one-level route-family commitments
 
 What is still early or missing:

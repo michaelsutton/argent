@@ -848,8 +848,8 @@ runtime pieces into a small crate whose dependency tree is easy to port:
 argent-artifact
   serde-only schema and codec
 
-argent-builder
-  artifact + tx construction helpers
+argent-runtime
+  compiled artifact runtime helpers and TxBuilder
 
 argentc
   parser, compiler model, Silverscript generation, artifact emission
@@ -860,7 +860,7 @@ The dependency rule should be enforced by code review and tests:
 ```text
 argentc -> silverscript-lang: allowed
 argent-artifact -> silverscript-lang: forbidden
-argent-builder -> silverscript-lang: forbidden
+argent-runtime -> silverscript-lang: forbidden
 ```
 
 ## Near-Term Cut

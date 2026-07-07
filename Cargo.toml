@@ -5,11 +5,12 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [workspace]
-members = [".", "crates/argent-artifact", "crates/silverscript-abi"]
+members = [".", "crates/argent-artifact", "crates/argent-runtime", "crates/silverscript-abi"]
 resolver = "3"
 
 [workspace.dependencies]
 argent-artifact = { path = "crates/argent-artifact" }
+argent-runtime = { path = "crates/argent-runtime" }
 blake2b_simd = "1.0.2"
 faster-hex = "0.10"
 kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa", tag = "v2.0.1" }
@@ -32,14 +33,15 @@ path = "src/main.rs"
 
 [dependencies]
 argent-artifact = { workspace = true }
+argent-runtime = { workspace = true }
 blake2b_simd = { workspace = true }
-kaspa-consensus-core = { workspace = true }
-kaspa-txscript = { workspace = true }
-kaspa-txscript-errors = { workspace = true }
 serde_json = { workspace = true }
 silverscript-abi = { workspace = true }
 silverscript-lang = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
+kaspa-consensus-core = { workspace = true }
+kaspa-txscript = { workspace = true }
+kaspa-txscript-errors = { workspace = true }
 secp256k1 = { workspace = true }

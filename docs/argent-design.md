@@ -94,9 +94,10 @@ Open questions:
 ## Transaction Builder Context
 
 Argent source should not expose prefix/suffix witnesses, route proofs, template
-preimages, or other Silverscript machinery. A generated transaction builder with
-an app context should wrap the lower-level Silverscript builders and supply this
-material.
+preimages, or other Silverscript machinery. The `argent-runtime` crate provides
+the current artifact-level `TxBuilder`; a future generated transaction builder
+with an app context can wrap that lower-level surface and supply this material
+behind app-specific methods.
 
 Open questions:
 
@@ -126,7 +127,7 @@ generated validation: validateOutputStateWithTemplate(...) or validateOutputStat
 ```
 
 The artifact records the receipts behind this shape: route tables, canonical
-route proofs, route-family metadata, and witness recipes. The tx builder can
+route proofs, route-family metadata, and witness recipes. `argent-runtime` can
 fill the hidden witnesses from those receipts for tests and prototype tooling.
 
 Larger apps may still need deeper Merkle cuts later, but that should replace the
