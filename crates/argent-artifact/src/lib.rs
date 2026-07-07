@@ -78,7 +78,7 @@ pub struct TemplatePlanArtifact {
     #[serde(default)]
     pub route_tables: Vec<RouteTemplateTableArtifact>,
     #[serde(default)]
-    pub route_trees: Vec<RouteTemplateTreeArtifact>,
+    pub route_proofs: Vec<RouteTemplateProofArtifact>,
     #[serde(default)]
     pub route_families: Vec<RouteTemplateFamilyArtifact>,
     pub witness_recipes: Vec<TemplateWitnessRecipeArtifact>,
@@ -140,29 +140,29 @@ pub struct RouteTemplateTableEntryArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteTemplateTreeArtifact {
+pub struct RouteTemplateProofArtifact {
     pub id: String,
     pub table_id: String,
     pub state: String,
     pub field: String,
     pub root_hex: String,
-    pub leaves: Vec<RouteTemplateTreeLeafArtifact>,
+    pub leaves: Vec<RouteTemplateProofLeafArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteTemplateTreeLeafArtifact {
+pub struct RouteTemplateProofLeafArtifact {
     pub index: usize,
     #[serde(flatten)]
     pub leaf: RouteTemplateLeafArtifact,
     pub hash_hex: String,
-    pub opening: Vec<RouteTemplateTreeOpeningStepArtifact>,
+    pub proof: Vec<RouteTemplateProofStepArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RouteTemplateLeafArtifact {
     Template { actor: String, template_id: String },
-    RouteFamily { family_id: String, tree_id: String },
+    RouteFamily { family_id: String, proof_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -176,14 +176,14 @@ pub struct RouteTemplateFamilyArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RouteTemplateTreeOpeningStepArtifact {
-    pub side: RouteTemplateTreeOpeningSideArtifact,
+pub struct RouteTemplateProofStepArtifact {
+    pub side: RouteTemplateProofSideArtifact,
     pub hash_hex: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum RouteTemplateTreeOpeningSideArtifact {
+pub enum RouteTemplateProofSideArtifact {
     Left,
     Right,
 }
@@ -197,7 +197,7 @@ pub struct TemplateWitnessRecipeArtifact {
     pub param: String,
     pub purpose: HiddenParamPurposeArtifact,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route_tree_id: Option<String>,
+    pub route_proof_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,7 +242,7 @@ pub struct WitnessArtifact {
     pub subject: HiddenParamSubjectArtifact,
     pub purpose: HiddenParamPurposeArtifact,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route_tree_id: Option<String>,
+    pub route_proof_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,7 +254,7 @@ pub struct HiddenParamArtifact {
     pub subject: HiddenParamSubjectArtifact,
     pub purpose: HiddenParamPurposeArtifact,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub route_tree_id: Option<String>,
+    pub route_proof_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -272,9 +272,9 @@ pub enum HiddenParamPurposeArtifact {
     TemplatePrefixLen,
     TemplateSuffixLen,
     RouteTemplateLeaf,
-    RouteTemplateOpening,
+    RouteTemplateProof,
     RouteFamilyTable,
-    RouteFamilyOpening,
+    RouteFamilyProof,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -364,8 +364,8 @@ pub enum TemplatePlanError {
     DuplicateTemplateId(String),
     #[error("duplicate route template table id `{0}`")]
     DuplicateRouteTableId(String),
-    #[error("duplicate route template tree id `{0}`")]
-    DuplicateRouteTreeId(String),
+    #[error("duplicate route template proof id `{0}`")]
+    DuplicateRouteProofId(String),
     #[error("duplicate witness recipe id `{0}`")]
     DuplicateWitnessRecipeId(String),
     #[error("template ref `{actor}` points at missing receipt `{id}`")]
@@ -392,8 +392,8 @@ pub enum TemplatePlanError {
     RouteTableTemplateMismatch { id: String, actor: String, template_id: String, template_actor: String },
     #[error("route template table `{id}` entry points at missing route family `{family_id}`")]
     MissingRouteTableFamily { id: String, family_id: String },
-    #[error("route template table `{id}` entry for route family `{family_id}` points at tree `{tree_id}`, expected `{expected}`")]
-    RouteTableFamilyTreeMismatch { id: String, family_id: String, tree_id: String, expected: String },
+    #[error("route template table `{id}` entry for route family `{family_id}` points at proof `{proof_id}`, expected `{expected}`")]
+    RouteTableFamilyProofMismatch { id: String, family_id: String, proof_id: String, expected: String },
     #[error("route template table `{id}` entry {index} has offset `{offset}`, expected `{expected}`")]
     RouteTableOffsetMismatch { id: String, index: usize, offset: usize, expected: usize },
     #[error("runtime state `{contract}` field `{field}` points at missing route template table `{id}`")]
@@ -406,20 +406,22 @@ pub enum TemplatePlanError {
     RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("route template table `{id}` is not referenced by any runtime state field")]
     UnreferencedRouteTable { id: String },
-    #[error("route template tree `{id}` points at missing route template table `{table_id}`")]
-    MissingRouteTreeTable { id: String, table_id: String },
-    #[error("route template table `{table_id}` has no route template tree receipt")]
-    MissingRouteTree { table_id: String },
-    #[error("route template tree `{id}` does not match route template table `{table_id}`")]
-    RouteTreeTableMismatch { id: String, table_id: String },
-    #[error("route template tree `{id}` leaf {index} hash mismatch: expected `{expected}`, found `{found}`")]
-    RouteTreeLeafHashMismatch { id: String, index: usize, expected: String, found: String },
-    #[error("route template tree `{id}` root mismatch: expected `{expected}`, found `{found}`")]
-    RouteTreeRootMismatch { id: String, expected: String, found: String },
-    #[error("route template tree `{id}` leaf {index} opening resolves to `{found}`, expected root `{expected}`")]
-    RouteTreeOpeningMismatch { id: String, index: usize, expected: String, found: String },
-    #[error("route template tree `{id}` contains a recursive route family leaf `{family_id}`")]
+    #[error("route template proof `{id}` points at missing route template table `{table_id}`")]
+    MissingRouteProofTable { id: String, table_id: String },
+    #[error("route template table `{table_id}` has no route template proof receipt")]
+    MissingRouteProof { table_id: String },
+    #[error("route template proof `{id}` does not match route template table `{table_id}`")]
+    RouteProofTableMismatch { id: String, table_id: String },
+    #[error("route template proof `{id}` leaf {index} hash mismatch: expected `{expected}`, found `{found}`")]
+    RouteProofLeafHashMismatch { id: String, index: usize, expected: String, found: String },
+    #[error("route template proof `{id}` root mismatch: expected `{expected}`, found `{found}`")]
+    RouteProofRootMismatch { id: String, expected: String, found: String },
+    #[error("route template proof `{id}` leaf {index} proof resolves to `{found}`, expected root `{expected}`")]
+    RouteProofMismatch { id: String, index: usize, expected: String, found: String },
+    #[error("route template proof `{id}` contains a recursive route family leaf `{family_id}`")]
     RecursiveRouteFamilyLeaf { id: String, family_id: String },
+    #[error("route template family `{id}` table `{table_id}` contains nested route family leaf `{family_id}`")]
+    NestedRouteFamilyLeaf { id: String, table_id: String, family_id: String },
     #[error("duplicate route template family receipt `{0}`")]
     DuplicateRouteFamilyId(String),
     #[error("route template family `{id}` must contain at least two actors")]
@@ -436,16 +438,16 @@ pub enum TemplatePlanError {
     MissingRouteFamilyEntryActor { id: String, actor: String },
     #[error("route template family `{id}` actor `{actor}` owns state `{found}`, expected `{expected}`")]
     RouteFamilyStateMismatch { id: String, actor: String, expected: String, found: String },
-    #[error("route template family `{id}` points at missing tree `{tree_id}`")]
-    MissingRouteFamilyTree { id: String, tree_id: String },
-    #[error("route template family `{id}` points at tree `{tree_id}`, expected `{expected}`")]
-    RouteFamilyTreeMismatch { id: String, tree_id: String, expected: String },
+    #[error("route template family `{id}` points at missing route template table `{table_id}`")]
+    MissingRouteFamilyTable { id: String, table_id: String },
+    #[error("route template family `{id}` points at table `{table_id}`, expected `{expected}`")]
+    RouteFamilyTableMismatch { id: String, table_id: String, expected: String },
     #[error("witness recipe `{id}` references missing template receipt `{template_id}`")]
     MissingWitnessTemplate { id: String, template_id: String },
     #[error("witness recipe `{id}` references missing route family `{family_id}`")]
     MissingWitnessRouteFamily { id: String, family_id: String },
-    #[error("witness recipe `{id}` references missing route tree receipt `{route_tree_id}`")]
-    MissingWitnessRouteTree { id: String, route_tree_id: String },
+    #[error("witness recipe `{id}` references missing route proof receipt `{route_proof_id}`")]
+    MissingWitnessRouteProof { id: String, route_proof_id: String },
     #[error("witness recipe `{id}` actor `{actor}` does not match template receipt actor `{template_actor}`")]
     WitnessTemplateMismatch { id: String, actor: String, template_actor: String },
     #[error("hidden param `{entry}::{param}` points at missing witness recipe `{recipe_id}`")]
@@ -620,6 +622,10 @@ impl TemplatePlanArtifact {
             if !route_table_ids.insert(table.id.as_str()) {
                 return Err(TemplatePlanError::DuplicateRouteTableId(table.id.clone()));
             }
+            route_tables_by_id.insert(table.id.as_str(), table);
+        }
+
+        for table in &self.route_tables {
             let expected_byte_len = table.entries.len() * 32;
             if table.byte_len != expected_byte_len {
                 return Err(TemplatePlanError::RouteTableLenMismatch {
@@ -656,25 +662,31 @@ impl TemplatePlanArtifact {
                             });
                         }
                     }
-                    RouteTemplateLeafArtifact::RouteFamily { family_id, tree_id } => {
+                    RouteTemplateLeafArtifact::RouteFamily { family_id, proof_id } => {
                         let Some(family) = route_families_by_id.get(family_id.as_str()) else {
                             return Err(TemplatePlanError::MissingRouteTableFamily {
                                 id: table.id.clone(),
                                 family_id: family_id.clone(),
                             });
                         };
-                        if tree_id != &family.table_id {
-                            return Err(TemplatePlanError::RouteTableFamilyTreeMismatch {
+                        let Some(family_table) = route_tables_by_id.get(family.table_id.as_str()) else {
+                            return Err(TemplatePlanError::MissingRouteFamilyTable {
+                                id: family.id.clone(),
+                                table_id: family.table_id.clone(),
+                            });
+                        };
+                        let expected_proof_id = route_template_proof_receipt_id(&family_table.state, &family_table.field);
+                        if proof_id != &expected_proof_id {
+                            return Err(TemplatePlanError::RouteTableFamilyProofMismatch {
                                 id: table.id.clone(),
                                 family_id: family_id.clone(),
-                                tree_id: tree_id.clone(),
-                                expected: family.table_id.clone(),
+                                proof_id: proof_id.clone(),
+                                expected: expected_proof_id,
                             });
                         }
                     }
                 }
             }
-            route_tables_by_id.insert(table.id.as_str(), table);
         }
 
         let mut referenced_route_table_ids = BTreeSet::new();
@@ -745,33 +757,42 @@ impl TemplatePlanArtifact {
             }
         }
 
-        let mut route_tree_ids = BTreeSet::new();
-        let mut route_trees_by_id = BTreeMap::new();
-        for tree in &self.route_trees {
-            if !route_tree_ids.insert(tree.id.as_str()) {
-                return Err(TemplatePlanError::DuplicateRouteTreeId(tree.id.clone()));
+        let mut route_proof_ids = BTreeSet::new();
+        let mut route_proofs_by_id = BTreeMap::new();
+        for proof in &self.route_proofs {
+            if !route_proof_ids.insert(proof.id.as_str()) {
+                return Err(TemplatePlanError::DuplicateRouteProofId(proof.id.clone()));
             }
-            if !route_tables_by_id.contains_key(tree.table_id.as_str()) {
-                return Err(TemplatePlanError::MissingRouteTreeTable { id: tree.id.clone(), table_id: tree.table_id.clone() });
+            if !route_tables_by_id.contains_key(proof.table_id.as_str()) {
+                return Err(TemplatePlanError::MissingRouteProofTable { id: proof.id.clone(), table_id: proof.table_id.clone() });
             }
-            route_trees_by_id.insert(tree.id.as_str(), tree);
+            route_proofs_by_id.insert(proof.id.as_str(), proof);
         }
-        for tree in &self.route_trees {
+        for proof in &self.route_proofs {
             let table = route_tables_by_id
-                .get(tree.table_id.as_str())
-                .expect("route tree table existence was checked when indexing route trees");
-            verify_route_template_tree(tree, table, &templates_by_id, &route_trees_by_id)?;
+                .get(proof.table_id.as_str())
+                .expect("route proof table existence was checked when indexing route proofs");
+            verify_route_template_proof(proof, table, &templates_by_id, &route_proofs_by_id)?;
         }
         for table in &self.route_tables {
-            let expected_tree_id = route_template_tree_receipt_id(&table.state, &table.field);
-            if !route_tree_ids.contains(expected_tree_id.as_str()) {
-                return Err(TemplatePlanError::MissingRouteTree { table_id: table.id.clone() });
+            let expected_proof_id = route_template_proof_receipt_id(&table.state, &table.field);
+            if !route_proof_ids.contains(expected_proof_id.as_str()) {
+                return Err(TemplatePlanError::MissingRouteProof { table_id: table.id.clone() });
             }
         }
         for family in &self.route_families {
             let Some(table) = route_tables_by_id.get(family.table_id.as_str()) else {
-                return Err(TemplatePlanError::MissingRouteFamilyTree { id: family.id.clone(), tree_id: family.table_id.clone() });
+                return Err(TemplatePlanError::MissingRouteFamilyTable { id: family.id.clone(), table_id: family.table_id.clone() });
             };
+            for entry in &table.entries {
+                if let RouteTemplateLeafArtifact::RouteFamily { family_id, .. } = &entry.leaf {
+                    return Err(TemplatePlanError::NestedRouteFamilyLeaf {
+                        id: family.id.clone(),
+                        table_id: family.table_id.clone(),
+                        family_id: family_id.clone(),
+                    });
+                }
+            }
             let table_actors = table
                 .entries
                 .iter()
@@ -789,9 +810,9 @@ impl TemplatePlanArtifact {
             let expected_table_actors =
                 family.actors.iter().filter(|actor| !direct_template_actor_set.contains(actor.as_str())).cloned().collect::<Vec<_>>();
             if table.state != family.state || table_actors != expected_table_actors {
-                return Err(TemplatePlanError::RouteFamilyTreeMismatch {
+                return Err(TemplatePlanError::RouteFamilyTableMismatch {
                     id: family.id.clone(),
-                    tree_id: family.table_id.clone(),
+                    table_id: family.table_id.clone(),
                     expected: format!("state {} table actors {:?}", family.state, expected_table_actors),
                 });
             }
@@ -831,12 +852,12 @@ impl TemplatePlanArtifact {
                     }
                 }
             }
-            if let Some(route_tree_id) = &recipe.route_tree_id
-                && !route_tree_ids.contains(route_tree_id.as_str())
+            if let Some(route_proof_id) = &recipe.route_proof_id
+                && !route_proof_ids.contains(route_proof_id.as_str())
             {
-                return Err(TemplatePlanError::MissingWitnessRouteTree {
+                return Err(TemplatePlanError::MissingWitnessRouteProof {
                     id: recipe.id.clone(),
-                    route_tree_id: route_tree_id.clone(),
+                    route_proof_id: route_proof_id.clone(),
                 });
             }
             recipes_by_id.insert(recipe.id.as_str(), recipe);
@@ -858,7 +879,7 @@ impl TemplatePlanArtifact {
                     if recipe.param != param.name
                         || recipe.subject != param.subject
                         || recipe.purpose != param.purpose
-                        || recipe.route_tree_id != param.route_tree_id
+                        || recipe.route_proof_id != param.route_proof_id
                     {
                         return Err(TemplatePlanError::HiddenParamRecipeMismatch {
                             entry: entry_id.clone(),
@@ -879,7 +900,7 @@ impl TemplatePlanArtifact {
                     if recipe.param != witness.param
                         || recipe.subject != witness.subject
                         || recipe.purpose != witness.purpose
-                        || recipe.route_tree_id != witness.route_tree_id
+                        || recipe.route_proof_id != witness.route_proof_id
                     {
                         return Err(TemplatePlanError::EntryWitnessRecipeMismatch {
                             entry: entry_id.clone(),
@@ -966,8 +987,8 @@ pub fn route_template_table_receipt_id(state: &str, field: &str) -> String {
     format!("route_table/{state}/{field}")
 }
 
-pub fn route_template_tree_receipt_id(state: &str, field: &str) -> String {
-    format!("route_tree/{state}/{field}")
+pub fn route_template_proof_receipt_id(state: &str, field: &str) -> String {
+    format!("route_proof/{state}/{field}")
 }
 
 fn runtime_leaf_for_route_leaf(leaf: &RouteTemplateLeafArtifact) -> RuntimeRouteLeafArtifact {
@@ -1002,25 +1023,25 @@ fn route_template_leaf_hash(
             }
             decode_hash_hex(&template.id, &template.hash_hex)
         }
-        RouteTemplateLeafArtifact::RouteFamily { family_id, tree_id } => {
-            let Some(root_hex) = digest_roots.get(tree_id) else {
-                return Err(TemplatePlanError::RouteTableFamilyTreeMismatch {
+        RouteTemplateLeafArtifact::RouteFamily { family_id, proof_id } => {
+            let Some(root_hex) = digest_roots.get(proof_id) else {
+                return Err(TemplatePlanError::RouteTableFamilyProofMismatch {
                     id: table_id.to_string(),
                     family_id: family_id.clone(),
-                    tree_id: tree_id.clone(),
+                    proof_id: proof_id.clone(),
                     expected: String::new(),
                 });
             };
-            decode_hash_hex(tree_id, root_hex)
+            decode_hash_hex(proof_id, root_hex)
         }
     }
 }
 
-pub fn route_template_tree_from_table(
+pub fn route_template_proof_from_table(
     table: &RouteTemplateTableArtifact,
     templates: &[TemplatePlanTemplateArtifact],
     digest_roots: &std::collections::BTreeMap<String, String>,
-) -> std::result::Result<RouteTemplateTreeArtifact, TemplatePlanError> {
+) -> std::result::Result<RouteTemplateProofArtifact, TemplatePlanError> {
     let templates_by_id =
         templates.iter().map(|template| (template.id.as_str(), template)).collect::<std::collections::BTreeMap<_, _>>();
     let mut leaf_hashes = Vec::with_capacity(table.entries.len());
@@ -1030,19 +1051,19 @@ pub fn route_template_tree_from_table(
         leaf_hashes.push(leaf_hash);
     }
 
-    let layers = route_template_tree_layers(&leaf_hashes);
-    let root_hex = route_template_tree_root_hex(&layers);
+    let layers = route_template_merkle_layers(&leaf_hashes);
+    let root_hex = route_template_merkle_root_hex(&layers);
     for (position, (entry, template_hash)) in table.entries.iter().zip(leaf_hashes.iter()).enumerate() {
-        leaves.push(RouteTemplateTreeLeafArtifact {
+        leaves.push(RouteTemplateProofLeafArtifact {
             index: entry.index,
             leaf: entry.leaf.clone(),
             hash_hex: encode_hex(template_hash),
-            opening: route_template_tree_opening(&layers, position),
+            proof: route_template_merkle_proof(&layers, position),
         });
     }
 
-    Ok(RouteTemplateTreeArtifact {
-        id: route_template_tree_receipt_id(&table.state, &table.field),
+    Ok(RouteTemplateProofArtifact {
+        id: route_template_proof_receipt_id(&table.state, &table.field),
         table_id: table.id.clone(),
         state: table.state.clone(),
         field: table.field.clone(),
@@ -1051,73 +1072,73 @@ pub fn route_template_tree_from_table(
     })
 }
 
-fn verify_route_template_tree(
-    tree: &RouteTemplateTreeArtifact,
+fn verify_route_template_proof(
+    proof: &RouteTemplateProofArtifact,
     table: &RouteTemplateTableArtifact,
     templates_by_id: &std::collections::BTreeMap<&str, &TemplatePlanTemplateArtifact>,
-    route_trees_by_id: &std::collections::BTreeMap<&str, &RouteTemplateTreeArtifact>,
+    route_proofs_by_id: &std::collections::BTreeMap<&str, &RouteTemplateProofArtifact>,
 ) -> std::result::Result<(), TemplatePlanError> {
-    let expected_id = route_template_tree_receipt_id(&table.state, &table.field);
-    if tree.id != expected_id
-        || tree.table_id != table.id
-        || tree.state != table.state
-        || tree.field != table.field
-        || tree.leaves.len() != table.entries.len()
+    let expected_id = route_template_proof_receipt_id(&table.state, &table.field);
+    if proof.id != expected_id
+        || proof.table_id != table.id
+        || proof.state != table.state
+        || proof.field != table.field
+        || proof.leaves.len() != table.entries.len()
     {
-        return Err(TemplatePlanError::RouteTreeTableMismatch { id: tree.id.clone(), table_id: tree.table_id.clone() });
+        return Err(TemplatePlanError::RouteProofTableMismatch { id: proof.id.clone(), table_id: proof.table_id.clone() });
     }
 
-    let digest_roots = route_trees_by_id
+    let digest_roots = route_proofs_by_id
         .iter()
-        .map(|(id, tree)| ((*id).to_string(), tree.root_hex.clone()))
+        .map(|(id, proof)| ((*id).to_string(), proof.root_hex.clone()))
         .collect::<std::collections::BTreeMap<_, _>>();
     let mut expected_leaf_hashes = Vec::with_capacity(table.entries.len());
     for entry in &table.entries {
         expected_leaf_hashes.push(route_template_leaf_hash(&table.id, &entry.leaf, templates_by_id, &digest_roots)?);
     }
-    let expected_layers = route_template_tree_layers(&expected_leaf_hashes);
-    let expected_root_hex = route_template_tree_root_hex(&expected_layers);
-    if tree.root_hex != expected_root_hex {
-        return Err(TemplatePlanError::RouteTreeRootMismatch {
-            id: tree.id.clone(),
+    let expected_layers = route_template_merkle_layers(&expected_leaf_hashes);
+    let expected_root_hex = route_template_merkle_root_hex(&expected_layers);
+    if proof.root_hex != expected_root_hex {
+        return Err(TemplatePlanError::RouteProofRootMismatch {
+            id: proof.id.clone(),
             expected: expected_root_hex,
-            found: tree.root_hex.clone(),
+            found: proof.root_hex.clone(),
         });
     }
 
-    let root = decode_hash_hex(&tree.id, &tree.root_hex)?;
-    for (index, (leaf, entry)) in tree.leaves.iter().zip(table.entries.iter()).enumerate() {
+    let root = decode_hash_hex(&proof.id, &proof.root_hex)?;
+    for (index, (leaf, entry)) in proof.leaves.iter().zip(table.entries.iter()).enumerate() {
         if leaf.index != entry.index || leaf.leaf != entry.leaf {
-            return Err(TemplatePlanError::RouteTreeTableMismatch { id: tree.id.clone(), table_id: tree.table_id.clone() });
+            return Err(TemplatePlanError::RouteProofTableMismatch { id: proof.id.clone(), table_id: proof.table_id.clone() });
         }
-        if let RouteTemplateLeafArtifact::RouteFamily { family_id, tree_id } = &leaf.leaf
-            && tree_id == &tree.id
+        if let RouteTemplateLeafArtifact::RouteFamily { family_id, proof_id } = &leaf.leaf
+            && proof_id == &proof.id
         {
-            return Err(TemplatePlanError::RecursiveRouteFamilyLeaf { id: tree.id.clone(), family_id: family_id.clone() });
+            return Err(TemplatePlanError::RecursiveRouteFamilyLeaf { id: proof.id.clone(), family_id: family_id.clone() });
         }
         let expected_hash_hex = encode_hex(&expected_leaf_hashes[index]);
         if leaf.hash_hex != expected_hash_hex {
-            return Err(TemplatePlanError::RouteTreeLeafHashMismatch {
-                id: tree.id.clone(),
+            return Err(TemplatePlanError::RouteProofLeafHashMismatch {
+                id: proof.id.clone(),
                 index,
                 expected: expected_hash_hex,
                 found: leaf.hash_hex.clone(),
             });
         }
-        let expected_opening = route_template_tree_opening(&expected_layers, index);
-        if leaf.opening != expected_opening {
-            let resolved = route_template_tree_opening_root(&tree.id, &leaf.hash_hex, &leaf.opening)?;
-            return Err(TemplatePlanError::RouteTreeOpeningMismatch {
-                id: tree.id.clone(),
+        let expected_proof = route_template_merkle_proof(&expected_layers, index);
+        if leaf.proof != expected_proof {
+            let resolved = route_template_merkle_proof_root(&proof.id, &leaf.hash_hex, &leaf.proof)?;
+            return Err(TemplatePlanError::RouteProofMismatch {
+                id: proof.id.clone(),
                 index,
                 expected: encode_hex(&root),
                 found: encode_hex(&resolved),
             });
         }
-        let resolved = route_template_tree_opening_root(&tree.id, &leaf.hash_hex, &leaf.opening)?;
+        let resolved = route_template_merkle_proof_root(&proof.id, &leaf.hash_hex, &leaf.proof)?;
         if resolved != root {
-            return Err(TemplatePlanError::RouteTreeOpeningMismatch {
-                id: tree.id.clone(),
+            return Err(TemplatePlanError::RouteProofMismatch {
+                id: proof.id.clone(),
                 index,
                 expected: encode_hex(&root),
                 found: encode_hex(&resolved),
@@ -1128,7 +1149,7 @@ fn verify_route_template_tree(
     Ok(())
 }
 
-fn route_template_tree_layers(leaves: &[[u8; 32]]) -> Vec<Vec<[u8; 32]>> {
+fn route_template_merkle_layers(leaves: &[[u8; 32]]) -> Vec<Vec<[u8; 32]>> {
     if leaves.is_empty() {
         return Vec::new();
     }
@@ -1140,53 +1161,53 @@ fn route_template_tree_layers(leaves: &[[u8; 32]]) -> Vec<Vec<[u8; 32]>> {
         for pair in current.chunks(2) {
             let left = pair[0];
             let right = pair.get(1).copied().unwrap_or(left);
-            next.push(route_template_tree_parent(&left, &right));
+            next.push(route_template_merkle_parent(&left, &right));
         }
         layers.push(next);
     }
     layers
 }
 
-fn route_template_tree_root_hex(layers: &[Vec<[u8; 32]>]) -> String {
-    layers.last().and_then(|layer| layer.first()).map(|hash| encode_hex(hash)).unwrap_or_else(route_template_empty_tree_root_hex)
+fn route_template_merkle_root_hex(layers: &[Vec<[u8; 32]>]) -> String {
+    layers.last().and_then(|layer| layer.first()).map(|hash| encode_hex(hash)).unwrap_or_else(route_template_empty_merkle_root_hex)
 }
 
-fn route_template_empty_tree_root_hex() -> String {
+fn route_template_empty_merkle_root_hex() -> String {
     let hash = blake2b_simd::Params::new().hash_length(32).to_state().finalize();
     encode_hex(hash.as_bytes())
 }
 
-fn route_template_tree_opening(layers: &[Vec<[u8; 32]>], mut index: usize) -> Vec<RouteTemplateTreeOpeningStepArtifact> {
-    let mut opening = Vec::new();
+fn route_template_merkle_proof(layers: &[Vec<[u8; 32]>], mut index: usize) -> Vec<RouteTemplateProofStepArtifact> {
+    let mut proof = Vec::new();
     for layer in layers.iter().take(layers.len().saturating_sub(1)) {
         let is_left_child = index.is_multiple_of(2);
         let sibling_index = if is_left_child { (index + 1).min(layer.len() - 1) } else { index - 1 };
-        opening.push(RouteTemplateTreeOpeningStepArtifact {
-            side: if is_left_child { RouteTemplateTreeOpeningSideArtifact::Right } else { RouteTemplateTreeOpeningSideArtifact::Left },
+        proof.push(RouteTemplateProofStepArtifact {
+            side: if is_left_child { RouteTemplateProofSideArtifact::Right } else { RouteTemplateProofSideArtifact::Left },
             hash_hex: encode_hex(&layer[sibling_index]),
         });
         index /= 2;
     }
-    opening
+    proof
 }
 
-fn route_template_tree_opening_root(
+fn route_template_merkle_proof_root(
     id: &str,
     leaf_hash_hex: &str,
-    opening: &[RouteTemplateTreeOpeningStepArtifact],
+    proof: &[RouteTemplateProofStepArtifact],
 ) -> std::result::Result<[u8; 32], TemplatePlanError> {
     let mut resolved = decode_hash_hex(id, leaf_hash_hex)?;
-    for step in opening {
+    for step in proof {
         let sibling = decode_hash_hex(id, &step.hash_hex)?;
         resolved = match step.side {
-            RouteTemplateTreeOpeningSideArtifact::Left => route_template_tree_parent(&sibling, &resolved),
-            RouteTemplateTreeOpeningSideArtifact::Right => route_template_tree_parent(&resolved, &sibling),
+            RouteTemplateProofSideArtifact::Left => route_template_merkle_parent(&sibling, &resolved),
+            RouteTemplateProofSideArtifact::Right => route_template_merkle_parent(&resolved, &sibling),
         };
     }
     Ok(resolved)
 }
 
-fn route_template_tree_parent(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
+fn route_template_merkle_parent(left: &[u8; 32], right: &[u8; 32]) -> [u8; 32] {
     let hash = blake2b_simd::Params::new().hash_length(32).to_state().update(left).update(right).finalize();
     hash.as_bytes().try_into().expect("hash length is fixed at 32 bytes")
 }
@@ -1438,6 +1459,174 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_nested_route_family_table_leaf() {
+        let template_hash = template_hash_hex("template/test", "", "").expect("empty template hash is valid");
+        let templates = ["Mux", "Pawn", "Knight", "Bishop"]
+            .into_iter()
+            .map(|actor| TemplatePlanTemplateArtifact {
+                id: test_template_receipt_id(actor),
+                actor: actor.to_string(),
+                contract: actor.to_string(),
+                symbol: format!("gen__{}_template", actor.to_ascii_lowercase()),
+                hash_hex: template_hash.clone(),
+            })
+            .collect::<Vec<_>>();
+
+        let inner_family_id = "route_family/BoardState/knight".to_string();
+        let inner_table = RouteTemplateTableArtifact {
+            id: route_template_table_receipt_id("BoardState", "gen__knight_routes"),
+            state: "BoardState".to_string(),
+            field: "gen__knight_routes".to_string(),
+            byte_len: 32,
+            entries: vec![RouteTemplateTableEntryArtifact {
+                index: 0,
+                offset: 0,
+                leaf: RouteTemplateLeafArtifact::Template {
+                    actor: "Bishop".to_string(),
+                    template_id: test_template_receipt_id("Bishop"),
+                },
+            }],
+        };
+        let inner_proof = route_template_proof_from_table(&inner_table, &templates, &std::collections::BTreeMap::new())
+            .expect("inner proof is valid");
+
+        let outer_table = RouteTemplateTableArtifact {
+            id: route_template_table_receipt_id("BoardState", "gen__mux_routes"),
+            state: "BoardState".to_string(),
+            field: "gen__mux_routes".to_string(),
+            byte_len: 64,
+            entries: vec![
+                RouteTemplateTableEntryArtifact {
+                    index: 0,
+                    offset: 0,
+                    leaf: RouteTemplateLeafArtifact::Template {
+                        actor: "Pawn".to_string(),
+                        template_id: test_template_receipt_id("Pawn"),
+                    },
+                },
+                RouteTemplateTableEntryArtifact {
+                    index: 1,
+                    offset: 32,
+                    leaf: RouteTemplateLeafArtifact::RouteFamily {
+                        family_id: inner_family_id.clone(),
+                        proof_id: inner_proof.id.clone(),
+                    },
+                },
+            ],
+        };
+        let digest_roots = std::collections::BTreeMap::from([(inner_proof.id.clone(), inner_proof.root_hex.clone())]);
+        let outer_proof = route_template_proof_from_table(&outer_table, &templates, &digest_roots).expect("outer proof is valid");
+
+        let artifact = Artifact {
+            schema_version: ARTIFACT_SCHEMA_VERSION,
+            generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
+            app: "NestedFamily".to_string(),
+            root: "nested.ag".to_string(),
+            modules: Vec::new(),
+            argent: ArgentArtifact {
+                templates: templates
+                    .iter()
+                    .map(|template| TemplateRefArtifact {
+                        id: template.id.clone(),
+                        actor: template.actor.clone(),
+                        symbol: template.symbol.clone(),
+                    })
+                    .collect(),
+                template_plan: TemplatePlanArtifact {
+                    templates,
+                    runtime_states: vec![
+                        RuntimeStatePlanArtifact {
+                            contract: "Mux".to_string(),
+                            source: "BoardState".to_string(),
+                            field_roles: vec![RuntimeFieldRolePlanArtifact {
+                                name: "gen__mux_routes".to_string(),
+                                role: RuntimeFieldRoleArtifact::TemplateRoot {
+                                    leaves: vec![
+                                        RuntimeRouteLeafArtifact::Contract { contract: "Pawn".to_string() },
+                                        RuntimeRouteLeafArtifact::Digest { id: inner_family_id.clone() },
+                                    ],
+                                },
+                            }],
+                        },
+                        RuntimeStatePlanArtifact {
+                            contract: "Knight".to_string(),
+                            source: "BoardState".to_string(),
+                            field_roles: vec![RuntimeFieldRolePlanArtifact {
+                                name: "gen__knight_routes".to_string(),
+                                role: RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["Bishop".to_string()] },
+                            }],
+                        },
+                    ],
+                    route_tables: vec![outer_table, inner_table],
+                    route_proofs: vec![outer_proof, inner_proof],
+                    route_families: vec![
+                        RouteTemplateFamilyArtifact {
+                            id: "route_family/BoardState/mux".to_string(),
+                            state: "BoardState".to_string(),
+                            anchor_actor: "Mux".to_string(),
+                            entry_actors: vec!["Mux".to_string()],
+                            table_id: route_template_table_receipt_id("BoardState", "gen__mux_routes"),
+                            actors: vec!["Mux".to_string(), "Pawn".to_string()],
+                        },
+                        RouteTemplateFamilyArtifact {
+                            id: inner_family_id.clone(),
+                            state: "BoardState".to_string(),
+                            anchor_actor: "Knight".to_string(),
+                            entry_actors: vec!["Knight".to_string()],
+                            table_id: route_template_table_receipt_id("BoardState", "gen__knight_routes"),
+                            actors: vec!["Knight".to_string(), "Bishop".to_string()],
+                        },
+                    ],
+                    witness_recipes: Vec::new(),
+                },
+                states: Vec::new(),
+                actors: ["Mux", "Pawn", "Knight", "Bishop"]
+                    .into_iter()
+                    .map(|actor| ActorArtifact {
+                        name: actor.to_string(),
+                        state: "BoardState".to_string(),
+                        abi: ActorAbiRefArtifact { actor: actor.to_string() },
+                        entries: Vec::new(),
+                    })
+                    .collect(),
+            },
+            sil_abi: SilAbiArtifact {
+                schema_version: SIL_ABI_SCHEMA_VERSION,
+                states: Vec::new(),
+                contracts: vec![
+                    test_contract(
+                        "Mux",
+                        "BoardState",
+                        vec![RuntimeFieldArtifact { name: "gen__mux_routes".to_string(), ty: TypeArtifact::FixedBytes { len: 32 } }],
+                        &template_hash,
+                    ),
+                    test_contract("Pawn", "BoardState", Vec::new(), &template_hash),
+                    test_contract(
+                        "Knight",
+                        "BoardState",
+                        vec![RuntimeFieldArtifact {
+                            name: "gen__knight_routes".to_string(),
+                            ty: TypeArtifact::FixedBytes { len: 32 },
+                        }],
+                        &template_hash,
+                    ),
+                    test_contract("Bishop", "BoardState", Vec::new(), &template_hash),
+                ],
+            },
+        };
+
+        let err = artifact.verify_template_plan().expect_err("nested family tables must be rejected");
+        assert_eq!(
+            err,
+            TemplatePlanError::NestedRouteFamilyLeaf {
+                id: "route_family/BoardState/mux".to_string(),
+                table_id: "route_table/BoardState/gen__mux_routes".to_string(),
+                family_id: inner_family_id
+            }
+        );
+    }
+
     fn artifact_with_route_families(route_families: Vec<RouteTemplateFamilyArtifact>) -> Artifact {
         Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
@@ -1466,5 +1655,27 @@ mod tests {
             },
             sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states: Vec::new(), contracts: Vec::new() },
         }
+    }
+
+    fn test_contract(name: &str, state: &str, fields: Vec<RuntimeFieldArtifact>, template_hash: &str) -> SilContractArtifact {
+        SilContractArtifact {
+            name: name.to_string(),
+            source_path: format!("sil/{name}.sil"),
+            runtime_state: RuntimeStateArtifact { source: state.to_string(), fields },
+            entries: Vec::new(),
+            compiled: CompiledContractArtifact {
+                script_hex: String::new(),
+                template: CompiledTemplateArtifact {
+                    prefix_hex: String::new(),
+                    suffix_hex: String::new(),
+                    hash_hex: template_hash.to_string(),
+                },
+                state_span: StateSpanArtifact { offset: 0, len: 0 },
+            },
+        }
+    }
+
+    fn test_template_receipt_id(actor: &str) -> String {
+        format!("template/{}", actor.to_ascii_lowercase())
     }
 }

@@ -224,9 +224,9 @@
           ]
         }
       ],
-      "route_trees": [
+      "route_proofs": [
         {
-          "id": "route_tree/BoardState/gen__mux_routes",
+          "id": "route_proof/BoardState/gen__mux_routes",
           "table_id": "route_table/BoardState/gen__mux_routes",
           "state": "BoardState",
           "field": "gen__mux_routes",
@@ -238,7 +238,7 @@
               "actor": "Pawn",
               "template_id": "template/pawn",
               "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73",
-              "opening": [
+              "proof": [
                 {
                   "side": "right",
                   "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"
@@ -251,7 +251,7 @@
               "actor": "Knight",
               "template_id": "template/knight",
               "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73",
-              "opening": [
+              "proof": [
                 {
                   "side": "left",
                   "hash_hex": "56980cb72b92e1d56df3b4f9073a866a65fccd790f619e5c1a16556f14d44a73"

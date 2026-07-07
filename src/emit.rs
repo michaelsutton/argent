@@ -1861,7 +1861,7 @@ fn template_plan_artifact(
         }
     }
     let route_tables = route_template_tables_artifact(&runtime_states, sil_contracts)?;
-    let route_trees = route_template_trees_artifact(&route_tables, &templates)?;
+    let route_proofs = route_template_proofs_artifact(&route_tables, &templates)?;
     let route_families = route_template_families_artifact(model);
 
     let mut seen = BTreeSet::new();
@@ -1879,14 +1879,14 @@ fn template_plan_artifact(
                         subject: param.subject.clone(),
                         param: param.name.clone(),
                         purpose: param.purpose,
-                        route_tree_id: param.route_tree_id.clone(),
+                        route_proof_id: param.route_proof_id.clone(),
                     });
                 }
             }
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, runtime_states, route_tables, route_trees, route_families, witness_recipes })
+    Ok(TemplatePlanArtifact { templates, runtime_states, route_tables, route_proofs, route_families, witness_recipes })
 }
 
 fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamilyArtifact> {
@@ -1967,36 +1967,36 @@ fn route_template_tables_artifact(
     Ok(tables.into_values().collect())
 }
 
-fn route_template_trees_artifact(
+fn route_template_proofs_artifact(
     route_tables: &[RouteTemplateTableArtifact],
     templates: &[TemplatePlanTemplateArtifact],
-) -> Result<Vec<RouteTemplateTreeArtifact>> {
+) -> Result<Vec<RouteTemplateProofArtifact>> {
     let mut pending = route_tables.iter().collect::<Vec<_>>();
     let mut digest_roots = BTreeMap::<String, String>::new();
-    let mut trees = Vec::new();
+    let mut proofs = Vec::new();
     while !pending.is_empty() {
         let before = pending.len();
         let mut next_pending = Vec::new();
         for table in pending {
             let ready = table.entries.iter().all(|entry| match &entry.leaf {
                 RouteTemplateLeafArtifact::Template { .. } => true,
-                RouteTemplateLeafArtifact::RouteFamily { tree_id, .. } => digest_roots.contains_key(tree_id),
+                RouteTemplateLeafArtifact::RouteFamily { proof_id, .. } => digest_roots.contains_key(proof_id),
             });
             if !ready {
                 next_pending.push(table);
                 continue;
             }
-            let tree =
-                route_template_tree_from_table(table, templates, &digest_roots).map_err(|err| ArgentError::new(err.to_string()))?;
-            digest_roots.insert(tree.id.clone(), tree.root_hex.clone());
-            trees.push(tree);
+            let proof =
+                route_template_proof_from_table(table, templates, &digest_roots).map_err(|err| ArgentError::new(err.to_string()))?;
+            digest_roots.insert(proof.id.clone(), proof.root_hex.clone());
+            proofs.push(proof);
         }
         if next_pending.len() == before {
             return Err(ArgentError::new("route template tables contain an unresolved family digest dependency"));
         }
         pending = next_pending;
     }
-    Ok(trees)
+    Ok(proofs)
 }
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
@@ -2191,7 +2191,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Bytes,
                     subject: subject.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
-                    route_tree_id: None,
+                    route_proof_id: None,
                 });
                 hidden_params.push(HiddenParamArtifact {
                     recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes),
@@ -2199,7 +2199,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Bytes,
                     subject: subject.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
-                    route_tree_id: None,
+                    route_proof_id: None,
                 });
             }
             TemplateWitnessForm::Len => {
@@ -2209,7 +2209,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Int,
                     subject: subject.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
-                    route_tree_id: None,
+                    route_proof_id: None,
                 });
                 hidden_params.push(HiddenParamArtifact {
                     recipe_id: template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen),
@@ -2217,7 +2217,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     ty: TypeArtifact::Int,
                     subject: subject.clone(),
                     purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
-                    route_tree_id: None,
+                    route_proof_id: None,
                 });
             }
         }
@@ -2230,7 +2230,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             ty: TypeArtifact::FixedBytes { len: spec.byte_len },
             subject,
             purpose: HiddenParamPurposeArtifact::RouteFamilyTable,
-            route_tree_id: None,
+            route_proof_id: None,
         });
     }
     hidden_params
@@ -2245,7 +2245,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             param: param.name.clone(),
             subject: param.subject.clone(),
             purpose: param.purpose,
-            route_tree_id: param.route_tree_id.clone(),
+            route_proof_id: param.route_proof_id.clone(),
         })
         .collect::<Vec<_>>();
     Ok(EntryArtifact {
@@ -2589,14 +2589,14 @@ fn route_table_leaf_for_runtime_leaf(leaf: &RuntimeRouteLeafArtifact) -> RouteTe
             RouteTemplateLeafArtifact::Template { actor: contract.clone(), template_id: template_receipt_id(contract) }
         }
         RuntimeRouteLeafArtifact::Digest { id } => {
-            RouteTemplateLeafArtifact::RouteFamily { family_id: id.clone(), tree_id: route_family_tree_id_from_id(id) }
+            RouteTemplateLeafArtifact::RouteFamily { family_id: id.clone(), proof_id: route_family_proof_id_from_id(id) }
         }
     }
 }
 
-fn route_family_tree_id_from_id(family_id: &str) -> String {
+fn route_family_proof_id_from_id(family_id: &str) -> String {
     let state = family_id.strip_prefix("route_family/").and_then(|rest| rest.split('/').next()).unwrap_or("");
-    route_template_tree_receipt_id(state, &hidden_template_root_name())
+    route_template_proof_receipt_id(state, &hidden_template_root_name())
 }
 
 fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
@@ -2771,9 +2771,9 @@ fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str 
         HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
         HiddenParamPurposeArtifact::TemplateSuffixLen => "template_suffix_len",
         HiddenParamPurposeArtifact::RouteTemplateLeaf => "route_template_leaf",
-        HiddenParamPurposeArtifact::RouteTemplateOpening => "route_template_opening",
+        HiddenParamPurposeArtifact::RouteTemplateProof => "route_template_proof",
         HiddenParamPurposeArtifact::RouteFamilyTable => "route_family_table",
-        HiddenParamPurposeArtifact::RouteFamilyOpening => "route_family_opening",
+        HiddenParamPurposeArtifact::RouteFamilyProof => "route_family_proof",
     }
 }
 
@@ -3347,14 +3347,14 @@ mod tests {
         assert!(player_sil.contains("byte[32] gen__player_template = gen__init_player_template;"), "{player_sil}");
         assert!(player_sil.contains("byte[32] gen__stones_game_template = gen__init_stones_game_template;"), "{player_sil}");
         assert!(!player_sil.contains("gen__template_root"), "{player_sil}");
-        assert!(!player_sil.contains("gen__player_template_opening"), "{player_sil}");
+        assert!(!player_sil.contains("gen__player_template_proof"), "{player_sil}");
         assert!(
             !player_sil.contains("gen__template_table") && !player_sil.contains("gen__init_template_table"),
             "ordinary direct-template state should not store a packed table: {player_sil}"
         );
         assert!(
             !player_sil.contains("byte[32][]") && !player_sil.contains("byte[][]"),
-            "template roots/openings should use fixed bytes, not nested arrays: {player_sil}"
+            "template roots/proofs should use fixed bytes, not nested arrays: {player_sil}"
         );
         assert!(
             !player_sil.contains("gen__league_template"),
@@ -3416,7 +3416,7 @@ mod tests {
             RuntimeFieldRoleArtifact::Template { contract: "StonesSettle".to_string() }
         );
         assert!(artifact.argent.template_plan.route_tables.is_empty());
-        assert!(artifact.argent.template_plan.route_trees.is_empty());
+        assert!(artifact.argent.template_plan.route_proofs.is_empty());
         let sil_accept_start = player_contract.entry("accept_start").expect("accept_start Sil ABI entry exists");
         assert_eq!(
             sil_accept_start.params.iter().map(|param| (param.name.as_str(), param.ty.clone())).collect::<Vec<_>>(),
@@ -3524,7 +3524,7 @@ mod tests {
             enter_mux
                 .hidden_params
                 .iter()
-                .map(|param| (param.name.as_str(), subject_label(&param.subject), param.purpose, param.route_tree_id.as_deref()))
+                .map(|param| (param.name.as_str(), subject_label(&param.subject), param.purpose, param.route_proof_id.as_deref()))
                 .collect::<Vec<_>>(),
             vec![
                 ("gen__mux_prefix", "Mux", HiddenParamPurposeArtifact::TemplatePrefixBytes, None),

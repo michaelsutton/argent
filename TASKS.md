@@ -371,8 +371,8 @@ Obstacle to handle:
 
 ### 11. Add Basic Template Merklization
 
-Status: in progress. Completed route-root receipts, canonical route tree
-receipts, generated opening witnesses, and tx-builder witness filling. The
+Status: in progress. Completed route-root receipts, canonical route proof
+receipts, generated proof witnesses, and tx-builder witness filling. The
 current toy-chess fixture now infers direct route families from shared owned
 state plus direct `become` edges, then uses one-level expansion/packing so upper
 layers carry a family commitment without exposing every worker template.
@@ -383,14 +383,14 @@ rule plus optional developer hints that influence grouping/nesting.
 
 The first version should support:
 
-- one default tree over the actor templates an actor needs to reference;
+- one default proof receipt over the actor templates an actor needs to reference;
 - stable leaf identities based on artifact ids and actor ids;
-- generated proof/opening witnesses for the leaves each entrypoint needs;
-- artifact-visible tree metadata and witness recipes;
+- generated proof witnesses for the leaves each entrypoint needs;
+- artifact-visible proof metadata and witness recipes;
 - inferred direct route-family metadata for actors that share owned state and
   route to each other directly;
-- one-level route-family digest leaves that can be opened into an inner family
-  tree when routing into the family.
+- one-level route-family digest leaves that can be proven against an inner
+  family proof receipt when routing into the family.
 
 Family inference should affect layout only, not meaning. The compiler still owns
 dependency analysis, validates every referenced template, and emits a receipt
@@ -401,17 +401,17 @@ declarations.
 End-to-end test:
 
 - Build a fixture with several cross-actor `become` targets.
-- Verify the artifact records a deterministic Merkle tree and per-entry witness
+- Verify the artifact records a deterministic Merkle proof receipt and per-entry witness
   requirements.
-- Build a valid tx using generated openings instead of flat template fields.
-- Corrupt one opening or substitute a wrong leaf and assert rejection.
+- Build a valid tx using generated proofs instead of flat template fields.
+- Corrupt one proof or substitute a wrong leaf and assert rejection.
 - Add a chess-like fixture with `League`, `Player`, `Mux`, and a family of move
   workers. Infer the worker family from direct same-state route edges so the
   compiler can hide the mux family behind a route-family commitment from the
   `League`/`Player` layers.
 - Verify `League` and `Player` artifacts do not expose individual worker
-  template leaves or openings, while `Mux` and worker entrypoints still receive
-  the openings needed for selected routes.
+  template leaves or proof witnesses, while `Mux` and worker entrypoints still
+  receive the proofs needed for selected routes.
 
 Obstacle to handle:
 
@@ -522,7 +522,7 @@ Conceptually:
 TemplateHandle<StateView>
   template_hash
   Sil ABI / state layout class
-  template cut or prefix/suffix opening requirement
+  template cut or prefix/suffix proof requirement
   source-level state view exposed to Argent
 ```
 

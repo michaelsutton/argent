@@ -41,14 +41,14 @@ pub enum BuilderError {
     UnknownActor(String),
     #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
     RuntimeStatePlanMismatch { contract: String, message: String },
-    #[error("hidden param `{param}` is missing route tree metadata")]
-    MissingHiddenRouteTree { param: String },
-    #[error("unknown route tree `{0}`")]
-    UnknownRouteTree(String),
+    #[error("hidden param `{param}` is missing route proof metadata")]
+    MissingHiddenRouteProof { param: String },
+    #[error("unknown route proof `{0}`")]
+    UnknownRouteProof(String),
     #[error("unknown route table `{0}`")]
     UnknownRouteTable(String),
-    #[error("route tree `{route_tree_id}` has no leaf `{leaf}`")]
-    MissingRouteTreeLeaf { route_tree_id: String, leaf: String },
+    #[error("route proof `{route_proof_id}` has no leaf `{leaf}`")]
+    MissingRouteProofLeaf { route_proof_id: String, leaf: String },
     #[error("unknown route family `{0}`")]
     UnknownRouteFamily(String),
     #[error("route family table `{table_id}` contains nested route family `{family_id}`")]
@@ -144,29 +144,29 @@ impl<'a> ArtifactTxBuilder<'a> {
                     let actor = hidden_actor_subject(hidden)?;
                     ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?)
                 }
-                HiddenParamPurposeArtifact::RouteTemplateOpening => {
+                HiddenParamPurposeArtifact::RouteTemplateProof => {
                     let actor = hidden_actor_subject(hidden)?;
-                    let route_tree_id = hidden
-                        .route_tree_id
+                    let route_proof_id = hidden
+                        .route_proof_id
                         .as_deref()
-                        .ok_or_else(|| BuilderError::MissingHiddenRouteTree { param: hidden.name.clone() })?;
-                    ArtifactValue::Bytes(self.route_template_opening_bytes_for_actor(route_tree_id, actor)?)
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes_for_actor(route_proof_id, actor)?)
                 }
                 HiddenParamPurposeArtifact::RouteFamilyTable => {
                     let family_id = hidden_family_subject(hidden)?;
                     ArtifactValue::Bytes(self.route_family_table_bytes(family_id)?)
                 }
-                HiddenParamPurposeArtifact::RouteFamilyOpening => {
+                HiddenParamPurposeArtifact::RouteFamilyProof => {
                     let family_id = hidden_family_subject(hidden)?;
-                    let route_tree_id = hidden
-                        .route_tree_id
+                    let route_proof_id = hidden
+                        .route_proof_id
                         .as_deref()
-                        .ok_or_else(|| BuilderError::MissingHiddenRouteTree { param: hidden.name.clone() })?;
-                    ArtifactValue::Bytes(self.route_template_opening_bytes(
-                        route_tree_id,
+                        .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
+                    ArtifactValue::Bytes(self.route_template_proof_bytes(
+                        route_proof_id,
                         &RouteTemplateLeafArtifact::RouteFamily {
                             family_id: family_id.to_string(),
-                            tree_id: route_tree_id.to_string(),
+                            proof_id: route_proof_id.to_string(),
                         },
                     )?)
                 }
@@ -332,9 +332,9 @@ impl<'a> ArtifactTxBuilder<'a> {
                     values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
                 }
                 Some(RuntimeFieldRoleArtifact::TemplateRoot { .. }) => {
-                    let tree_id = crate::artifact::route_template_tree_receipt_id(&contract.runtime_state.source, &field.name);
-                    let tree = self.route_template_tree(&tree_id)?;
-                    values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&tree.root_hex)?));
+                    let proof_id = crate::artifact::route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
+                    let proof = self.route_template_proof(&proof_id)?;
+                    values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
                 }
             }
         }
@@ -344,41 +344,43 @@ impl<'a> ArtifactTxBuilder<'a> {
         Ok(values)
     }
 
-    fn route_template_tree(&self, route_tree_id: &str) -> BuilderResult<&crate::artifact::RouteTemplateTreeArtifact> {
+    fn route_template_proof(&self, route_proof_id: &str) -> BuilderResult<&crate::artifact::RouteTemplateProofArtifact> {
         self.artifact
             .argent
             .template_plan
-            .route_trees
+            .route_proofs
             .iter()
-            .find(|tree| tree.id == route_tree_id)
-            .ok_or_else(|| BuilderError::UnknownRouteTree(route_tree_id.to_string()))
+            .find(|proof| proof.id == route_proof_id)
+            .ok_or_else(|| BuilderError::UnknownRouteProof(route_proof_id.to_string()))
     }
 
-    fn route_template_opening_bytes(&self, route_tree_id: &str, wanted_leaf: &RouteTemplateLeafArtifact) -> BuilderResult<Vec<u8>> {
-        let tree = self.route_template_tree(route_tree_id)?;
-        let leaf = tree.leaves.iter().find(|leaf| &leaf.leaf == wanted_leaf).ok_or_else(|| BuilderError::MissingRouteTreeLeaf {
-            route_tree_id: route_tree_id.to_string(),
-            leaf: route_leaf_label(wanted_leaf),
+    fn route_template_proof_bytes(&self, route_proof_id: &str, wanted_leaf: &RouteTemplateLeafArtifact) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt.leaves.iter().find(|leaf| &leaf.leaf == wanted_leaf).ok_or_else(|| {
+            BuilderError::MissingRouteProofLeaf { route_proof_id: route_proof_id.to_string(), leaf: route_leaf_label(wanted_leaf) }
         })?;
-        let mut opening = Vec::with_capacity(leaf.opening.len() * 32);
-        for step in &leaf.opening {
-            opening.extend_from_slice(&decode_hex(&step.hash_hex)?);
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
         }
-        Ok(opening)
+        Ok(proof)
     }
 
-    fn route_template_opening_bytes_for_actor(&self, route_tree_id: &str, actor: &str) -> BuilderResult<Vec<u8>> {
-        let tree = self.route_template_tree(route_tree_id)?;
-        let leaf = tree
+    fn route_template_proof_bytes_for_actor(&self, route_proof_id: &str, actor: &str) -> BuilderResult<Vec<u8>> {
+        let proof_receipt = self.route_template_proof(route_proof_id)?;
+        let leaf = proof_receipt
             .leaves
             .iter()
             .find(|leaf| matches!(&leaf.leaf, RouteTemplateLeafArtifact::Template { actor: leaf_actor, .. } if leaf_actor == actor))
-            .ok_or_else(|| BuilderError::MissingRouteTreeLeaf { route_tree_id: route_tree_id.to_string(), leaf: actor.to_string() })?;
-        let mut opening = Vec::with_capacity(leaf.opening.len() * 32);
-        for step in &leaf.opening {
-            opening.extend_from_slice(&decode_hex(&step.hash_hex)?);
+            .ok_or_else(|| BuilderError::MissingRouteProofLeaf {
+                route_proof_id: route_proof_id.to_string(),
+                leaf: actor.to_string(),
+            })?;
+        let mut proof = Vec::with_capacity(leaf.proof.len() * 32);
+        for step in &leaf.proof {
+            proof.extend_from_slice(&decode_hex(&step.hash_hex)?);
         }
-        Ok(opening)
+        Ok(proof)
     }
 
     fn route_family_table_bytes(&self, family_id: &str) -> BuilderResult<Vec<u8>> {
@@ -479,7 +481,7 @@ fn covenant_engine_flags() -> EngineFlags {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::artifact::{route_template_table_receipt_id, route_template_tree_receipt_id};
+    use crate::artifact::{route_template_proof_receipt_id, route_template_table_receipt_id};
     use std::{
         fs,
         path::PathBuf,
@@ -893,30 +895,30 @@ mod tests {
     }
 
     #[test]
-    fn builder_rejects_route_template_tree_opening_mismatch() {
-        let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-tree-plan");
+    fn builder_rejects_route_template_merkle_proof_mismatch() {
+        let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-proof-plan");
         artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
-        let tree = artifact
+        let proof = artifact
             .argent
             .template_plan
-            .route_trees
+            .route_proofs
             .iter_mut()
-            .find(|tree| tree.id == route_template_tree_receipt_id("BoardState", "gen__mux_routes"))
-            .expect("BoardState route tree receipt exists");
-        tree.leaves[1].opening[0].hash_hex = "00".repeat(32);
+            .find(|proof| proof.id == route_template_proof_receipt_id("BoardState", "gen__mux_routes"))
+            .expect("BoardState route proof receipt exists");
+        proof.leaves[1].proof[0].hash_hex = "00".repeat(32);
 
         let err = match ArtifactTxBuilder::new(&artifact) {
-            Ok(_) => panic!("builder must reject a corrupted route template tree receipt"),
+            Ok(_) => panic!("builder must reject a corrupted route template proof receipt"),
             Err(err) => err,
         };
         assert!(
             matches!(
                 err,
-                BuilderError::TemplatePlan(TemplatePlanError::RouteTreeOpeningMismatch {
+                BuilderError::TemplatePlan(TemplatePlanError::RouteProofMismatch {
                     ref id,
                     index: 1,
                     ..
-                }) if id == "route_tree/BoardState/gen__mux_routes"
+                }) if id == "route_proof/BoardState/gen__mux_routes"
             ),
             "unexpected error: {err}"
         );

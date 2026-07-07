@@ -68,7 +68,7 @@
         }
       ],
       "route_tables": [],
-      "route_trees": [],
+      "route_proofs": [],
       "route_families": [],
       "witness_recipes": [
         {

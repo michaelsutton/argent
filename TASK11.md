@@ -14,8 +14,8 @@ Temporary checklist for finishing basic template merklization before the PR.
 
 - Clean up legacy route-tree/opening terminology where it leaks into the
   current one-level route-family model.
-- Keep proof/opening names only where the artifact is actually describing a
-  receipt proof.
+- Keep proof names only where the artifact is actually describing a receipt
+  proof.
 - Add a guard test for accidental nested route-family table leaves.
 
 ## Toy Chess E2E
