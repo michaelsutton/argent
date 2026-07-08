@@ -51,7 +51,13 @@ contract Pawn(
             ply: ply + 1,
         };
         // :: become Mux
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__mux_prefix, gen__mux_suffix, gen__mux_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__mux_prefix,
+            gen__mux_suffix,
+            gen__mux_template
+        );
     }
 
 }

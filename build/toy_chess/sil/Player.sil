@@ -34,7 +34,11 @@ contract Player(
     int nonce = init_nonce;
 
     // :: entrypoints
-    entrypoint function enter_mux(byte[] gen__mux_prefix, byte[] gen__mux_suffix, byte[64] gen__mux_routes) {
+    entrypoint function enter_mux(
+        byte[] gen__mux_prefix,
+        byte[] gen__mux_suffix,
+        byte[64] gen__mux_routes
+    ) {
         // :: witness lens
         int gen__mux_prefix_len = gen__mux_prefix.length;
         int gen__mux_suffix_len = gen__mux_suffix.length;
@@ -54,7 +58,13 @@ contract Player(
             ply: 0,
         };
         // :: become Mux
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__mux_prefix, gen__mux_suffix, gen__mux_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__mux_prefix,
+            gen__mux_suffix,
+            gen__mux_template
+        );
     }
 
 }

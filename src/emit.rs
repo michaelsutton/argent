@@ -1406,11 +1406,9 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 }
 
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
-    out.push_str(&format!("    entrypoint function {}(", entry.name));
     let witness_specs = entry_witness_specs(actor, entry, model);
     let sil_params = lower_entry_params(&entry.params, &witness_specs, model);
-    out.push_str(&sil_params.join(", "));
-    out.push_str(") {\n");
+    push_entry_signature(out, &entry.name, &sil_params);
 
     let has_byte_witnesses =
         witness_specs.templates.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) || !witness_specs.selectors.is_empty();
@@ -1471,14 +1469,19 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             let template = hidden_template_name(&consume.actor);
             let state_struct = contract_state_type_for_actor(&consume.actor, actor, model)?;
             let _state = model.actor_state(&consume.actor)?;
-            out.push_str(&format!(
-                "        int {input_idx} = OpCovInputIdx({cov_id}, {cov_index}); // input {} at cov[{}]\n",
-                consume.actor, cov_index
-            ));
-            out.push_str(&format!(
-                "        {state_struct} {} = readInputStateWithTemplate({input_idx}, {prefix_len}, {suffix_len}, {template});\n",
-                consume.name
-            ));
+            push_generated_statement_with_comment(
+                out,
+                8,
+                &format!("int {input_idx} = OpCovInputIdx({cov_id}, {cov_index})"),
+                &format!("input {} at cov[{}]", consume.actor, cov_index),
+            );
+            push_generated_call(
+                out,
+                8,
+                &format!("{state_struct} {} = ", consume.name),
+                "readInputStateWithTemplate",
+                &[input_idx, prefix_len, suffix_len, template],
+            );
         }
         out.push('\n');
     }
@@ -1495,21 +1498,23 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         EmitSpec::One { actors } => {
             out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 1);\n");
             let output_idx = hidden_next_output_idx_name();
-            out.push_str(&format!(
-                "        int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one {}\n",
-                actors.join(" | ")
-            ));
+            push_generated_statement_with_comment(
+                out,
+                8,
+                &format!("int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, 0)"),
+                &format!("emits one {}", actors.join(" | ")),
+            );
         }
         EmitSpec::Outputs(outputs) => {
             out.push_str(&format!("        require(OpAuthOutputCount(this.activeInputIndex) == {});\n", outputs.len()));
             for output in outputs {
                 let output_idx = hidden_output_idx_name(&output.name);
-                out.push_str(&format!(
-                    "        int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, {}); // output {}: {}\n",
-                    output.auth_index,
-                    output.name,
-                    output.actors.join(" | ")
-                ));
+                push_generated_statement_with_comment(
+                    out,
+                    8,
+                    &format!("int {output_idx} = OpAuthOutputIdx(this.activeInputIndex, {})", output.auth_index),
+                    &format!("output {}: {}", output.name, output.actors.join(" | ")),
+                );
             }
         }
     }
@@ -1534,10 +1539,12 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
             let input_idx = hidden_observed_input_idx_name(&observe.name, &input.name);
             let state_name = hidden_observed_input_state_name(&observe.name, &input.name);
             let state_struct = contract_state_type_for_actor(&input.actor, actor, model)?;
-            out.push_str(&format!(
-                "        int {input_idx} = OpCovInputIdx({cov_id}, {idx}); // observed input {}.{}: {}\n",
-                observe.name, input.name, input.actor
-            ));
+            push_generated_statement_with_comment(
+                out,
+                8,
+                &format!("int {input_idx} = OpCovInputIdx({cov_id}, {idx})"),
+                &format!("observed input {}.{}: {}", observe.name, input.name, input.actor),
+            );
             if lens_spec.side == ObservedActorSideArtifact::Output {
                 out.push_str(&format!(
                     "        int {} = {}.length;\n",
@@ -1550,20 +1557,27 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
                     hidden_observed_actor_suffix_name(&lens_spec)
                 ));
             }
-            out.push_str(&format!(
-                "        {state_struct} {state_name} = readInputStateWithTemplate({}, {}, {}, {});\n",
-                input_idx,
-                hidden_observed_actor_prefix_len_name(&observed_input_spec(observe, input)),
-                hidden_observed_actor_suffix_len_name(&observed_input_spec(observe, input)),
-                hidden_observed_actor_template_name(&template_spec)
-            ));
+            push_generated_call(
+                out,
+                8,
+                &format!("{state_struct} {state_name} = "),
+                "readInputStateWithTemplate",
+                &[
+                    input_idx,
+                    hidden_observed_actor_prefix_len_name(&observed_input_spec(observe, input)),
+                    hidden_observed_actor_suffix_len_name(&observed_input_spec(observe, input)),
+                    hidden_observed_actor_template_name(&template_spec),
+                ],
+            );
         }
         for (idx, output) in observe.outputs.iter().enumerate() {
             let output_idx = hidden_observed_output_idx_name(&observe.name, &output.name);
-            out.push_str(&format!(
-                "        int {output_idx} = OpCovOutputIdx({cov_id}, {idx}); // observed output {}.{}: {}\n",
-                observe.name, output.name, output.actor
-            ));
+            push_generated_statement_with_comment(
+                out,
+                8,
+                &format!("int {output_idx} = OpCovOutputIdx({cov_id}, {idx})"),
+                &format!("observed output {}.{}: {}", observe.name, output.name, output.actor),
+            );
         }
     }
     out.push('\n');
@@ -1829,8 +1843,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         out.push_str(&format!("require({selector_var} >= 0);\n"));
         push_indent(out, indent);
         out.push_str(&format!("require({selector_var} < {});\n", selector.variants.len()));
-        push_indent(out, indent);
-        out.push_str(&format!("byte[32] {template_var} = byte[32]({table}.slice({selector_var} * 32, {selector_var} * 32 + 32));\n"));
+        push_generated_call(
+            out,
+            indent,
+            &format!("byte[32] {template_var} = "),
+            "byte[32]",
+            &[format!("{table}.slice({selector_var} * 32, {selector_var} * 32 + 32)")],
+        );
         Ok(template_var)
     }
 
@@ -1937,13 +1956,19 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         push_indent(out, indent);
         out.push_str(&format!("// :: observed become {}.{} -> {}\n", observe_name, observed_output.name, observed_output.actor));
-        push_indent(out, indent);
-        out.push_str(&format!(
-            "validateOutputStateWithTemplate({output_idx}, {state_arg}, {}, {}, {});\n",
-            hidden_observed_actor_prefix_name(&spec),
-            hidden_observed_actor_suffix_name(&spec),
-            hidden_observed_actor_template_name(&spec)
-        ));
+        push_generated_call(
+            out,
+            indent,
+            "",
+            "validateOutputStateWithTemplate",
+            &[
+                output_idx,
+                state_arg,
+                hidden_observed_actor_prefix_name(&spec),
+                hidden_observed_actor_suffix_name(&spec),
+                hidden_observed_actor_template_name(&spec),
+            ],
+        );
         Ok(())
     }
 
@@ -1958,10 +1983,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if validation == RouteValidationKind::ExactScriptPublicKey {
             push_indent(out, indent);
             out.push_str(&format!("// :: become {}\n", route.actor));
-            push_indent(out, indent);
-            out.push_str(&format!(
-                "require(tx.outputs[{output_idx}].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);\n"
-            ));
+            push_generated_binary_require(
+                out,
+                indent,
+                &format!("tx.outputs[{output_idx}].scriptPubKey"),
+                "==",
+                "tx.inputs[this.activeInputIndex].scriptPubKey",
+            );
             return Ok(());
         }
 
@@ -1979,19 +2007,22 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         push_indent(out, indent);
         out.push_str(&format!("// :: become {}\n", route.actor));
-        push_indent(out, indent);
         match validation {
             RouteValidationKind::ExactScriptPublicKey => unreachable!("exact continuation returned before state lowering"),
             RouteValidationKind::SameTemplate => {
-                out.push_str(&format!("validateOutputState({output_idx}, {state_arg});\n"));
+                push_generated_call(out, indent, "", "validateOutputState", &[output_idx, state_arg]);
             }
             RouteValidationKind::ForeignTemplate => {
                 let prefix = hidden_witness_prefix_name(&route.actor);
                 let suffix = hidden_witness_suffix_name(&route.actor);
                 let template = hidden_template_name(&route.actor);
-                out.push_str(&format!(
-                    "validateOutputStateWithTemplate({output_idx}, {state_arg}, {prefix}, {suffix}, {template});\n"
-                ));
+                push_generated_call(
+                    out,
+                    indent,
+                    "",
+                    "validateOutputStateWithTemplate",
+                    &[output_idx, state_arg, prefix, suffix, template],
+                );
             }
         }
         Ok(())
@@ -2019,13 +2050,19 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let template = self.ensure_selector_template(out, indent, &route.actor)?;
         push_indent(out, indent);
         out.push_str(&format!("// :: become {}\n", route.actor));
-        push_indent(out, indent);
-        out.push_str(&format!(
-            "validateOutputStateWithTemplate({output_idx}, {state_arg}, {}, {}, {});\n",
-            hidden_template_selector_prefix_name(&route.actor),
-            hidden_template_selector_suffix_name(&route.actor),
-            template
-        ));
+        push_generated_call(
+            out,
+            indent,
+            "",
+            "validateOutputStateWithTemplate",
+            &[
+                output_idx,
+                state_arg,
+                hidden_template_selector_prefix_name(&route.actor),
+                hidden_template_selector_suffix_name(&route.actor),
+                template,
+            ],
+        );
         Ok(())
     }
 
@@ -2329,8 +2366,80 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 }
 
+const GENERATED_SIL_LINE_LIMIT: usize = 100;
+
 fn push_indent(out: &mut String, indent: usize) {
     out.push_str(&" ".repeat(indent));
+}
+
+fn push_entry_signature(out: &mut String, name: &str, params: &[String]) {
+    let single = format!("    entrypoint function {name}({}) {{", params.join(", "));
+    if single.len() <= GENERATED_SIL_LINE_LIMIT {
+        out.push_str(&single);
+        out.push('\n');
+        return;
+    }
+
+    out.push_str(&format!("    entrypoint function {name}(\n"));
+    for (idx, param) in params.iter().enumerate() {
+        out.push_str("        ");
+        out.push_str(param);
+        if idx + 1 != params.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str("    ) {\n");
+}
+
+fn push_generated_call(out: &mut String, indent: usize, prefix: &str, function: &str, args: &[String]) {
+    let ind = " ".repeat(indent);
+    let single = format!("{ind}{prefix}{function}({});", args.join(", "));
+    if single.len() <= GENERATED_SIL_LINE_LIMIT {
+        out.push_str(&single);
+        out.push('\n');
+        return;
+    }
+
+    out.push_str(&format!("{ind}{prefix}{function}(\n"));
+    let arg_indent = " ".repeat(indent + 4);
+    for (idx, arg) in args.iter().enumerate() {
+        out.push_str(&arg_indent);
+        out.push_str(arg);
+        if idx + 1 != args.len() {
+            out.push(',');
+        }
+        out.push('\n');
+    }
+    out.push_str(&format!("{ind});\n"));
+}
+
+fn push_generated_binary_require(out: &mut String, indent: usize, lhs: &str, op: &str, rhs: &str) {
+    let ind = " ".repeat(indent);
+    let single = format!("{ind}require({lhs} {op} {rhs});");
+    if single.len() <= GENERATED_SIL_LINE_LIMIT {
+        out.push_str(&single);
+        out.push('\n');
+        return;
+    }
+
+    out.push_str(&format!("{ind}require(\n"));
+    out.push_str(&format!("{}{}\n", " ".repeat(indent + 4), lhs));
+    out.push_str(&format!("{}{} {}\n", " ".repeat(indent + 8), op, rhs));
+    out.push_str(&format!("{ind});\n"));
+}
+
+fn push_generated_statement_with_comment(out: &mut String, indent: usize, statement: &str, comment: &str) {
+    let ind = " ".repeat(indent);
+    let single = format!("{ind}{statement}; // {comment}");
+    if single.len() <= GENERATED_SIL_LINE_LIMIT {
+        out.push_str(&single);
+        out.push('\n');
+        return;
+    }
+
+    out.push_str(&format!("{ind}// :: {comment}\n"));
+    out.push_str(&format!("{ind}{statement};\n"));
 }
 
 fn generated_state_name(route: &RouteCall, state_ty: &str) -> String {
@@ -4616,10 +4725,8 @@ mod tests {
         assert!(!sil.contains("byte[32] gen__foo_template = gen__init_foo_template;"), "{sil}");
         assert!(sil.contains("int gen__next_output_idx = OpAuthOutputIdx"), "{sil}");
         assert!(sil.contains("tx.outputs[gen__next_output_idx].value"), "{sil}");
-        assert!(
-            sil.contains("require(tx.outputs[gen__next_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);"),
-            "{sil}"
-        );
+        assert!(sil.contains("tx.outputs[gen__next_output_idx].scriptPubKey"), "{sil}");
+        assert!(sil.contains("== tx.inputs[this.activeInputIndex].scriptPubKey"), "{sil}");
         assert!(manifest.contains(r#""symbol": "gen__foo_template""#), "{manifest}");
         assert!(!sil.contains("byte[32] init_template_foo"), "{sil}");
         assert!(!sil.contains("int next_output_idx ="), "{sil}");
@@ -4975,12 +5082,11 @@ mod tests {
 
         let minter_sil = fs::read_to_string(out_dir.join("sil/Minter.sil")).expect("Minter.sil exists");
         assert!(minter_sil.contains("contract Minter(\n    byte[32] gen__init_asset_minter_proxy_template,"), "{minter_sil}");
-        assert!(
-            minter_sil.contains(
-                "entrypoint function mint(sig owner_sig, byte[32] recipient_owner, int minted_amount, byte[] gen__asset_minter_proxy_prefix, byte[] gen__asset_minter_proxy_suffix, byte[] gen__asset_kcc20_prefix, byte[] gen__asset_kcc20_suffix)"
-            ),
-            "{minter_sil}"
-        );
+        assert!(minter_sil.contains("entrypoint function mint(\n"), "{minter_sil}");
+        assert!(minter_sil.contains("sig owner_sig,"), "{minter_sil}");
+        assert!(minter_sil.contains("byte[32] recipient_owner,"), "{minter_sil}");
+        assert!(minter_sil.contains("byte[] gen__asset_minter_proxy_prefix,"), "{minter_sil}");
+        assert!(minter_sil.contains("byte[] gen__asset_kcc20_suffix"), "{minter_sil}");
         assert!(
             minter_sil.contains("byte[32] gen__asset_minter_proxy_template = gen__init_asset_minter_proxy_template;"),
             "{minter_sil}"
@@ -4998,36 +5104,17 @@ mod tests {
             minter_sil.contains("int gen__asset_minter_proxy_suffix_len = gen__asset_minter_proxy_suffix.length;"),
             "{minter_sil}"
         );
-        assert!(
-            minter_sil.contains(
-                "MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(gen__asset_proxy_input_idx, gen__asset_minter_proxy_prefix_len, gen__asset_minter_proxy_suffix_len, gen__asset_minter_proxy_template);"
-            ),
-            "{minter_sil}"
-        );
-        assert!(
-            minter_sil.contains(
-                "int gen__asset_proxy_output_idx = OpCovOutputIdx(gen__asset_cov_id, 0); // observed output asset.proxy: MinterProxy"
-            ),
-            "{minter_sil}"
-        );
-        assert!(
-            minter_sil.contains(
-                "int gen__asset_recipient_output_idx = OpCovOutputIdx(gen__asset_cov_id, 1); // observed output asset.recipient: KCC20"
-            ),
-            "{minter_sil}"
-        );
-        assert!(
-            minter_sil.contains(
-                "validateOutputStateWithTemplate(gen__asset_proxy_output_idx, next_proxy, gen__asset_minter_proxy_prefix, gen__asset_minter_proxy_suffix, gen__asset_minter_proxy_template);"
-            ),
-            "{minter_sil}"
-        );
-        assert!(
-            minter_sil.contains(
-                "validateOutputStateWithTemplate(gen__asset_recipient_output_idx, next_recipient, gen__asset_kcc20_prefix, gen__asset_kcc20_suffix, gen__asset_kcc20_template);"
-            ),
-            "{minter_sil}"
-        );
+        assert!(minter_sil.contains("MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate("), "{minter_sil}");
+        assert!(minter_sil.contains("gen__asset_proxy_input_idx,"), "{minter_sil}");
+        assert!(minter_sil.contains("gen__asset_minter_proxy_template"), "{minter_sil}");
+        assert!(minter_sil.contains("// :: observed output asset.proxy: MinterProxy"), "{minter_sil}");
+        assert!(minter_sil.contains("int gen__asset_proxy_output_idx = OpCovOutputIdx(gen__asset_cov_id, 0);"), "{minter_sil}");
+        assert!(minter_sil.contains("// :: observed output asset.recipient: KCC20"), "{minter_sil}");
+        assert!(minter_sil.contains("int gen__asset_recipient_output_idx = OpCovOutputIdx(gen__asset_cov_id, 1);"), "{minter_sil}");
+        assert!(minter_sil.contains("validateOutputStateWithTemplate(\n            gen__asset_proxy_output_idx,"), "{minter_sil}");
+        assert!(minter_sil.contains("gen__asset_minter_proxy_prefix,"), "{minter_sil}");
+        assert!(minter_sil.contains("validateOutputStateWithTemplate(\n            gen__asset_recipient_output_idx,"), "{minter_sil}");
+        assert!(minter_sil.contains("gen__asset_kcc20_template"), "{minter_sil}");
         assert!(minter_sil.contains("MinterProxyState prev_proxy = gen__asset_proxy_state;"), "{minter_sil}");
 
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
@@ -5172,18 +5259,11 @@ mod tests {
         assert!(sil.contains("byte[] gen__asset_foreign_suffix"), "{sil}");
         assert!(sil.contains("int gen__asset_foreign_prefix_len = gen__asset_foreign_prefix.length;"), "{sil}");
         assert!(sil.contains("int gen__asset_foreign_suffix_len = gen__asset_foreign_suffix.length;"), "{sil}");
-        assert!(
-            sil.contains(
-                "ForeignState gen__asset_src_state = readInputStateWithTemplate(gen__asset_src_input_idx, gen__asset_foreign_prefix_len, gen__asset_foreign_suffix_len, gen__asset_foreign_template);"
-            ),
-            "{sil}"
-        );
-        assert!(
-            sil.contains(
-                "validateOutputStateWithTemplate(gen__asset_dst_output_idx, next, gen__asset_foreign_prefix, gen__asset_foreign_suffix, gen__asset_foreign_template);"
-            ),
-            "{sil}"
-        );
+        assert!(sil.contains("ForeignState gen__asset_src_state = readInputStateWithTemplate("), "{sil}");
+        assert!(sil.contains("gen__asset_src_input_idx,"), "{sil}");
+        assert!(sil.contains("gen__asset_foreign_template"), "{sil}");
+        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__asset_dst_output_idx,"), "{sil}");
+        assert!(sil.contains("gen__asset_foreign_prefix,"), "{sil}");
         assert!(!sil.contains("gen__asset_src_prefix"), "{sil}");
         assert!(!sil.contains("gen__asset_dst_prefix"), "{sil}");
 
@@ -5332,19 +5412,16 @@ mod tests {
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
         let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
 
-        assert!(
-            player_sil.contains(
-                "entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len)"
-            ),
-            "{player_sil}"
-        );
+        assert!(player_sil.contains("entrypoint function accept_start(\n"), "{player_sil}");
+        assert!(player_sil.contains("sig owner_sig,"), "{player_sil}");
+        assert!(player_sil.contains("pubkey owner_pk,"), "{player_sil}");
+        assert!(player_sil.contains("int gen__player_prefix_len,"), "{player_sil}");
+        assert!(player_sil.contains("int gen__player_suffix_len"), "{player_sil}");
         assert!(!player_sil.contains("entrypoint function accept_start(sig owner_sig, pubkey owner_pk, byte[]"), "{player_sil}");
-        assert!(
-            player_sil.contains(
-                "entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix)"
-            ),
-            "{player_sil}"
-        );
+        assert!(player_sil.contains("entrypoint function start_game(\n"), "{player_sil}");
+        assert!(player_sil.contains("int gen__player_prefix_len,"), "{player_sil}");
+        assert!(player_sil.contains("byte[] gen__stones_game_prefix,"), "{player_sil}");
+        assert!(player_sil.contains("byte[] gen__stones_game_suffix"), "{player_sil}");
         assert!(!player_sil.contains("byte[] gen__player_prefix"), "{player_sil}");
         assert!(player_sil.contains("byte[32] gen__init_player_template"), "{player_sil}");
         assert!(player_sil.contains("byte[32] gen__init_stones_game_template"), "{player_sil}");
@@ -5367,19 +5444,14 @@ mod tests {
         );
         assert!(player_sil.contains("validateOutputState(gen__self_out_output_idx, next_self);"), "{player_sil}");
         assert!(player_sil.contains("validateOutputState(gen__opponent_out_output_idx, next_opponent);"), "{player_sil}");
-        assert!(player_sil.contains("validateOutputStateWithTemplate(gen__game_output_idx, next_game"), "{player_sil}");
-        assert!(
-            league_sil.contains("entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix)"),
-            "{league_sil}"
-        );
+        assert!(player_sil.contains("validateOutputStateWithTemplate(\n            gen__game_output_idx,"), "{player_sil}");
+        assert!(league_sil.contains("entrypoint function register_player(\n"), "{league_sil}");
+        assert!(league_sil.contains("byte[] gen__player_prefix,"), "{league_sil}");
+        assert!(league_sil.contains("byte[] gen__player_suffix"), "{league_sil}");
         assert!(!league_sil.contains("gen__league_prefix"), "{league_sil}");
-        assert!(
-            league_sil.contains(
-                "require(tx.outputs[gen__league_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);"
-            ),
-            "{league_sil}"
-        );
-        assert!(league_sil.contains("validateOutputStateWithTemplate(gen__player_output_idx, next_player"), "{league_sil}");
+        assert!(league_sil.contains("tx.outputs[gen__league_output_idx].scriptPubKey"), "{league_sil}");
+        assert!(league_sil.contains("== tx.inputs[this.activeInputIndex].scriptPubKey"), "{league_sil}");
+        assert!(league_sil.contains("validateOutputStateWithTemplate(\n            gen__player_output_idx,"), "{league_sil}");
 
         let player_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Player").expect("Player actor exists");
         let accept_start = player_actor.entries.iter().find(|entry| entry.name == "accept_start").expect("accept_start ABI exists");
@@ -5625,11 +5697,10 @@ mod tests {
         let player_sil = actor_sil.get("Player").expect("Player Sil is emitted");
         assert!(player_sil.contains("byte[32] gen__init_mux_template"), "{player_sil}");
         assert!(player_sil.contains("byte[32] gen__init_mux_routes_digest"), "{player_sil}");
-        assert!(
-            player_sil
-                .contains("entrypoint function enter_mux(byte[] gen__mux_prefix, byte[] gen__mux_suffix, byte[64] gen__mux_routes)"),
-            "{player_sil}"
-        );
+        assert!(player_sil.contains("entrypoint function enter_mux(\n"), "{player_sil}");
+        assert!(player_sil.contains("byte[] gen__mux_prefix,"), "{player_sil}");
+        assert!(player_sil.contains("byte[] gen__mux_suffix,"), "{player_sil}");
+        assert!(player_sil.contains("byte[64] gen__mux_routes"), "{player_sil}");
         assert!(player_sil.contains("require(blake2b(gen__mux_routes) == gen__mux_routes_digest);"), "{player_sil}");
         assert!(!player_sil.contains("gen__pawn_template"), "{player_sil}");
         assert!(!player_sil.contains("gen__knight_template"), "{player_sil}");
@@ -5645,18 +5716,11 @@ mod tests {
         assert!(mux_sil.contains("int gen__target_selector = target;"), "{mux_sil}");
         assert!(mux_sil.contains("require(gen__target_selector >= 0);"), "{mux_sil}");
         assert!(mux_sil.contains("require(gen__target_selector < 2);"), "{mux_sil}");
-        assert!(
-            mux_sil.contains(
-                "byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));"
-            ),
-            "{mux_sil}"
-        );
-        assert!(
-            mux_sil.contains(
-                "validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);"
-            ),
-            "{mux_sil}"
-        );
+        assert!(mux_sil.contains("byte[32] gen__target_template = byte[32]("), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)"), "{mux_sil}");
+        assert!(mux_sil.contains("validateOutputStateWithTemplate(\n            gen__next_output_idx,"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__target_prefix,"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__target_template"), "{mux_sil}");
         assert!(
             mux_sil.contains("entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix)"),
             "{mux_sil}"
@@ -5664,8 +5728,10 @@ mod tests {
         assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(32, 64));"), "{mux_sil}");
-        assert!(mux_sil.contains("validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__pawn_template);"), "{mux_sil}");
-        assert!(mux_sil.contains("validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__knight_prefix, gen__knight_suffix, gen__knight_template);"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__pawn_prefix,"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__pawn_template"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__knight_prefix,"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__knight_template"), "{mux_sil}");
 
         let pawn_sil = actor_sil.get("Pawn").expect("Pawn Sil is emitted");
         assert!(pawn_sil.contains("byte[64] gen__init_mux_routes"), "{pawn_sil}");
@@ -5794,12 +5860,8 @@ mod tests {
 
         let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
         assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
-        assert!(
-            mux_sil.contains(
-                "byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));"
-            ),
-            "{mux_sil}"
-        );
+        assert!(mux_sil.contains("byte[32] gen__target_template = byte[32]("), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)"), "{mux_sil}");
         artifact.verify_template_plan().expect("template plan receipt verifies");
     }
 

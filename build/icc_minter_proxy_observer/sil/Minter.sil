@@ -35,21 +35,38 @@ contract Minter(
     bool initialized = init_initialized;
 
     // :: entrypoints
-    entrypoint function mint(sig owner_sig, byte[32] recipient_owner, int minted_amount, byte[] gen__asset_minter_proxy_prefix, byte[] gen__asset_minter_proxy_suffix, byte[] gen__asset_kcc20_prefix, byte[] gen__asset_kcc20_suffix) {
+    entrypoint function mint(
+        sig owner_sig,
+        byte[32] recipient_owner,
+        int minted_amount,
+        byte[] gen__asset_minter_proxy_prefix,
+        byte[] gen__asset_minter_proxy_suffix,
+        byte[] gen__asset_kcc20_prefix,
+        byte[] gen__asset_kcc20_suffix
+    ) {
         // :: observed covenants
         byte[32] gen__asset_cov_id = kcc20_covid; // observe asset
         require(OpCovInputCount(gen__asset_cov_id) == 1);
         require(OpCovOutputCount(gen__asset_cov_id) == 2);
-        int gen__asset_proxy_input_idx = OpCovInputIdx(gen__asset_cov_id, 0); // observed input asset.proxy: MinterProxy
+        // :: observed input asset.proxy: MinterProxy
+        int gen__asset_proxy_input_idx = OpCovInputIdx(gen__asset_cov_id, 0);
         int gen__asset_minter_proxy_prefix_len = gen__asset_minter_proxy_prefix.length;
         int gen__asset_minter_proxy_suffix_len = gen__asset_minter_proxy_suffix.length;
-        MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(gen__asset_proxy_input_idx, gen__asset_minter_proxy_prefix_len, gen__asset_minter_proxy_suffix_len, gen__asset_minter_proxy_template);
-        int gen__asset_proxy_output_idx = OpCovOutputIdx(gen__asset_cov_id, 0); // observed output asset.proxy: MinterProxy
-        int gen__asset_recipient_output_idx = OpCovOutputIdx(gen__asset_cov_id, 1); // observed output asset.recipient: KCC20
+        MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(
+            gen__asset_proxy_input_idx,
+            gen__asset_minter_proxy_prefix_len,
+            gen__asset_minter_proxy_suffix_len,
+            gen__asset_minter_proxy_template
+        );
+        // :: observed output asset.proxy: MinterProxy
+        int gen__asset_proxy_output_idx = OpCovOutputIdx(gen__asset_cov_id, 0);
+        // :: observed output asset.recipient: KCC20
+        int gen__asset_recipient_output_idx = OpCovOutputIdx(gen__asset_cov_id, 1);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int gen__controller_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output controller: Minter
+        // :: output controller: Minter
+        int gen__controller_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         MinterProxyState prev_proxy = gen__asset_proxy_state;
         require(checkSig(owner_sig, owner));
@@ -65,9 +82,21 @@ contract Minter(
             amount: minted_amount,
         };
         // :: observed become asset.proxy -> MinterProxy
-        validateOutputStateWithTemplate(gen__asset_proxy_output_idx, next_proxy, gen__asset_minter_proxy_prefix, gen__asset_minter_proxy_suffix, gen__asset_minter_proxy_template);
+        validateOutputStateWithTemplate(
+            gen__asset_proxy_output_idx,
+            next_proxy,
+            gen__asset_minter_proxy_prefix,
+            gen__asset_minter_proxy_suffix,
+            gen__asset_minter_proxy_template
+        );
         // :: observed become asset.recipient -> KCC20
-        validateOutputStateWithTemplate(gen__asset_recipient_output_idx, next_recipient, gen__asset_kcc20_prefix, gen__asset_kcc20_suffix, gen__asset_kcc20_template);
+        validateOutputStateWithTemplate(
+            gen__asset_recipient_output_idx,
+            next_recipient,
+            gen__asset_kcc20_prefix,
+            gen__asset_kcc20_suffix,
+            gen__asset_kcc20_template
+        );
         State next_minter = {
             gen__asset_minter_proxy_template: gen__asset_minter_proxy_template,
             gen__asset_kcc20_template: gen__asset_kcc20_template,

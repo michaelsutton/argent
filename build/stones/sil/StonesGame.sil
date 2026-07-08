@@ -94,14 +94,22 @@ contract StonesGame(
     int turn = init_turn;
 
     // :: entrypoints
-    entrypoint function take(int amount, byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+    entrypoint function take(
+        int amount,
+        byte[32] player_id,
+        sig move_sig,
+        pubkey move_pk,
+        byte[] gen__stones_settle_prefix,
+        byte[] gen__stones_settle_suffix
+    ) {
         // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: StonesGame | StonesSettle
+        // :: output next: StonesGame | StonesSettle
+        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         require(pile > 0);
         require(amount >= 1);
@@ -124,7 +132,13 @@ contract StonesGame(
                 status: win_status(turn),
             };
             // :: become StonesSettle
-            validateOutputStateWithTemplate(gen__next_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__stones_settle_template);
+            validateOutputStateWithTemplate(
+                gen__next_output_idx,
+                ticket,
+                gen__stones_settle_prefix,
+                gen__stones_settle_suffix,
+                gen__stones_settle_template
+            );
         } else {
             State next_game = {
                 gen__player_template: gen__player_template,
@@ -142,14 +156,21 @@ contract StonesGame(
         }
     }
 
-    entrypoint function concede(byte[32] player_id, sig move_sig, pubkey move_pk, byte[] gen__stones_settle_prefix, byte[] gen__stones_settle_suffix) {
+    entrypoint function concede(
+        byte[32] player_id,
+        sig move_sig,
+        pubkey move_pk,
+        byte[] gen__stones_settle_prefix,
+        byte[] gen__stones_settle_suffix
+    ) {
         // :: witness lens
         int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
         int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int gen__settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output settle: StonesSettle
+        // :: output settle: StonesSettle
+        int gen__settle_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
         byte[32] expected_ref = side_player(turn, player_a, player_b);
@@ -167,7 +188,13 @@ contract StonesGame(
             status: win_status(winner),
         };
         // :: become StonesSettle
-        validateOutputStateWithTemplate(gen__settle_output_idx, ticket, gen__stones_settle_prefix, gen__stones_settle_suffix, gen__stones_settle_template);
+        validateOutputStateWithTemplate(
+            gen__settle_output_idx,
+            ticket,
+            gen__stones_settle_prefix,
+            gen__stones_settle_suffix,
+            gen__stones_settle_template
+        );
     }
 
 }

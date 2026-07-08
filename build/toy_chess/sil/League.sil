@@ -51,7 +51,13 @@ contract League(
             nonce: nonce + 1,
         };
         // :: become Player
-        validateOutputStateWithTemplate(gen__next_output_idx, next_player, gen__player_prefix, gen__player_suffix, gen__player_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_player,
+            gen__player_prefix,
+            gen__player_suffix,
+            gen__player_template
+        );
     }
 
 }
