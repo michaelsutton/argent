@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "id": "3ba8550baa1c6d6aa5484125e60cddaa6ac8e2f29cf6c3079bb78588a3e52345",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -115,6 +116,30 @@
           "purpose": {
             "kind": "template_suffix_bytes"
           }
+        }
+      ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Minter",
+          "actor": "Minter",
+          "state": "MinterState",
+          "fingerprint_hex": "5108a0d4506d0fa6a1a3449ceca91a156f27bbe7a1c602d769415490dbab2273"
+        }
+      ],
+      "imports": [
+        {
+          "id": "interface/actor/KCC20",
+          "actor": "KCC20",
+          "state": "KCC20State",
+          "fingerprint_hex": "910cfa7d51e95f5ffa44a6e342e7ff585d5328302dd32126071acc8e836138c8"
+        },
+        {
+          "id": "interface/actor/MinterProxy",
+          "actor": "MinterProxy",
+          "state": "MinterProxyState",
+          "fingerprint_hex": "6e4a918db5a03bebaeebbb6f4b9fba6a8626d7098a34d61272e6216f02c1d7f1"
         }
       ]
     },

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "id": "5c0f119a765058d8be648465a47742d1cb1424311703062e10235eac8e80bf9d",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -96,6 +97,23 @@
           }
         }
       ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Issuer",
+          "actor": "Issuer",
+          "state": "IssuerState",
+          "fingerprint_hex": "05f8522be84d6ca43bb946115abd2a347ae4a21372a41183d395e4e6276d27f9"
+        },
+        {
+          "id": "interface/actor/Ticket",
+          "actor": "Ticket",
+          "state": "TicketState",
+          "fingerprint_hex": "4a281ab4e9e3bc73f742c2727758448beec4685306bd188b3ae7eb57294b42ea"
+        }
+      ],
+      "imports": []
     },
     "states": [
       {

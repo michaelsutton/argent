@@ -23,6 +23,8 @@ pub const ARTIFACT_SCHEMA_VERSION: u32 = 1;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Artifact {
     pub schema_version: u32,
+    #[serde(default)]
+    pub id: String,
     pub generator: GeneratorArtifact,
     pub app: String,
     pub root: String,
@@ -36,6 +38,8 @@ pub struct ArgentArtifact {
     pub templates: Vec<TemplateRefArtifact>,
     #[serde(default)]
     pub template_plan: TemplatePlanArtifact,
+    #[serde(default)]
+    pub interfaces: InterfaceSetArtifact,
     pub states: Vec<StateArtifact>,
     #[serde(default)]
     pub actor_enums: Vec<ActorEnumArtifact>,
@@ -57,6 +61,23 @@ impl Artifact {
     pub fn verify_template_plan(&self) -> std::result::Result<(), TemplatePlanError> {
         self.argent.template_plan.verify(self)
     }
+
+    pub fn computed_id_hex(&self) -> std::result::Result<String, ArtifactIdentityError> {
+        let mut artifact = self.clone();
+        artifact.id.clear();
+        hash_json("argent/artifact/v1", &artifact)
+    }
+
+    pub fn verify_id(&self) -> std::result::Result<(), ArtifactIdentityError> {
+        if self.id.is_empty() {
+            return Err(ArtifactIdentityError::MissingArtifactId { app: self.app.clone() });
+        }
+        let expected = self.computed_id_hex()?;
+        if self.id != expected {
+            return Err(ArtifactIdentityError::ArtifactIdMismatch { app: self.app.clone(), expected, found: self.id.clone() });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +98,22 @@ pub struct ActorEnumArtifact {
     pub name: String,
     pub state: String,
     pub variants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InterfaceSetArtifact {
+    #[serde(default)]
+    pub exports: Vec<ActorInterfaceArtifact>,
+    #[serde(default)]
+    pub imports: Vec<ActorInterfaceArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorInterfaceArtifact {
+    pub id: String,
+    pub actor: String,
+    pub state: String,
+    pub fingerprint_hex: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -513,6 +550,16 @@ pub enum TemplatePlanError {
     RoutePlanRecipeNotExposed { entry: String, recipe_id: String },
     #[error("route plan for `{entry}` points at missing witness recipe `{recipe_id}`")]
     MissingRoutePlanRecipe { entry: String, recipe_id: String },
+}
+
+#[derive(Debug, Error)]
+pub enum ArtifactIdentityError {
+    #[error("artifact `{app}` is missing an artifact id")]
+    MissingArtifactId { app: String },
+    #[error("artifact `{app}` id mismatch: expected {expected}, found {found}")]
+    ArtifactIdMismatch { app: String, expected: String, found: String },
+    #[error("failed to serialize {subject} for hashing: {source}")]
+    Serialize { subject: &'static str, source: serde_json::Error },
 }
 
 impl TemplatePlanArtifact {
@@ -1046,6 +1093,32 @@ fn template_hash_hex(id: &str, prefix_hex: &str, suffix_hex: &str) -> std::resul
     Ok(encode_hex(hash.as_bytes()))
 }
 
+pub fn actor_interface_id(actor: &str) -> String {
+    format!("interface/actor/{actor}")
+}
+
+pub fn actor_interface_fingerprint_hex(
+    actor: &str,
+    state: &str,
+    runtime_fields: &[RuntimeFieldArtifact],
+) -> std::result::Result<String, ArtifactIdentityError> {
+    #[derive(Serialize)]
+    struct ActorInterfaceFingerprint<'a> {
+        kind: &'static str,
+        actor: &'a str,
+        state: &'a str,
+        runtime_fields: &'a [RuntimeFieldArtifact],
+    }
+
+    hash_json("argent/interface/actor/v1", &ActorInterfaceFingerprint { kind: "actor", actor, state, runtime_fields })
+}
+
+fn hash_json<T: Serialize>(domain: &'static str, value: &T) -> std::result::Result<String, ArtifactIdentityError> {
+    let json = serde_json::to_vec(value).map_err(|source| ArtifactIdentityError::Serialize { subject: domain, source })?;
+    let hash = blake2b_simd::Params::new().hash_length(32).to_state().update(domain.as_bytes()).update(&json).finalize();
+    Ok(encode_hex(hash.as_bytes()))
+}
+
 pub fn route_template_table_receipt_id(state: &str, field: &str) -> String {
     format!("route_table/{state}/{field}")
 }
@@ -1403,6 +1476,7 @@ mod tests {
     fn rejects_unknown_argent_schema_version() {
         let artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION + 1,
+            id: String::new(),
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "Tiny".to_string(),
             root: "tiny.ag".to_string(),
@@ -1410,6 +1484,7 @@ mod tests {
             argent: ArgentArtifact {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
+                interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
@@ -1426,6 +1501,7 @@ mod tests {
     fn rejects_unknown_sil_abi_schema_version() {
         let artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
+            id: String::new(),
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "Tiny".to_string(),
             root: "tiny.ag".to_string(),
@@ -1433,6 +1509,7 @@ mod tests {
             argent: ArgentArtifact {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
+                interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
@@ -1449,6 +1526,7 @@ mod tests {
     fn accepts_sil_contract_without_runtime_state_plan() {
         let artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
+            id: String::new(),
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "Tiny".to_string(),
             root: "tiny.ag".to_string(),
@@ -1456,6 +1534,7 @@ mod tests {
             argent: ArgentArtifact {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact::default(),
+                interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
@@ -1586,6 +1665,7 @@ mod tests {
 
         let artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
+            id: String::new(),
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "NestedFamily".to_string(),
             root: "nested.ag".to_string(),
@@ -1599,6 +1679,7 @@ mod tests {
                         symbol: template.symbol.clone(),
                     })
                     .collect(),
+                interfaces: InterfaceSetArtifact::default(),
                 template_plan: TemplatePlanArtifact {
                     templates,
                     runtime_states: vec![
@@ -1697,6 +1778,7 @@ mod tests {
     fn artifact_with_route_families(route_families: Vec<RouteTemplateFamilyArtifact>) -> Artifact {
         Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
+            id: String::new(),
             generator: GeneratorArtifact { name: "argentc".to_string(), version: "0.1.0".to_string() },
             app: "Tiny".to_string(),
             root: "tiny.ag".to_string(),
@@ -1704,6 +1786,7 @@ mod tests {
             argent: ArgentArtifact {
                 templates: Vec::new(),
                 template_plan: TemplatePlanArtifact { route_families, ..TemplatePlanArtifact::default() },
+                interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: vec![

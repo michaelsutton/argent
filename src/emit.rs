@@ -3094,18 +3094,56 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         .collect::<Vec<_>>();
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
     let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts)?;
+    let interfaces = interface_set_artifact(model)?;
 
-    let artifact = Artifact {
+    let mut artifact = Artifact {
         schema_version: ARTIFACT_SCHEMA_VERSION,
+        id: String::new(),
         generator: GeneratorArtifact { name: "argentc".to_string(), version: env!("CARGO_PKG_VERSION").to_string() },
         app: model.app_name.clone(),
         root: manifest_path(&program.root),
         modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
-        argent: ArgentArtifact { templates, template_plan, states: states.clone(), actor_enums, actors: argent_actors },
+        argent: ArgentArtifact { templates, template_plan, interfaces, states: states.clone(), actor_enums, actors: argent_actors },
         sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
     };
     artifact.verify_template_plan().map_err(|err| ArgentError::new(format!("invalid template plan receipt: {err}")))?;
+    artifact.id = artifact.computed_id_hex().map_err(|err| ArgentError::new(format!("failed to compute artifact id: {err}")))?;
     Ok(artifact)
+}
+
+fn interface_set_artifact(model: &Model<'_>) -> Result<InterfaceSetArtifact> {
+    let exports = model.template_actors.iter().map(|actor| actor_interface_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+
+    let mut imported_actors = BTreeSet::new();
+    let template_actor_set = model.template_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
+    for actor in &model.actors {
+        for entry in &actor.entries {
+            for observe in &entry.observes {
+                for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
+                    if !template_actor_set.contains(observed.actor.as_str()) {
+                        imported_actors.insert(observed.actor.clone());
+                    }
+                }
+            }
+        }
+    }
+    let imports = imported_actors.iter().map(|actor| actor_interface_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
+
+    Ok(InterfaceSetArtifact { exports, imports })
+}
+
+fn actor_interface_artifact(actor_name: &str, model: &Model<'_>) -> Result<ActorInterfaceArtifact> {
+    let actor = model.actor(actor_name)?;
+    let state = model.state(&actor.state)?;
+    let runtime_fields = runtime_state_fields(state, model);
+    let fingerprint_hex = actor_interface_fingerprint_hex(&actor.name, &actor.state, &runtime_fields)
+        .map_err(|err| ArgentError::new(format!("failed to compute actor interface fingerprint for `{}`: {err}", actor.name)))?;
+    Ok(ActorInterfaceArtifact {
+        id: actor_interface_id(&actor.name),
+        actor: actor.name.clone(),
+        state: actor.state.clone(),
+        fingerprint_hex,
+    })
 }
 
 fn template_ref_artifact(actor: &str) -> TemplateRefArtifact {

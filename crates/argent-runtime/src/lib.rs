@@ -16,10 +16,10 @@ pub use argent_artifact::Artifact;
 pub use silverscript_abi::ArtifactValue;
 
 use argent_artifact::{
-    ActorArtifact, ArtifactVersionError, EntryArtifact, HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
-    ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact, RouteTemplateLeafArtifact, RouteTemplateProofArtifact,
-    RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, SilEntryArtifact, TemplatePlanError,
-    route_template_proof_receipt_id,
+    ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, EntryArtifact, HiddenParamArtifact,
+    HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact,
+    RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact,
+    SilEntryArtifact, TemplatePlanError, route_template_proof_receipt_id,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -53,6 +53,24 @@ pub enum BuilderError {
     TxScript(#[from] TxScriptError),
     #[error("unknown actor `{0}`")]
     UnknownActor(String),
+    #[error("artifact bundle app alias `{0}` is already attached")]
+    DuplicateAppAlias(String),
+    #[error("artifact bundle has no app alias `{0}`")]
+    UnknownAppAlias(String),
+    #[error("primary artifact does not declare observed app alias `{0}`")]
+    UnknownObservedAppAlias(String),
+    #[error("observed artifact `{app}` does not match any observed app alias")]
+    NoMatchingObservedApp { app: String },
+    #[error("observed artifact `{app}` matches multiple observed app aliases: {aliases:?}")]
+    AmbiguousObservedArtifact { app: String, aliases: Vec<String> },
+    #[error("artifact bundle app `{app}` has invalid artifact id: {source}")]
+    ArtifactIdentity { app: String, source: ArtifactIdentityError },
+    #[error("artifact bundle app `{app}` is missing {direction} interface for actor `{actor}`")]
+    MissingInterface { app: String, direction: &'static str, actor: String },
+    #[error(
+        "artifact bundle app `{app}` actor `{actor}` interface mismatch: expected {expected_fingerprint}, found {found_fingerprint}"
+    )]
+    InterfaceMismatch { app: String, actor: String, expected_fingerprint: String, found_fingerprint: String },
     #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
     RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("runtime state field `{field}` for contract `{contract}` is generated and must be filled by the runtime")]
@@ -103,9 +121,14 @@ pub enum BuilderError {
     UnnamedRouteOutput,
 }
 
+#[derive(Clone, Debug)]
+pub struct ArtifactBundle<'a> {
+    primary: &'a Artifact,
+    apps: BTreeMap<String, &'a Artifact>,
+}
+
 pub struct TxBuilder<'a> {
-    artifact: &'a Artifact,
-    observed_artifacts: Vec<&'a Artifact>,
+    bundle: ArtifactBundle<'a>,
 }
 
 struct ContractRef<'a> {
@@ -160,6 +183,28 @@ pub struct ObservedCovenantContext {
     pub outputs: BTreeMap<String, ObservedOutput>,
 }
 
+impl ObservedCovenantContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn input(
+        mut self,
+        handle: impl Into<String>,
+        actor: impl Into<String>,
+        utxo: UtxoEntry,
+        state: BTreeMap<String, ArtifactValue>,
+    ) -> Self {
+        self.inputs.insert(handle.into(), ObservedInput { actor: actor.into(), state, utxo });
+        self
+    }
+
+    pub fn output(mut self, handle: impl Into<String>, actor: impl Into<String>, state: BTreeMap<String, ArtifactValue>) -> Self {
+        self.outputs.insert(handle.into(), ObservedOutput { actor: actor.into(), state });
+        self
+    }
+}
+
 pub struct ObservedCovenantOutputRequest<'a> {
     pub actor_name: &'a str,
     pub entry_name: &'a str,
@@ -170,11 +215,126 @@ pub struct ObservedCovenantOutputRequest<'a> {
     pub covenant_id: Hash,
 }
 
+impl<'a> ArtifactBundle<'a> {
+    pub fn new(primary: &'a Artifact) -> BuilderResult<Self> {
+        validate_artifact("primary", primary)?;
+        Ok(Self { primary, apps: BTreeMap::new() })
+    }
+
+    pub fn with_app(mut self, alias: impl Into<String>, artifact: &'a Artifact) -> BuilderResult<Self> {
+        let alias = alias.into();
+        if self.apps.contains_key(&alias) {
+            return Err(BuilderError::DuplicateAppAlias(alias));
+        }
+        validate_artifact(&alias, artifact)?;
+        self.validate_app_interfaces(&alias, artifact)?;
+        self.apps.insert(alias, artifact);
+        Ok(self)
+    }
+
+    fn validate_app_interfaces(&self, alias: &str, artifact: &Artifact) -> BuilderResult<()> {
+        let observed_actors = self.observed_actors_for_alias(alias);
+        if observed_actors.is_empty() {
+            return Err(BuilderError::UnknownObservedAppAlias(alias.to_string()));
+        }
+        self.validate_actor_interfaces(alias, artifact, &observed_actors)
+    }
+
+    fn validate_actor_interfaces(&self, alias: &str, artifact: &Artifact, observed_actors: &[String]) -> BuilderResult<()> {
+        for actor in observed_actors {
+            let expected = find_interface(&self.primary.argent.interfaces.imports, actor).ok_or_else(|| {
+                BuilderError::MissingInterface { app: "primary".to_string(), direction: "import", actor: actor.clone() }
+            })?;
+            let found = find_interface(&artifact.argent.interfaces.exports, actor).ok_or_else(|| BuilderError::MissingInterface {
+                app: alias.to_string(),
+                direction: "export",
+                actor: actor.clone(),
+            })?;
+            if expected.fingerprint_hex != found.fingerprint_hex {
+                return Err(BuilderError::InterfaceMismatch {
+                    app: alias.to_string(),
+                    actor: actor.clone(),
+                    expected_fingerprint: expected.fingerprint_hex.clone(),
+                    found_fingerprint: found.fingerprint_hex.clone(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn observed_actors_for_alias(&self, alias: &str) -> Vec<String> {
+        let mut observed_actors = BTreeMap::new();
+        for actor in &self.primary.argent.actors {
+            for entry in &actor.entries {
+                for observe in &entry.observes {
+                    if observe.name != alias {
+                        continue;
+                    }
+                    for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
+                        observed_actors.insert(observed.actor.as_str(), observed.actor.as_str());
+                    }
+                }
+            }
+        }
+        observed_actors.into_keys().map(str::to_string).collect()
+    }
+
+    fn observed_aliases(&self) -> Vec<String> {
+        let mut aliases = BTreeMap::new();
+        for actor in &self.primary.argent.actors {
+            for entry in &actor.entries {
+                for observe in &entry.observes {
+                    aliases.insert(observe.name.as_str(), observe.name.as_str());
+                }
+            }
+        }
+        aliases.into_keys().map(str::to_string).collect()
+    }
+
+    fn infer_observed_alias(&self, artifact: &Artifact) -> BuilderResult<String> {
+        let matches = self
+            .observed_aliases()
+            .into_iter()
+            .filter(|alias| {
+                let observed_actors = self.observed_actors_for_alias(alias);
+                !observed_actors.is_empty() && self.validate_actor_interfaces(alias, artifact, &observed_actors).is_ok()
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [alias] => Ok(alias.clone()),
+            [] => Err(BuilderError::NoMatchingObservedApp { app: artifact.app.clone() }),
+            _ => Err(BuilderError::AmbiguousObservedArtifact { app: artifact.app.clone(), aliases: matches }),
+        }
+    }
+
+    fn attach_observed_artifact(mut self, artifact: &'a Artifact) -> BuilderResult<Self> {
+        let alias = self.infer_observed_alias(artifact)?;
+        if self.apps.contains_key(&alias) {
+            return Err(BuilderError::DuplicateAppAlias(alias));
+        }
+        validate_artifact(&alias, artifact)?;
+        self.validate_app_interfaces(&alias, artifact)?;
+        self.apps.insert(alias, artifact);
+        Ok(self)
+    }
+
+    fn app(&self, alias: &str) -> BuilderResult<&'a Artifact> {
+        self.apps.get(alias).copied().ok_or_else(|| BuilderError::UnknownAppAlias(alias.to_string()))
+    }
+
+    fn artifacts(&self) -> impl Iterator<Item = &'a Artifact> + '_ {
+        std::iter::once(self.primary).chain(self.apps.values().copied())
+    }
+}
+
 impl<'a> TxBuilder<'a> {
     pub fn new(artifact: &'a Artifact) -> BuilderResult<Self> {
-        artifact.check_schema_version()?;
-        artifact.verify_template_plan()?;
-        Ok(Self { artifact, observed_artifacts: Vec::new() })
+        Ok(Self { bundle: ArtifactBundle::new(artifact)? })
+    }
+
+    pub fn from_bundle(bundle: &ArtifactBundle<'a>) -> BuilderResult<Self> {
+        Ok(Self { bundle: bundle.clone() })
     }
 
     /// Attach another covenant app artifact that this artifact observes.
@@ -183,17 +343,59 @@ impl<'a> TxBuilder<'a> {
     /// supply foreign actor templates and state layouts for observed inputs and
     /// outputs, preserving the `app == covenant` boundary.
     pub fn with_observed_artifact(mut self, artifact: &'a Artifact) -> BuilderResult<Self> {
-        artifact.check_schema_version()?;
-        artifact.verify_template_plan()?;
-        self.observed_artifacts.push(artifact);
+        self.bundle = self.bundle.clone().attach_observed_artifact(artifact)?;
         Ok(self)
+    }
+
+    pub fn with_app(mut self, alias: impl Into<String>, artifact: &'a Artifact) -> BuilderResult<Self> {
+        self.bundle = self.bundle.clone().with_app(alias, artifact)?;
+        Ok(self)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn observed_outputs(
+        &self,
+        actor_name: &str,
+        entry_name: &str,
+        observe: &str,
+        context: &ObservedCovenantContext,
+        output_values: BTreeMap<String, u64>,
+        authorizing_input: u16,
+        covenant_id: Hash,
+    ) -> BuilderResult<Vec<TransactionOutput>> {
+        self.observed_covenant_outputs(ObservedCovenantOutputRequest {
+            actor_name,
+            entry_name,
+            observe,
+            context,
+            output_values,
+            authorizing_input,
+            covenant_id,
+        })
     }
 
     pub fn redeem_script(&self, actor_name: &str, source_state: BTreeMap<String, ArtifactValue>) -> BuilderResult<Vec<u8>> {
         let contract_ref = self.contract_ref(actor_name)?;
+        self.redeem_script_for_contract(contract_ref, source_state)
+    }
+
+    pub fn redeem_script_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<Vec<u8>> {
+        let contract_ref = self.contract_ref_in_app(app, actor_name)?;
+        self.redeem_script_for_contract(contract_ref, source_state)
+    }
+
+    fn redeem_script_for_contract(
+        &self,
+        contract_ref: ContractRef<'a>,
+        source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<Vec<u8>> {
         let state = self.runtime_state_values(contract_ref.artifact, contract_ref.contract, source_state)?;
         let state_script = encode_runtime_state_script(&contract_ref.contract.runtime_state, &state)?;
-
         let mut script = decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?;
         script.extend_from_slice(&state_script);
         script.extend_from_slice(&decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?);
@@ -208,6 +410,15 @@ impl<'a> TxBuilder<'a> {
         Ok(pay_to_script_hash_script(&self.redeem_script(actor_name, source_state)?))
     }
 
+    pub fn script_public_key_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<kaspa_consensus_core::tx::ScriptPublicKey> {
+        Ok(pay_to_script_hash_script(&self.redeem_script_in_app(app, actor_name, source_state)?))
+    }
+
     pub fn p2sh_signature_script(
         &self,
         actor_name: &str,
@@ -216,6 +427,25 @@ impl<'a> TxBuilder<'a> {
         user_args: Vec<ArtifactValue>,
     ) -> BuilderResult<Vec<u8>> {
         self.p2sh_signature_script_with_context(actor_name, entry_name, input_source_state, user_args, &BTreeMap::new(), None)
+    }
+
+    pub fn p2sh_signature_script_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        entry_name: &str,
+        input_source_state: BTreeMap<String, ArtifactValue>,
+        user_args: Vec<ArtifactValue>,
+    ) -> BuilderResult<Vec<u8>> {
+        self.p2sh_signature_script_with_context_in_artifact(
+            self.bundle.app(app)?,
+            actor_name,
+            entry_name,
+            input_source_state,
+            user_args,
+            &BTreeMap::new(),
+            None,
+        )
     }
 
     pub fn p2sh_signature_script_with_template_selector(
@@ -266,11 +496,34 @@ impl<'a> TxBuilder<'a> {
         observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
     ) -> BuilderResult<Vec<u8>> {
         let contract_ref = self.contract_ref(actor_name)?;
+        self.p2sh_signature_script_with_context_in_artifact(
+            contract_ref.artifact,
+            actor_name,
+            entry_name,
+            input_source_state,
+            user_args,
+            template_selectors,
+            observed,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn p2sh_signature_script_with_context_in_artifact(
+        &self,
+        artifact: &'a Artifact,
+        actor_name: &str,
+        entry_name: &str,
+        input_source_state: BTreeMap<String, ArtifactValue>,
+        user_args: Vec<ArtifactValue>,
+        template_selectors: &BTreeMap<String, String>,
+        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+    ) -> BuilderResult<Vec<u8>> {
+        let contract_ref = self.contract_ref_in_artifact(artifact, actor_name)?;
         let contract = contract_ref.contract;
         let sil_entry = contract
             .entry(entry_name)
             .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
-        let entry_ref = self.entry_ref(actor_name, entry_name)?;
+        let entry_ref = self.entry_ref_in_artifact(artifact, actor_name, entry_name)?;
         let argent_entry = entry_ref.entry;
         for selector in template_selectors.keys() {
             if argent_entry.template_selectors.iter().all(|candidate| &candidate.name != selector) {
@@ -288,24 +541,30 @@ impl<'a> TxBuilder<'a> {
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let actor = hidden_template_actor(hidden, argent_entry, template_selectors)?;
-                    ArtifactValue::Bytes(decode_hex(&self.contract(&actor)?.compiled.template.prefix_hex)?)
+                    let contract_ref =
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let actor = hidden_template_actor(hidden, argent_entry, template_selectors)?;
-                    ArtifactValue::Bytes(decode_hex(&self.contract(&actor)?.compiled.template.suffix_hex)?)
+                    let contract_ref =
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    let actor = hidden_actor_subject(hidden)?;
-                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.prefix_hex)?.len() as i64)
+                    let contract_ref =
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    let actor = hidden_actor_subject(hidden)?;
-                    ArtifactValue::Int(decode_hex(&self.contract(actor)?.compiled.template.suffix_hex)?.len() as i64)
+                    let contract_ref =
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                    ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
                     let actor = hidden_actor_subject(hidden)?;
-                    ArtifactValue::Bytes(decode_hex(&self.contract(actor)?.compiled.template.hash_hex)?)
+                    ArtifactValue::Bytes(decode_hex(
+                        &self.contract_ref_in_artifact(entry_ref.artifact, actor)?.contract.compiled.template.hash_hex,
+                    )?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateProof => {
                     let actor = hidden_actor_subject(hidden)?;
@@ -339,7 +598,7 @@ impl<'a> TxBuilder<'a> {
 
         let sigscript = encode_entry_sig_script(&contract_ref.artifact.sil_abi, contract, sil_entry, &args)?;
         Ok(pay_to_script_hash_signature_script_with_flags(
-            self.redeem_script(actor_name, input_source_state)?,
+            self.redeem_script_for_contract(contract_ref, input_source_state)?,
             sigscript,
             covenant_engine_flags(),
         )?)
@@ -382,6 +641,22 @@ impl<'a> TxBuilder<'a> {
         })
     }
 
+    pub fn covenant_output_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+        authorizing_input: u16,
+        covenant_id: Hash,
+    ) -> BuilderResult<TransactionOutput> {
+        Ok(TransactionOutput {
+            value,
+            script_public_key: self.script_public_key_in_app(app, actor_name, source_state)?,
+            covenant: Some(CovenantBinding { authorizing_input, covenant_id }),
+        })
+    }
+
     pub fn covenant_utxo(
         &self,
         actor_name: &str,
@@ -392,6 +667,26 @@ impl<'a> TxBuilder<'a> {
         covenant_id: Option<Hash>,
     ) -> BuilderResult<UtxoEntry> {
         Ok(UtxoEntry::new(value, self.script_public_key(actor_name, source_state)?, block_daa_score, is_coinbase, covenant_id))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn covenant_utxo_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+        block_daa_score: u64,
+        is_coinbase: bool,
+        covenant_id: Option<Hash>,
+    ) -> BuilderResult<UtxoEntry> {
+        Ok(UtxoEntry::new(
+            value,
+            self.script_public_key_in_app(app, actor_name, source_state)?,
+            block_daa_score,
+            is_coinbase,
+            covenant_id,
+        ))
     }
 
     pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
@@ -455,7 +750,8 @@ impl<'a> TxBuilder<'a> {
                 .output_values
                 .get(&observed_output.name)
                 .ok_or_else(|| BuilderError::MissingOutput(observed_output.name.clone()))?;
-            outputs.push(self.covenant_output(
+            outputs.push(self.covenant_output_in_app(
+                request.observe,
                 &output.actor,
                 output.state.clone(),
                 value,
@@ -482,6 +778,10 @@ impl<'a> TxBuilder<'a> {
         Ok(self.contract_ref(name)?.contract)
     }
 
+    pub fn contract_in_app(&self, app: &str, name: &str) -> BuilderResult<&'a SilContractArtifact> {
+        Ok(self.contract_ref_in_app(app, name)?.contract)
+    }
+
     fn contract_ref(&self, name: &str) -> BuilderResult<ContractRef<'a>> {
         for artifact in self.artifacts() {
             if let Some(contract) = artifact.sil_abi.contract(name) {
@@ -496,7 +796,36 @@ impl<'a> TxBuilder<'a> {
     }
 
     fn artifacts(&self) -> impl Iterator<Item = &'a Artifact> + '_ {
-        std::iter::once(self.artifact).chain(self.observed_artifacts.iter().copied())
+        self.bundle.artifacts()
+    }
+
+    fn contract_ref_in_artifact(&self, artifact: &'a Artifact, name: &str) -> BuilderResult<ContractRef<'a>> {
+        let contract = self.contract_in_artifact(artifact, name)?;
+        Ok(ContractRef { artifact, contract })
+    }
+
+    fn contract_ref_in_app(&self, app: &str, name: &str) -> BuilderResult<ContractRef<'a>> {
+        self.contract_ref_in_artifact(self.bundle.app(app)?, name)
+    }
+
+    fn hidden_template_contract_ref(
+        &self,
+        primary_artifact: &'a Artifact,
+        hidden: &HiddenParamArtifact,
+        entry: &EntryArtifact,
+        template_selectors: &BTreeMap<String, String>,
+    ) -> BuilderResult<ContractRef<'a>> {
+        match &hidden.subject {
+            HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
+            HiddenParamSubjectArtifact::ObservedActor { observe, actor, .. } => self.contract_ref_in_app(observe, actor),
+            HiddenParamSubjectArtifact::TemplateSelector { .. } => {
+                let actor = hidden_template_actor(hidden, entry, template_selectors)?;
+                self.contract_ref_in_artifact(primary_artifact, &actor)
+            }
+            HiddenParamSubjectArtifact::RouteFamily { .. } => {
+                Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
+            }
+        }
     }
 
     fn runtime_state_plan(&self, artifact: &'a Artifact, contract_name: &str) -> Option<&'a RuntimeStatePlanArtifact> {
@@ -512,12 +841,31 @@ impl<'a> TxBuilder<'a> {
         Err(BuilderError::UnknownActor(name.to_string()))
     }
 
+    fn argent_actor_ref_in_artifact(&self, artifact: &'a Artifact, name: &str) -> BuilderResult<ActorRef<'a>> {
+        artifact
+            .argent
+            .actors
+            .iter()
+            .find(|actor| actor.name == name)
+            .map(|actor| ActorRef { artifact, actor })
+            .ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
+    }
+
     pub fn entry(&self, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {
         Ok(self.entry_ref(actor_name, entry_name)?.entry)
     }
 
     fn entry_ref(&self, actor_name: &str, entry_name: &str) -> BuilderResult<EntryRef<'a>> {
         let actor_ref = self.argent_actor_ref(actor_name)?;
+        self.entry_ref_for_actor(actor_ref, actor_name, entry_name)
+    }
+
+    fn entry_ref_in_artifact(&self, artifact: &'a Artifact, actor_name: &str, entry_name: &str) -> BuilderResult<EntryRef<'a>> {
+        let actor_ref = self.argent_actor_ref_in_artifact(artifact, actor_name)?;
+        self.entry_ref_for_actor(actor_ref, actor_name, entry_name)
+    }
+
+    fn entry_ref_for_actor(&self, actor_ref: ActorRef<'a>, actor_name: &str, entry_name: &str) -> BuilderResult<EntryRef<'a>> {
         let entry = actor_ref
             .actor
             .entries
@@ -591,7 +939,7 @@ impl<'a> TxBuilder<'a> {
                 handle: input.name.clone(),
             })?;
             self.validate_observed_actor(observe_name, ObservedActorSideArtifact::Input, input, &observed.actor)?;
-            let expected_script_public_key = self.script_public_key(&observed.actor, observed.state.clone())?;
+            let expected_script_public_key = self.script_public_key_in_app(observe_name, &observed.actor, observed.state.clone())?;
             if observed.utxo.script_public_key != expected_script_public_key {
                 return Err(BuilderError::ObservedUtxoScriptMismatch {
                     observe: observe_name.to_string(),
@@ -625,7 +973,7 @@ impl<'a> TxBuilder<'a> {
                 handle: output.name.clone(),
             })?;
             self.validate_observed_actor(observe_name, ObservedActorSideArtifact::Output, output, &observed.actor)?;
-            self.redeem_script(&observed.actor, observed.state.clone())?;
+            self.redeem_script_in_app(observe_name, &observed.actor, observed.state.clone())?;
         }
         Ok(())
     }
@@ -699,11 +1047,20 @@ impl<'a> TxBuilder<'a> {
                         });
                     }
                     match role {
-                        RuntimeFieldRoleArtifact::Template { contract }
-                        | RuntimeFieldRoleArtifact::ObservedTemplate { contract, .. } => {
+                        RuntimeFieldRoleArtifact::Template { contract } => {
                             values.insert(
                                 field.name.clone(),
-                                ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
+                                ArtifactValue::Bytes(decode_hex(
+                                    &self.contract_in_artifact(artifact, contract)?.compiled.template.hash_hex,
+                                )?),
+                            );
+                        }
+                        RuntimeFieldRoleArtifact::ObservedTemplate { observe, contract, .. } => {
+                            values.insert(
+                                field.name.clone(),
+                                ArtifactValue::Bytes(decode_hex(
+                                    &self.contract_ref_in_app(observe, contract)?.contract.compiled.template.hash_hex,
+                                )?),
                             );
                         }
                         RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
@@ -788,7 +1145,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub fn route_family_table_bytes(&self, family_id: &str) -> BuilderResult<Vec<u8>> {
-        self.route_family_table_bytes_in_artifact(self.artifact, family_id)
+        self.route_family_table_bytes_in_artifact(self.bundle.primary, family_id)
     }
 
     fn route_family_table_bytes_in_artifact(&self, artifact: &'a Artifact, family_id: &str) -> BuilderResult<Vec<u8>> {
@@ -822,6 +1179,17 @@ impl<'a> TxBuilder<'a> {
         }
         Ok(table)
     }
+}
+
+fn validate_artifact(app: &str, artifact: &Artifact) -> BuilderResult<()> {
+    artifact.check_schema_version()?;
+    artifact.verify_template_plan()?;
+    artifact.verify_id().map_err(|source| BuilderError::ArtifactIdentity { app: app.to_string(), source })?;
+    Ok(())
+}
+
+fn find_interface<'a>(interfaces: &'a [ActorInterfaceArtifact], actor: &str) -> Option<&'a ActorInterfaceArtifact> {
+    interfaces.iter().find(|interface| interface.actor == actor)
 }
 
 fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
