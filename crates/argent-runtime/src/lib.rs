@@ -57,12 +57,8 @@ pub enum BuilderError {
     DuplicateAppAlias(String),
     #[error("artifact bundle has no app alias `{0}`")]
     UnknownAppAlias(String),
-    #[error("primary artifact does not declare observed app alias `{0}`")]
-    UnknownObservedAppAlias(String),
-    #[error("observed artifact `{app}` does not match any observed app alias")]
-    NoMatchingObservedApp { app: String },
-    #[error("observed artifact `{app}` matches multiple observed app aliases: {aliases:?}")]
-    AmbiguousObservedArtifact { app: String, aliases: Vec<String> },
+    #[error("artifact `{app}` must be attached as `{expected}`, got `{found}`")]
+    AppAliasMismatch { app: String, expected: String, found: String },
     #[error("artifact bundle app `{app}` has invalid artifact id: {source}")]
     ArtifactIdentity { app: String, source: ArtifactIdentityError },
     #[error("artifact bundle app `{app}` is missing {direction} interface for actor `{actor}`")]
@@ -71,6 +67,10 @@ pub enum BuilderError {
         "artifact bundle app `{app}` actor `{actor}` interface mismatch: expected {expected_fingerprint}, found {found_fingerprint}"
     )]
     InterfaceMismatch { app: String, actor: String, expected_fingerprint: String, found_fingerprint: String },
+    #[error("no attached app supplies observed `{observe}` contract `{contract}`")]
+    NoAppForObservedContract { observe: String, contract: String },
+    #[error("multiple attached apps supply observed `{observe}` contract `{contract}`: {apps:?}")]
+    AmbiguousAppForObservedContract { observe: String, contract: String, apps: Vec<String> },
     #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
     RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("runtime state field `{field}` for contract `{contract}` is generated and must be filled by the runtime")]
@@ -175,8 +175,10 @@ pub struct ObservedOutput {
     pub state: BTreeMap<String, ArtifactValue>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ObservedCovenantContext {
+    /// Attached artifact app alias that implements this observed covenant view.
+    pub app: String,
     /// Observed inputs keyed by their `observes { inputs { ... } }` handle.
     pub inputs: BTreeMap<String, ObservedInput>,
     /// Observed outputs keyed by their `observes { outputs { ... } }` handle.
@@ -184,8 +186,8 @@ pub struct ObservedCovenantContext {
 }
 
 impl ObservedCovenantContext {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn from_app(app: impl Into<String>) -> Self {
+        Self { app: app.into(), inputs: BTreeMap::new(), outputs: BTreeMap::new() }
     }
 
     pub fn input(
@@ -226,111 +228,21 @@ impl<'a> ArtifactBundle<'a> {
         if self.apps.contains_key(&alias) {
             return Err(BuilderError::DuplicateAppAlias(alias));
         }
+        let expected = artifact_app_alias(&artifact.app);
+        if alias != expected {
+            return Err(BuilderError::AppAliasMismatch { app: artifact.app.clone(), expected, found: alias });
+        }
         validate_artifact(&alias, artifact)?;
-        self.validate_app_interfaces(&alias, artifact)?;
         self.apps.insert(alias, artifact);
         Ok(self)
     }
 
-    fn validate_app_interfaces(&self, alias: &str, artifact: &Artifact) -> BuilderResult<()> {
-        let observed_actors = self.observed_actors_for_alias(alias);
-        if observed_actors.is_empty() {
-            if self.observes_alias(alias) {
-                return Ok(());
-            }
-            return Err(BuilderError::UnknownObservedAppAlias(alias.to_string()));
-        }
-        self.validate_actor_interfaces(alias, artifact, &observed_actors)
-    }
-
-    fn validate_actor_interfaces(&self, alias: &str, artifact: &Artifact, observed_actors: &[String]) -> BuilderResult<()> {
-        for actor in observed_actors {
-            let expected = find_interface(&self.primary.argent.interfaces.imports, actor).ok_or_else(|| {
-                BuilderError::MissingInterface { app: "primary".to_string(), direction: "import", actor: actor.clone() }
-            })?;
-            let found = find_interface(&artifact.argent.interfaces.exports, actor).ok_or_else(|| BuilderError::MissingInterface {
-                app: alias.to_string(),
-                direction: "export",
-                actor: actor.clone(),
-            })?;
-            if expected.fingerprint_hex != found.fingerprint_hex {
-                return Err(BuilderError::InterfaceMismatch {
-                    app: alias.to_string(),
-                    actor: actor.clone(),
-                    expected_fingerprint: expected.fingerprint_hex.clone(),
-                    found_fingerprint: found.fingerprint_hex.clone(),
-                });
-            }
-        }
-
-        Ok(())
-    }
-
-    fn observed_actors_for_alias(&self, alias: &str) -> Vec<String> {
-        let mut observed_actors = BTreeMap::new();
-        for actor in &self.primary.argent.actors {
-            for entry in &actor.entries {
-                for observe in &entry.observes {
-                    if observe.name != alias {
-                        continue;
-                    }
-                    for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
-                        if observed.open_state.is_some() {
-                            continue;
-                        }
-                        observed_actors.insert(observed.actor.as_str(), observed.actor.as_str());
-                    }
-                }
-            }
-        }
-        observed_actors.into_keys().map(str::to_string).collect()
-    }
-
-    fn observes_alias(&self, alias: &str) -> bool {
-        self.primary
-            .argent
-            .actors
-            .iter()
-            .flat_map(|actor| actor.entries.iter())
-            .flat_map(|entry| entry.observes.iter())
-            .any(|observe| observe.name == alias)
-    }
-
-    fn observed_aliases(&self) -> Vec<String> {
-        let mut aliases = BTreeMap::new();
-        for actor in &self.primary.argent.actors {
-            for entry in &actor.entries {
-                for observe in &entry.observes {
-                    aliases.insert(observe.name.as_str(), observe.name.as_str());
-                }
-            }
-        }
-        aliases.into_keys().map(str::to_string).collect()
-    }
-
-    fn infer_observed_alias(&self, artifact: &Artifact) -> BuilderResult<String> {
-        let matches = self
-            .observed_aliases()
-            .into_iter()
-            .filter(|alias| {
-                let observed_actors = self.observed_actors_for_alias(alias);
-                !observed_actors.is_empty() && self.validate_actor_interfaces(alias, artifact, &observed_actors).is_ok()
-            })
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [alias] => Ok(alias.clone()),
-            [] => Err(BuilderError::NoMatchingObservedApp { app: artifact.app.clone() }),
-            _ => Err(BuilderError::AmbiguousObservedArtifact { app: artifact.app.clone(), aliases: matches }),
-        }
-    }
-
     fn attach_observed_artifact(mut self, artifact: &'a Artifact) -> BuilderResult<Self> {
-        let alias = self.infer_observed_alias(artifact)?;
+        let alias = artifact_app_alias(&artifact.app);
         if self.apps.contains_key(&alias) {
             return Err(BuilderError::DuplicateAppAlias(alias));
         }
         validate_artifact(&alias, artifact)?;
-        self.validate_app_interfaces(&alias, artifact)?;
         self.apps.insert(alias, artifact);
         Ok(self)
     }
@@ -744,6 +656,7 @@ impl<'a> TxBuilder<'a> {
         let entry = self.entry(request.actor_name, request.entry_name)?;
         let observe = self.observe(request.actor_name, request.entry_name, entry, request.observe)?;
         self.validate_observed_covenant(request.observe, observe, request.context)?;
+        let app = request.context.app.as_str();
 
         for handle in request.context.outputs.keys().chain(request.output_values.keys()) {
             if observe.outputs.iter().all(|output| &output.name != handle) {
@@ -767,7 +680,7 @@ impl<'a> TxBuilder<'a> {
                 .get(&observed_output.name)
                 .ok_or_else(|| BuilderError::MissingOutput(observed_output.name.clone()))?;
             outputs.push(self.covenant_output_in_app(
-                request.observe,
+                app,
                 &output.actor,
                 output.state.clone(),
                 value,
@@ -796,6 +709,55 @@ impl<'a> TxBuilder<'a> {
 
     pub fn contract_in_app(&self, app: &str, name: &str) -> BuilderResult<&'a SilContractArtifact> {
         Ok(self.contract_ref_in_app(app, name)?.contract)
+    }
+
+    fn validate_actor_interface(&self, app: &str, actor: &str) -> BuilderResult<()> {
+        let artifact = self.bundle.app(app)?;
+        let expected = find_interface(&self.bundle.primary.argent.interfaces.imports, actor).ok_or_else(|| {
+            BuilderError::MissingInterface { app: "primary".to_string(), direction: "import", actor: actor.to_string() }
+        })?;
+        let found = find_interface(&artifact.argent.interfaces.exports, actor).ok_or_else(|| BuilderError::MissingInterface {
+            app: app.to_string(),
+            direction: "export",
+            actor: actor.to_string(),
+        })?;
+        if expected.fingerprint_hex != found.fingerprint_hex {
+            return Err(BuilderError::InterfaceMismatch {
+                app: app.to_string(),
+                actor: actor.to_string(),
+                expected_fingerprint: expected.fingerprint_hex.clone(),
+                found_fingerprint: found.fingerprint_hex.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn observed_contract_ref(&self, observe: &str, contract: &str) -> BuilderResult<ContractRef<'a>> {
+        let mut contract_apps = Vec::new();
+        let mut valid_apps = Vec::new();
+        let mut first_interface_error = None;
+        for (app, artifact) in &self.bundle.apps {
+            if artifact.sil_abi.contract(contract).is_some() {
+                contract_apps.push(app.clone());
+                match self.validate_actor_interface(app, contract) {
+                    Ok(()) => valid_apps.push(app.clone()),
+                    Err(err) if first_interface_error.is_none() => first_interface_error = Some(err),
+                    Err(_) => {}
+                }
+            }
+        }
+        match valid_apps.as_slice() {
+            [app] => self.contract_ref_in_app(app, contract),
+            [] if contract_apps.is_empty() => {
+                Err(BuilderError::NoAppForObservedContract { observe: observe.to_string(), contract: contract.to_string() })
+            }
+            [] => Err(first_interface_error.expect("at least one app with contract produced an interface result")),
+            _ => Err(BuilderError::AmbiguousAppForObservedContract {
+                observe: observe.to_string(),
+                contract: contract.to_string(),
+                apps: valid_apps,
+            }),
+        }
     }
 
     fn contract_ref(&self, name: &str) -> BuilderResult<ContractRef<'a>> {
@@ -835,18 +797,15 @@ impl<'a> TxBuilder<'a> {
         match &hidden.subject {
             HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
             HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, actor } => {
-                if let Some(contexts) = observed
-                    && let Some(context) = contexts.get(observe)
-                {
-                    let observed_actor = match side {
-                        ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
-                        ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
-                    };
-                    if let Some(observed_actor) = observed_actor {
-                        return self.contract_ref_in_app(observe, observed_actor);
-                    }
+                let context = observed
+                    .and_then(|contexts| contexts.get(observe))
+                    .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
+                let observed_actor = match side {
+                    ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
+                    ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
                 }
-                self.contract_ref_in_app(observe, actor)
+                .unwrap_or(actor.as_str());
+                self.contract_ref_in_app(&context.app, observed_actor)
             }
             HiddenParamSubjectArtifact::TemplateSelector { .. } => {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
@@ -943,6 +902,7 @@ impl<'a> TxBuilder<'a> {
         observe: &ObserveArtifact,
         context: &ObservedCovenantContext,
     ) -> BuilderResult<()> {
+        self.bundle.app(&context.app)?;
         self.validate_observed_inputs(observe_name, &observe.inputs, context)?;
         self.validate_observed_outputs(observe_name, &observe.outputs, context)
     }
@@ -968,8 +928,8 @@ impl<'a> TxBuilder<'a> {
                 side: observed_side_label(ObservedActorSideArtifact::Input),
                 handle: input.name.clone(),
             })?;
-            self.validate_observed_actor(observe_name, ObservedActorSideArtifact::Input, input, &observed.actor)?;
-            let expected_script_public_key = self.script_public_key_in_app(observe_name, &observed.actor, observed.state.clone())?;
+            self.validate_observed_actor(&context.app, observe_name, ObservedActorSideArtifact::Input, input, &observed.actor)?;
+            let expected_script_public_key = self.script_public_key_in_app(&context.app, &observed.actor, observed.state.clone())?;
             if observed.utxo.script_public_key != expected_script_public_key {
                 return Err(BuilderError::ObservedUtxoScriptMismatch {
                     observe: observe_name.to_string(),
@@ -1002,21 +962,22 @@ impl<'a> TxBuilder<'a> {
                 side: observed_side_label(ObservedActorSideArtifact::Output),
                 handle: output.name.clone(),
             })?;
-            self.validate_observed_actor(observe_name, ObservedActorSideArtifact::Output, output, &observed.actor)?;
-            self.redeem_script_in_app(observe_name, &observed.actor, observed.state.clone())?;
+            self.validate_observed_actor(&context.app, observe_name, ObservedActorSideArtifact::Output, output, &observed.actor)?;
+            self.redeem_script_in_app(&context.app, &observed.actor, observed.state.clone())?;
         }
         Ok(())
     }
 
     fn validate_observed_actor(
         &self,
+        app: &str,
         observe_name: &str,
         side: ObservedActorSideArtifact,
         expected: &ObservedActorArtifact,
         found_actor: &str,
     ) -> BuilderResult<()> {
         if let Some(expected_state) = expected.open_state.as_deref() {
-            let found = self.argent_actor_ref_in_artifact(self.bundle.app(observe_name)?, found_actor)?;
+            let found = self.argent_actor_ref_in_artifact(self.bundle.app(app)?, found_actor)?;
             if found.actor.state != expected_state {
                 return Err(BuilderError::ObservedActorMismatch {
                     observe: observe_name.to_string(),
@@ -1037,6 +998,7 @@ impl<'a> TxBuilder<'a> {
                 found: found_actor.to_string(),
             });
         }
+        self.validate_actor_interface(app, &expected.actor)?;
         Ok(())
     }
 
@@ -1102,7 +1064,7 @@ impl<'a> TxBuilder<'a> {
                             values.insert(
                                 field.name.clone(),
                                 ArtifactValue::Bytes(decode_hex(
-                                    &self.contract_ref_in_app(observe, contract)?.contract.compiled.template.hash_hex,
+                                    &self.observed_contract_ref(observe, contract)?.contract.compiled.template.hash_hex,
                                 )?),
                             );
                         }
@@ -1309,6 +1271,38 @@ fn observed_side_label(side: ObservedActorSideArtifact) -> &'static str {
         ObservedActorSideArtifact::Input => "input",
         ObservedActorSideArtifact::Output => "output",
     }
+}
+
+fn artifact_app_alias(app: &str) -> String {
+    to_snake(app)
+}
+
+fn to_snake(input: &str) -> String {
+    let mut out = String::new();
+    let chars = input.chars().collect::<Vec<_>>();
+    for (idx, ch) in chars.iter().enumerate() {
+        let prev = idx.checked_sub(1).and_then(|prev| chars.get(prev)).copied();
+        let next = chars.get(idx + 1).copied();
+        if ch.is_ascii_uppercase() {
+            let insert_sep = idx > 0
+                && !out.ends_with('_')
+                && prev.is_some_and(|prev| {
+                    prev.is_ascii_lowercase() || prev.is_ascii_digit() || next.is_some_and(|next| next.is_ascii_lowercase())
+                });
+            if insert_sep {
+                out.push('_');
+            }
+            out.push(ch.to_ascii_lowercase());
+        } else if ch.is_ascii_alphanumeric() {
+            out.push(*ch);
+        } else if !out.ends_with('_') && !out.is_empty() {
+            out.push('_');
+        }
+    }
+    while out.ends_with('_') {
+        out.pop();
+    }
+    out
 }
 
 fn blake2b32(data: &[u8]) -> Vec<u8> {

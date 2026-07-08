@@ -13,7 +13,7 @@ state CellState {
 
 actor Cell owns CellState {
     entry advance()
-    observes agent by self.agent_covid {
+    observes remote by self.agent_covid {
         inputs {
             agent: self.agent_type;
         }
@@ -25,7 +25,7 @@ actor Cell owns CellState {
     emits {
         cell: Cell;
     } {
-        AgentState prev_state = agent.inputs.agent.state;
+        AgentState prev_state = remote.inputs.agent.state;
 
         require(prev_state.controller_id == self.covenant_id);
         require(prev_state.energy > 0);
@@ -36,7 +36,7 @@ actor Cell owns CellState {
             energy: prev_state.energy - 1,
         };
 
-        require agent.outputs become {
+        require remote.outputs become {
             agent <- self.agent_type(next_state);
         };
 

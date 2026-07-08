@@ -25,31 +25,31 @@ contract Cell(
 
     // :: entrypoints
     entrypoint function advance(
-        byte[] gen__agent_agent_type_prefix,
-        byte[] gen__agent_agent_type_suffix
+        byte[] gen__remote_agent_type_prefix,
+        byte[] gen__remote_agent_type_suffix
     ) {
         // :: observed covenants
-        byte[32] gen__agent_cov_id = agent_covid; // observe agent
-        require(OpCovInputCount(gen__agent_cov_id) == 1);
-        require(OpCovOutputCount(gen__agent_cov_id) == 1);
-        // :: observed input agent.agent: self.agent_type
-        int gen__agent_agent_input_idx = OpCovInputIdx(gen__agent_cov_id, 0);
-        int gen__agent_agent_type_prefix_len = gen__agent_agent_type_prefix.length;
-        int gen__agent_agent_type_suffix_len = gen__agent_agent_type_suffix.length;
-        AgentState gen__agent_agent_state = readInputStateWithTemplate(
-            gen__agent_agent_input_idx,
-            gen__agent_agent_type_prefix_len,
-            gen__agent_agent_type_suffix_len,
+        byte[32] gen__remote_cov_id = agent_covid; // observe remote
+        require(OpCovInputCount(gen__remote_cov_id) == 1);
+        require(OpCovOutputCount(gen__remote_cov_id) == 1);
+        // :: observed input remote.agent: self.agent_type
+        int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
+        int gen__remote_agent_type_prefix_len = gen__remote_agent_type_prefix.length;
+        int gen__remote_agent_type_suffix_len = gen__remote_agent_type_suffix.length;
+        AgentState gen__remote_agent_state = readInputStateWithTemplate(
+            gen__remote_agent_input_idx,
+            gen__remote_agent_type_prefix_len,
+            gen__remote_agent_type_suffix_len,
             agent_type
         );
-        // :: observed output agent.agent: self.agent_type
-        int gen__agent_agent_output_idx = OpCovOutputIdx(gen__agent_cov_id, 0);
+        // :: observed output remote.agent: self.agent_type
+        int gen__remote_agent_output_idx = OpCovOutputIdx(gen__remote_cov_id, 0);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output cell: Cell
 
-        AgentState prev_state = gen__agent_agent_state;
+        AgentState prev_state = gen__remote_agent_state;
         require(prev_state.controller_id == OpInputCovenantId(this.activeInputIndex));
         require(prev_state.energy > 0);
         AgentState next_state = {
@@ -57,12 +57,12 @@ contract Cell(
             caps_digest: prev_state.caps_digest,
             energy: prev_state.energy - 1,
         };
-        // :: observed become agent.agent -> self.agent_type
+        // :: observed become remote.agent -> self.agent_type
         validateOutputStateWithTemplate(
-            gen__agent_agent_output_idx,
+            gen__remote_agent_output_idx,
             next_state,
-            gen__agent_agent_type_prefix,
-            gen__agent_agent_type_suffix,
+            gen__remote_agent_type_prefix,
+            gen__remote_agent_type_suffix,
             agent_type
         );
         State next_cell = {

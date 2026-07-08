@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "451a40224ef2f6bdc7f3836bc442eeccb21ad6f8fcc7a85d1037d2df70d82965",
+  "id": "f4cdadc4e8c95db1c566f6088af8b9ed0d45c7e8e851e886e38d2c09d595ea16",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -35,29 +35,29 @@
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
+          "id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
           "subject": {
             "kind": "observed_actor",
-            "observe": "agent",
+            "observe": "remote",
             "side": "output",
             "handle": "agent",
             "actor": "self.agent_type"
           },
-          "param": "gen__agent_agent_type_prefix",
+          "param": "gen__remote_agent_type_prefix",
           "purpose": {
             "kind": "template_prefix_bytes"
           }
         },
         {
-          "id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
+          "id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
           "subject": {
             "kind": "observed_actor",
-            "observe": "agent",
+            "observe": "remote",
             "side": "output",
             "handle": "agent",
             "actor": "self.agent_type"
           },
-          "param": "gen__agent_agent_type_suffix",
+          "param": "gen__remote_agent_type_suffix",
           "purpose": {
             "kind": "template_suffix_bytes"
           }
@@ -180,20 +180,20 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/observed/agent/output/agent_type/template_prefix_bytes",
-                "witness/observed/agent/output/agent_type/template_suffix_bytes"
+                "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "witness/observed/remote/output/agent_type/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
-                "name": "gen__agent_agent_type_prefix",
+                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "name": "gen__remote_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 },
                 "subject": {
                   "kind": "observed_actor",
-                  "observe": "agent",
+                  "observe": "remote",
                   "side": "output",
                   "handle": "agent",
                   "actor": "self.agent_type"
@@ -203,14 +203,14 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
-                "name": "gen__agent_agent_type_suffix",
+                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+                "name": "gen__remote_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
                 },
                 "subject": {
                   "kind": "observed_actor",
-                  "observe": "agent",
+                  "observe": "remote",
                   "side": "output",
                   "handle": "agent",
                   "actor": "self.agent_type"
@@ -223,7 +223,7 @@
             "template_selectors": [],
             "observes": [
               {
-                "name": "agent",
+                "name": "remote",
                 "covenant_expr": "self.agent_covid",
                 "inputs": [
                   {
@@ -243,11 +243,11 @@
             ],
             "witnesses": [
               {
-                "recipe_id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
-                "param": "gen__agent_agent_type_prefix",
+                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "param": "gen__remote_agent_type_prefix",
                 "subject": {
                   "kind": "observed_actor",
-                  "observe": "agent",
+                  "observe": "remote",
                   "side": "output",
                   "handle": "agent",
                   "actor": "self.agent_type"
@@ -257,11 +257,11 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
-                "param": "gen__agent_agent_type_suffix",
+                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+                "param": "gen__remote_agent_type_suffix",
                 "subject": {
                   "kind": "observed_actor",
-                  "observe": "agent",
+                  "observe": "remote",
                   "side": "output",
                   "handle": "agent",
                   "actor": "self.agent_type"
@@ -398,13 +398,13 @@
             "selector": null,
             "params": [
               {
-                "name": "gen__agent_agent_type_prefix",
+                "name": "gen__remote_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 }
               },
               {
-                "name": "gen__agent_agent_type_suffix",
+                "name": "gen__remote_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
                 }
