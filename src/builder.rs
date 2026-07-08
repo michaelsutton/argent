@@ -907,6 +907,47 @@ mod tests {
         );
         execute_input_with_covenants(&tx, entries.clone(), 0).expect("observed ICC mint passes");
 
+        let minter_contract = builder.contract("Minter").expect("Minter contract exists");
+        let minter_entry = minter_contract.entry("mint").expect("mint entry exists");
+        let mut bad_proxy_suffix =
+            decode_hex(&builder.contract("MinterProxy").unwrap().compiled.template.suffix_hex).expect("proxy suffix decodes");
+        bad_proxy_suffix.push(0);
+        let corrupt_hidden_sigscript = encode_entry_sig_script(
+            &controller_artifact.sil_abi,
+            minter_contract,
+            minter_entry,
+            &[
+                ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
+                ArtifactValue::Bytes(recipient_owner.clone()),
+                ArtifactValue::Int(minted_amount),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("MinterProxy").unwrap().compiled.template.prefix_hex).expect("proxy prefix decodes"),
+                ),
+                ArtifactValue::Bytes(bad_proxy_suffix),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("KCC20").unwrap().compiled.template.prefix_hex).expect("KCC20 prefix decodes"),
+                ),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("KCC20").unwrap().compiled.template.suffix_hex).expect("KCC20 suffix decodes"),
+                ),
+            ],
+        )
+        .expect("manual corrupt observed sigscript encodes");
+        let corrupt_hidden_sigscript = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("Minter", minter_initial.clone()).expect("Minter redeem script builds"),
+            corrupt_hidden_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("corrupt P2SH sigscript builds");
+        let corrupt_hidden_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, corrupt_hidden_sigscript),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            tx.outputs.clone(),
+        );
+        assert!(execute_input_with_covenants(&corrupt_hidden_tx, entries.clone(), 0).is_err());
+
         let missing_proxy = BTreeMap::from([(
             "asset".to_string(),
             ObservedCovenantContext { inputs: BTreeMap::new(), outputs: observed.get("asset").unwrap().outputs.clone() },

@@ -424,7 +424,7 @@ Obstacle to handle:
 
 ### 12. Implement Concrete `observes` Blocks
 
-Status: in progress.
+Status: done.
 
 Done so far:
 
@@ -449,11 +449,14 @@ Done so far:
   that tracks this feature without changing the full target sketch in
   `examples/icc/minter_proxy_observer.ag`.
 - `check.sh --full` regenerates the ICC fixture build output.
-
-Still remaining:
-
-- Connect the artifact/runtime builder so users provide semantic UTXOs and
-  states rather than observed lens and committed-template plumbing.
+- A separate `examples/icc/kcc20_asset_real.ag` fixture keeps the observed asset
+  app distinct from the mint controller app, preserving `app == cov`.
+- `argent-runtime` can attach observed app artifacts, validate observed input
+  UTXOs against semantic actor/state pairs, derive observed template witnesses,
+  and build observed covenant outputs in declaration order.
+- The ICC runtime test builds a mint transaction across the controller app and
+  asset app, then rejects missing observed input, wrong observed input state,
+  wrong recipient output, and wrong observed covenant id.
 
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
@@ -480,6 +483,22 @@ Obstacle to handle:
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
 ### 13. Hide Observed Covenant Plumbing
+
+Status: done.
+
+Done so far:
+
+- `TxBuilder::with_observed_artifact` composes a controller artifact with
+  observed foreign app artifacts without merging app/covenant identities.
+- `p2sh_signature_script_with_observed_covenants` takes semantic observed
+  contexts and fills hidden observed prefix/suffix witnesses internally.
+- `observed_covenant_outputs` builds observed outputs from named handles and
+  declaration order, so callers do not pass raw observed output indexes.
+- Observed input UTXOs are checked against the declared actor/state before the
+  runtime builds hidden witnesses.
+- The ICC runtime test includes an explicit corrupt-hidden-witness path that
+  bypasses the high-level helper and proves txscript rejects a bad observed
+  template lens.
 
 Make the builder fill observed-covenant lens witnesses from the artifact and
 live UTXOs, while observed template hashes stay committed in generated observer
