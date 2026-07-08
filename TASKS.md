@@ -542,30 +542,30 @@ The bundle is builder knowledge, not consensus truth. Scripts still verify
 template hashes, covenant ids, script public keys, state bytes, and signatures.
 The builder should reject inconsistent bundles before constructing a transaction.
 
-Bundle support milestone:
+Bundle support milestone completed:
 
-- [ ] Add `ArtifactBundle` as the explicit runtime composition object.
-- [ ] Add stable artifact ids derived from canonical artifact content.
-- [ ] Add interface fingerprints for exported/imported state and actor views.
-- [ ] Keep `TxBuilder::new(&artifact)` as the single-artifact convenience path,
-  but make it internally use the bundle resolver.
-- [ ] Add `TxBuilder::from_bundle(&bundle)` for multi-artifact construction.
-- [ ] Attach observed apps through a stable app alias such as
+- Added `ArtifactBundle` as the explicit runtime composition object.
+- Added stable artifact ids derived from canonical artifact content.
+- Added interface fingerprints for exported/imported state and actor views.
+- Kept `TxBuilder::new(&artifact)` as the single-artifact convenience path,
+  but made it internally use the bundle resolver.
+- Added `TxBuilder::from_bundle(&bundle)` for multi-artifact construction.
+- Attached observed apps through a stable app alias such as
   `bundle.with_app("asset", asset_artifact)`.
-- [ ] Reject duplicate app aliases.
-- [ ] Resolve observed actor refs through app aliases and interface
+- Rejected duplicate app aliases.
+- Resolved observed actor refs through app aliases and interface
   fingerprints, not temporary global actor-name uniqueness rules.
-- [ ] Reject bundles where the observing artifact's imported state/actor view
+- Rejected bundles where the observing artifact's imported state/actor view
   fingerprint does not match the attached app's exported view.
-- [ ] Move observed contract/actor lookup, route table/proof lookup, and runtime
+- Moved observed contract/actor lookup, route table/proof lookup, and runtime
   state filling through the bundle resolver.
-- [ ] Add fluent `ObservedCovenantContext` helpers for semantic observed inputs
+- Added fluent `ObservedCovenantContext` helpers for semantic observed inputs
   and outputs.
-- [ ] Add an `observed_outputs` convenience method that builds observed covenant
+- Added an `observed_outputs` convenience method that builds observed covenant
   outputs by observe alias and declaration order.
-- [ ] Update the ICC minter runtime test to use the bundle API and keep the
+- Updated the ICC minter runtime test to use the bundle API and keep the
   existing rejection coverage.
-- [ ] Add a negative test where the attached observed app has the right actor
+- Added a negative test where the attached observed app has the right actor
   names but an incompatible state/interface fingerprint.
 
 Later source-language dependency work:

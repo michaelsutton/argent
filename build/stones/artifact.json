@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "id": "f99f62e02423187ed660fc43908cb9d964a5340485a65d0485256765415e4b96",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -303,6 +304,35 @@
           }
         }
       ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/League",
+          "actor": "League",
+          "state": "LeagueState",
+          "fingerprint_hex": "0e3682d0996058618689250b06fe0354d74d293525fe0d4b9141c7bcea667d51"
+        },
+        {
+          "id": "interface/actor/Player",
+          "actor": "Player",
+          "state": "PlayerState",
+          "fingerprint_hex": "f0b108f7697ffc92ca201f096aa8deb0958a48cc33225f1f5d111a4ef82e23b1"
+        },
+        {
+          "id": "interface/actor/StonesGame",
+          "actor": "StonesGame",
+          "state": "GameState",
+          "fingerprint_hex": "d73c831c1bca319b1abc4be58249114b0c2f75b0134ac632d31cc294b60b9779"
+        },
+        {
+          "id": "interface/actor/StonesSettle",
+          "actor": "StonesSettle",
+          "state": "SettleState",
+          "fingerprint_hex": "c28af1c426c81a710eb7a709278e19fc92fcd49528db68053320223cfc273bba"
+        }
+      ],
+      "imports": []
     },
     "states": [
       {

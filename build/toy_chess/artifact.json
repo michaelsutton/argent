@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "id": "62dacc038dd129b9591ca97ff88dc2abc37296bcb285569537f2258e4c66ca98",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -408,6 +409,41 @@
           }
         }
       ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/League",
+          "actor": "League",
+          "state": "LeagueState",
+          "fingerprint_hex": "4bfe363a756d049221626b23263b38b2b14b01585627d8cf1b5b036e05afbd58"
+        },
+        {
+          "id": "interface/actor/Player",
+          "actor": "Player",
+          "state": "PlayerState",
+          "fingerprint_hex": "c58590d647b7cbcd81ea57d8f4e3196c04900bf4ca9c038d824de10085f3859e"
+        },
+        {
+          "id": "interface/actor/Mux",
+          "actor": "Mux",
+          "state": "BoardState",
+          "fingerprint_hex": "bdc2dcd8395bb3a464209616ef41506c44e870754ed280aa95cec5f3ab947c06"
+        },
+        {
+          "id": "interface/actor/Pawn",
+          "actor": "Pawn",
+          "state": "BoardState",
+          "fingerprint_hex": "2358ea2891e8afc80f702fe1b65985958e048292bb16c0d7c51f3a630948d4d7"
+        },
+        {
+          "id": "interface/actor/Knight",
+          "actor": "Knight",
+          "state": "BoardState",
+          "fingerprint_hex": "2d7a372a64bf008bc34a01751aa4c0d7ddb68f1895ebdf04a644498e0a9e4dc8"
+        }
+      ],
+      "imports": []
     },
     "states": [
       {
