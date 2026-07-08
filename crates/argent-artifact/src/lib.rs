@@ -41,6 +41,8 @@ pub struct ArgentArtifact {
     #[serde(default)]
     pub interfaces: InterfaceSetArtifact,
     pub states: Vec<StateArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_expansions: Vec<StateExpansionArtifact>,
     #[serde(default)]
     pub actor_enums: Vec<ActorEnumArtifact>,
     pub actors: Vec<ActorArtifact>,
@@ -114,6 +116,19 @@ pub struct ActorInterfaceArtifact {
     pub actor: String,
     pub state: String,
     pub fingerprint_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateExpansionArtifact {
+    pub state: String,
+    pub base: String,
+    pub digests: Vec<StateDigestExpansionArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateDigestExpansionArtifact {
+    pub field: String,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

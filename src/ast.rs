@@ -35,12 +35,25 @@ pub struct ConstDecl {
 pub struct StateDecl {
     pub name: String,
     pub fields: Vec<FieldDecl>,
+    pub expansion: Option<StateExpansionDecl>,
 }
 
 #[derive(Debug, Clone)]
 pub struct FieldDecl {
     pub ty: TypeRef,
     pub name: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateExpansionDecl {
+    pub base: String,
+    pub digests: Vec<StateDigestExpansionDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StateDigestExpansionDecl {
+    pub field: String,
+    pub state: String,
 }
 
 #[derive(Debug, Clone)]

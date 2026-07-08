@@ -162,13 +162,22 @@ impl<'a> Model<'a> {
         self.states.get(name).copied().ok_or_else(|| ArgentError::new(format!("unknown state `{name}`")))
     }
 
+    fn storage_state_name(&self, name: &str) -> Result<String> {
+        let state = self.state(name)?;
+        Ok(state.expansion.as_ref().map_or_else(|| name.to_string(), |expansion| expansion.base.clone()))
+    }
+
+    fn storage_state(&self, name: &str) -> Result<&StateDecl> {
+        self.state(&self.storage_state_name(name)?)
+    }
+
     fn actor(&self, name: &str) -> Result<&ActorDecl> {
         self.actors_by_name.get(name).copied().ok_or_else(|| ArgentError::new(format!("unknown actor `{name}`")))
     }
 
     fn actor_state(&self, name: &str) -> Result<&StateDecl> {
         let actor = self.actor(name)?;
-        self.state(&actor.state)
+        self.storage_state(&actor.state)
     }
 
     fn route_leaves_for_state(&self, state: &str) -> &[RouteRootLeaf] {
@@ -206,6 +215,7 @@ impl<'a> Model<'a> {
 
     fn validate(&self) -> Result<()> {
         self.validate_reserved_identifiers()?;
+        self.validate_state_expansions()?;
         self.validate_generated_actor_suffixes()?;
 
         let template_actor_set = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
@@ -215,6 +225,63 @@ impl<'a> Model<'a> {
             }
         }
         self.validate_observed_template_state_fields()?;
+        Ok(())
+    }
+
+    fn validate_state_expansions(&self) -> Result<()> {
+        for state in self.states.values() {
+            let Some(expansion) = &state.expansion else {
+                continue;
+            };
+            if !state.fields.is_empty() {
+                return Err(ArgentError::new(format!(
+                    "state `{}` expands `{}` and cannot declare ordinary fields",
+                    state.name, expansion.base
+                )));
+            }
+            if expansion.digests.is_empty() {
+                return Err(ArgentError::new(format!(
+                    "state `{}` expands `{}` but declares no digest expansions",
+                    state.name, expansion.base
+                )));
+            }
+            let base = self
+                .state(&expansion.base)
+                .map_err(|_| ArgentError::new(format!("state `{}` expands unknown base state `{}`", state.name, expansion.base)))?;
+            if base.expansion.is_some() {
+                return Err(ArgentError::new(format!(
+                    "state `{}` expands `{}`, but expanded states cannot currently be used as bases",
+                    state.name, expansion.base
+                )));
+            }
+            let mut seen = BTreeSet::new();
+            for digest in &expansion.digests {
+                if !seen.insert(digest.field.as_str()) {
+                    return Err(ArgentError::new(format!(
+                        "state `{}` expands digest field `{}` more than once",
+                        state.name, digest.field
+                    )));
+                }
+                let field = base.fields.iter().find(|field| field.name == digest.field).ok_or_else(|| {
+                    ArgentError::new(format!(
+                        "state `{}` expands `{}` field `{}`, but `{}` has no such field",
+                        state.name, expansion.base, digest.field, expansion.base
+                    ))
+                })?;
+                if field.ty.name != "byte" || field.ty.array != Some(32) || field.ty.actor_state.is_some() {
+                    return Err(ArgentError::new(format!(
+                        "state `{}` expands `{}` field `{}`, but expanded digest fields must be byte[32]",
+                        state.name, expansion.base, digest.field
+                    )));
+                }
+                self.state(&digest.state).map_err(|_| {
+                    ArgentError::new(format!(
+                        "state `{}` expands `{}` field `{}` as unknown memory state `{}`",
+                        state.name, expansion.base, digest.field, digest.state
+                    ))
+                })?;
+            }
+        }
         Ok(())
     }
 
@@ -233,6 +300,11 @@ impl<'a> Model<'a> {
             reject_reserved_identifier("state", &state.name)?;
             for field in &state.fields {
                 reject_reserved_identifier(&format!("state `{}` field", state.name), &field.name)?;
+            }
+            if let Some(expansion) = &state.expansion {
+                for digest in &expansion.digests {
+                    reject_reserved_identifier(&format!("state `{}` expanded digest field", state.name), &digest.field)?;
+                }
             }
         }
         for actor_enum in self.actor_enums.values() {
@@ -402,7 +474,8 @@ impl<'a> Model<'a> {
 
     fn validate_observed_open_bindings(&self, actor: &ActorDecl, entry: &EntryDecl, observe: &ObserveDecl) -> Result<()> {
         let mut bindings = BTreeMap::new();
-        let mut source_names = self.state(&actor.state)?.fields.iter().map(|field| field.name.as_str()).collect::<BTreeSet<_>>();
+        let mut source_names =
+            self.storage_state(&actor.state)?.fields.iter().map(|field| field.name.as_str()).collect::<BTreeSet<_>>();
         source_names.extend(entry.params.iter().map(|param| param.name.as_str()));
         source_names.extend(entry.consumes.iter().map(|consume| consume.name.as_str()));
         for input in &observe.inputs {
@@ -1347,7 +1420,7 @@ fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: 
 }
 
 fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
-    let state = model.state(&actor.state)?;
+    let state = model.storage_state(&actor.state)?;
     let mut out = String::new();
     out.push_str("pragma silverscript ^0.1.0;\n\n");
     out.push_str("// Generated by argentc. Do not edit by hand.\n");
@@ -1433,9 +1506,9 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
         if !emitted.insert(state_name.clone()) {
             continue;
         }
-        let state = model.state(&state_name)?;
-        out.push_str(&format!("    struct {} {{\n", state.name));
-        emit_hidden_template_fields(out, state.name.as_str(), model, 8);
+        let state = model.storage_state(&state_name)?;
+        out.push_str(&format!("    struct {state_name} {{\n"));
+        emit_hidden_template_fields(out, state_name.as_str(), model, 8);
         for field in &state.fields {
             out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
         }
@@ -1720,7 +1793,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         let mut types = BTreeMap::new();
         let mut source_types = BTreeMap::new();
-        for field in &model.state(&actor.state)?.fields {
+        for field in &model.storage_state(&actor.state)?.fields {
             types.insert(field.name.clone(), lower_type_ref(&field.ty, model));
             source_types.insert(field.name.clone(), source_type_ref(&field.ty));
         }
@@ -2248,7 +2321,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_self_state_expr(&self, ty: &str, indent: usize) -> Result<String> {
         let state_name = if ty == "State" { &self.actor.state } else { ty };
-        let state = self.model.state(state_name)?;
+        let state = self.model.storage_state(state_name)?;
         let fields = state.fields.iter().map(|field| (field.name.clone(), field.name.clone())).collect::<Vec<_>>();
         self.render_state_object_for_state(state_name, &fields, indent)
     }
@@ -2313,7 +2386,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if source_ty == "covid" {
             return "byte[32]".to_string();
         }
-        if source_ty == self.actor.state { "State".to_string() } else { source_ty.to_string() }
+        let same_storage = match (self.model.storage_state_name(&self.actor.state), self.model.storage_state_name(source_ty)) {
+            (Ok(current_storage), Ok(source_storage)) => current_storage == source_storage,
+            _ => false,
+        };
+        if source_ty == self.actor.state || same_storage { "State".to_string() } else { source_ty.to_string() }
     }
 
     fn source_state_for_local_type(&self, source_ty: &str) -> Option<String> {
@@ -2348,7 +2425,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_refs(&self, expr: &str) -> Result<String> {
         let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
         out = out.replace("self.covenant_id", "OpInputCovenantId(this.activeInputIndex)");
-        for field in &self.model.state(&self.actor.state)?.fields {
+        for field in &self.model.storage_state(&self.actor.state)?.fields {
             out = out.replace(&format!("self.{}", field.name), &field.name);
         }
         out = lower_authorized_calls(&out, &self.source_types)?;
@@ -3136,7 +3213,7 @@ fn observed_is_source_actor_handle(
 
 fn source_actor_handle_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
     let expr = expr.trim();
-    let current_state = model.state(&actor.state)?;
+    let current_state = model.storage_state(&actor.state)?;
     let source_ty = if let Some(field_name) = expr.strip_prefix("self.") {
         current_state.fields.iter().find(|field| field.name == field_name).map(|field| &field.ty)
     } else if is_identifier(expr) {
@@ -3323,13 +3400,30 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         .values()
         .map(|state| StateArtifact {
             name: state.name.clone(),
-            fields: state
+            fields: model
+                .storage_state(&state.name)
+                .expect("state expansions are valid after model validation")
                 .fields
                 .iter()
                 .map(|field| FieldArtifact { name: field.name.clone(), ty: type_artifact(&field.ty, model) })
                 .collect(),
         })
         .collect();
+    let state_expansions = model
+        .states
+        .values()
+        .filter_map(|state| {
+            state.expansion.as_ref().map(|expansion| StateExpansionArtifact {
+                state: state.name.clone(),
+                base: expansion.base.clone(),
+                digests: expansion
+                    .digests
+                    .iter()
+                    .map(|digest| StateDigestExpansionArtifact { field: digest.field.clone(), state: digest.state.clone() })
+                    .collect(),
+            })
+        })
+        .collect::<Vec<_>>();
 
     let sil_contracts = model.actors.iter().map(|actor| sil_contract_artifact(actor, model, actor_sil)).collect::<Result<Vec<_>>>()?;
     let actor_enums = model
@@ -3352,7 +3446,15 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         app: model.app_name.clone(),
         root: manifest_path(&program.root),
         modules: program.modules.iter().map(|module| manifest_path(&module.path)).collect(),
-        argent: ArgentArtifact { templates, template_plan, interfaces, states: states.clone(), actor_enums, actors: argent_actors },
+        argent: ArgentArtifact {
+            templates,
+            template_plan,
+            interfaces,
+            states: states.clone(),
+            state_expansions,
+            actor_enums,
+            actors: argent_actors,
+        },
         sil_abi: SilAbiArtifact { schema_version: SIL_ABI_SCHEMA_VERSION, states, contracts: sil_contracts },
     };
     artifact.verify_template_plan().map_err(|err| ArgentError::new(format!("invalid template plan receipt: {err}")))?;
@@ -3386,8 +3488,7 @@ fn interface_set_artifact(model: &Model<'_>) -> Result<InterfaceSetArtifact> {
 
 fn actor_interface_artifact(actor_name: &str, model: &Model<'_>) -> Result<ActorInterfaceArtifact> {
     let actor = model.actor(actor_name)?;
-    let state = model.state(&actor.state)?;
-    let runtime_fields = runtime_state_fields(state, model);
+    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
     let fingerprint_hex = actor_interface_fingerprint_hex(&actor.name, &actor.state, &runtime_fields)
         .map_err(|err| ArgentError::new(format!("failed to compute actor interface fingerprint for `{}`: {err}", actor.name)))?;
     Ok(ActorInterfaceArtifact {
@@ -3585,7 +3686,6 @@ fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact>
 }
 
 fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTreeMap<String, String>) -> Result<SilContractArtifact> {
-    let state = model.state(&actor.state)?;
     let entries = actor.entries.iter().enumerate().map(|(idx, entry)| sil_entry_artifact(actor, idx, entry, model)).collect();
     let sil = actor_sil
         .get(&actor.name)
@@ -3594,7 +3694,10 @@ fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTree
     Ok(SilContractArtifact {
         name: actor.name.clone(),
         source_path: format!("sil/{}.sil", actor.name),
-        runtime_state: RuntimeStateArtifact { source: state.name.clone(), fields: runtime_state_fields(state, model) },
+        runtime_state: RuntimeStateArtifact {
+            source: actor.state.clone(),
+            fields: runtime_state_fields_for_source(&actor.state, model)?,
+        },
         entries,
         compiled: compile_contract_artifact(sil, actor, model)?,
     })
@@ -3608,7 +3711,7 @@ fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<
 }
 
 fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
-    let state = model.state(&actor.state)?;
+    let state = model.storage_state(&actor.state)?;
     let hidden_args = hidden_template_init_args_for_state(&actor.state, model);
     let mut args = Vec::with_capacity(hidden_args.len() + state.fields.len());
 
@@ -3698,9 +3801,13 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
     })
 }
 
-fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String, TypeArtifact, Option<RuntimeFieldRoleArtifact>)> {
+fn runtime_state_field_defs_for_source(
+    source_state: &str,
+    model: &Model<'_>,
+) -> Result<Vec<(String, TypeArtifact, Option<RuntimeFieldRoleArtifact>)>> {
+    let state = model.storage_state(source_state)?;
     let mut fields = Vec::new();
-    match route_field_kind(&state.name, model) {
+    match route_field_kind(source_state, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
@@ -3735,7 +3842,7 @@ fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String
             }
         }
     }
-    for spec in observed_template_specs_for_state(&state.name, model) {
+    for spec in observed_template_specs_for_state(source_state, model) {
         fields.push((
             hidden_observed_actor_template_name(&spec),
             TypeArtifact::from_parts("byte", Some(32)),
@@ -3750,23 +3857,25 @@ fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String
     for field in &state.fields {
         fields.push((field.name.clone(), type_artifact(&field.ty, model), None));
     }
-    fields
+    Ok(fields)
 }
 
-fn runtime_state_fields(state: &StateDecl, model: &Model<'_>) -> Vec<RuntimeFieldArtifact> {
-    runtime_state_field_defs(state, model).into_iter().map(|(name, ty, _role)| RuntimeFieldArtifact { name, ty }).collect()
+fn runtime_state_fields_for_source(source_state: &str, model: &Model<'_>) -> Result<Vec<RuntimeFieldArtifact>> {
+    Ok(runtime_state_field_defs_for_source(source_state, model)?
+        .into_iter()
+        .map(|(name, ty, _role)| RuntimeFieldArtifact { name, ty })
+        .collect())
 }
 
 fn runtime_state_plan_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<Option<RuntimeStatePlanArtifact>> {
-    let state = model.state(&actor.state)?;
-    let field_roles = runtime_state_field_defs(state, model)
+    let field_roles = runtime_state_field_defs_for_source(&actor.state, model)?
         .into_iter()
         .filter_map(|(name, _ty, role)| role.map(|role| RuntimeFieldRolePlanArtifact { name, role }))
         .collect::<Vec<_>>();
     if field_roles.is_empty() {
         return Ok(None);
     }
-    Ok(Some(RuntimeStatePlanArtifact { contract: actor.name.clone(), source: state.name.clone(), field_roles }))
+    Ok(Some(RuntimeStatePlanArtifact { contract: actor.name.clone(), source: actor.state.clone(), field_roles }))
 }
 
 fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<HiddenParamArtifact> {
@@ -4222,7 +4331,17 @@ fn lower_type_ref(ty: &TypeRef, model: &Model<'_>) -> String {
 }
 
 fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) -> String {
-    if ty.name == actor.state && ty.array.is_none() { "State".to_string() } else { lower_type_ref(ty, model) }
+    if ty.array.is_none()
+        && (ty.name == actor.state
+            || matches!(
+                (model.storage_state_name(&actor.state), model.storage_state_name(&ty.name)),
+                (Ok(actor_storage), Ok(param_storage)) if actor_storage == param_storage
+            ))
+    {
+        "State".to_string()
+    } else {
+        lower_type_ref(ty, model)
+    }
 }
 
 fn source_type_ref(ty: &TypeRef) -> String {
@@ -4240,7 +4359,13 @@ fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
 }
 
 fn entry_param_type_artifact(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
-    if ty.name == actor.state && ty.array.is_none() {
+    if ty.array.is_none()
+        && (ty.name == actor.state
+            || matches!(
+                (model.storage_state_name(&actor.state), model.storage_state_name(&ty.name)),
+                (Ok(actor_storage), Ok(param_storage)) if actor_storage == param_storage
+            ))
+    {
         TypeArtifact::Struct { name: "State".to_string() }
     } else {
         type_artifact(ty, model)
@@ -5121,7 +5246,7 @@ mod tests {
     fn rejects_duplicate_state_declarations() {
         let mut program = test_program();
         let mut duplicate = empty_module("second.ag");
-        duplicate.states.push(StateDecl { name: "PlayerState".to_string(), fields: Vec::new() });
+        duplicate.states.push(StateDecl { name: "PlayerState".to_string(), fields: Vec::new(), expansion: None });
         program.modules.push(duplicate);
 
         let err = Model::from_program(&program).expect_err("duplicate state declaration must be rejected");
@@ -5455,6 +5580,95 @@ mod tests {
                 .collect::<Vec<_>>(),
             "outer witness recipes must correspond to outer hidden ABI params"
         );
+    }
+
+    #[test]
+    fn state_expansion_uses_base_storage_layout() {
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state AgentCapsule {
+                byte[32] custom_data_digest;
+                int energy;
+            }
+
+            state ForagerMemory {
+                int hunger;
+            }
+
+            state ForagerState expands AgentCapsule {
+                expand custom_data_digest as ForagerMemory;
+            }
+
+            actor Forager owns ForagerState {
+                entry hold() emits none {
+                    require(energy > 0);
+                }
+            }
+
+            app Test {
+                actor Forager;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor = model.actor("Forager").expect("Forager actor exists");
+        let sil = emit_actor(actor, &model).expect("Forager emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        assert!(sil.contains("contract Forager(\n    byte[32] init_custom_data_digest,\n    int init_energy\n)"), "{sil}");
+        assert!(sil.contains("byte[32] custom_data_digest = init_custom_data_digest;"), "{sil}");
+        assert!(sil.contains("int energy = init_energy;"), "{sil}");
+        assert!(!sil.contains("init_hunger"), "{sil}");
+
+        let expansion = artifact.argent.state_expansions.first().expect("state expansion is recorded");
+        assert_eq!(expansion.state, "ForagerState");
+        assert_eq!(expansion.base, "AgentCapsule");
+        assert_eq!(expansion.digests.len(), 1);
+        assert_eq!(expansion.digests[0].field, "custom_data_digest");
+        assert_eq!(expansion.digests[0].state, "ForagerMemory");
+
+        let forager_state = artifact.argent.states.iter().find(|state| state.name == "ForagerState").expect("ForagerState exists");
+        assert_eq!(forager_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(), ["custom_data_digest", "energy"]);
+
+        let contract = artifact.sil_abi.contract("Forager").expect("Forager Sil ABI exists");
+        assert_eq!(contract.runtime_state.source, "ForagerState");
+        assert_eq!(
+            contract.runtime_state.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
+            ["custom_data_digest", "energy"]
+        );
+    }
+
+    #[test]
+    fn state_expansion_requires_byte32_backing_field() {
+        let err = parse_and_validate(
+            r#"
+            state AgentCapsule {
+                int custom_data_digest;
+            }
+
+            state ForagerMemory {
+                int hunger;
+            }
+
+            state ForagerState expands AgentCapsule {
+                expand custom_data_digest as ForagerMemory;
+            }
+
+            actor Forager owns ForagerState {}
+
+            app Test {
+                actor Forager;
+            }
+            "#,
+        )
+        .expect_err("non-digest backing field must be rejected");
+
+        assert!(err.to_string().contains("expanded digest fields must be byte[32]"), "unexpected error: {err}");
     }
 
     #[test]
@@ -7474,8 +7688,8 @@ mod tests {
                 imports: Vec::new(),
                 consts: Vec::new(),
                 states: vec![
-                    StateDecl { name: "PlayerState".to_string(), fields: Vec::new() },
-                    StateDecl { name: "GameState".to_string(), fields: Vec::new() },
+                    StateDecl { name: "PlayerState".to_string(), fields: Vec::new(), expansion: None },
+                    StateDecl { name: "GameState".to_string(), fields: Vec::new(), expansion: None },
                 ],
                 functions: Vec::new(),
                 actors: vec![
