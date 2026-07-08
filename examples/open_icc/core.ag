@@ -1,25 +1,38 @@
-// Open ICC baseline core app.
+// Open ICC cell-physics core app.
 //
-// The cell observes an open agent covenant and applies one tiny physics step to
-// the agent's state. The agent app remains a separate covenant app.
+// The core app owns cells. It observes an independently deployed agent app
+// through a stored covenant id plus an actor<AgentState> handle.
 
 import "./agent.ag";
 
 state CellState {
-    covid agent_covid;
-    actor<AgentState> agent_type;
-    int tick;
+    byte[32] world_id;
+    int x;
+    int y;
+    int food;
+
+    covid occupant_agent_covid;
+    actor<AgentState> occupant_agent_type;
+    byte[32] occupant_caps_digest;
+}
+
+fn abs1(value: int) -> int {
+    int result = value;
+    if (value < 0) {
+        result = 0 - value;
+    }
+    return result;
 }
 
 actor Cell owns CellState {
     entry advance()
-    observes remote by self.agent_covid {
+    observes remote by self.occupant_agent_covid {
         inputs {
-            agent: self.agent_type;
+            agent: self.occupant_agent_type;
         }
 
         outputs {
-            agent: self.agent_type;
+            agent: self.occupant_agent_type;
         }
     }
     emits {
@@ -27,26 +40,121 @@ actor Cell owns CellState {
     } {
         AgentState prev_state = remote.inputs.agent.state;
 
-        require(prev_state.controller_id == self.covenant_id);
-        require(prev_state.energy > 0);
+        require(prev_state.world_id == world_id);
+        require(prev_state.capabilities_digest == occupant_caps_digest);
 
         AgentState next_state = {
+            world_id: prev_state.world_id,
+            agent_id: prev_state.agent_id,
+            species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
-            caps_digest: prev_state.caps_digest,
+            capabilities_digest: prev_state.capabilities_digest,
+            custom_data_digest: prev_state.custom_data_digest,
+            x: prev_state.x,
+            y: prev_state.y,
             energy: prev_state.energy - 1,
+            generation: prev_state.generation,
         };
 
         require remote.outputs become {
-            agent <- self.agent_type(next_state);
+            agent <- self.occupant_agent_type(next_state);
         };
 
         CellState next_cell = {
-            agent_covid: agent_covid,
-            agent_type: agent_type,
-            tick: tick + 1,
+            world_id: world_id,
+            x: x,
+            y: y,
+            food: food,
+            occupant_agent_covid: occupant_agent_covid,
+            occupant_agent_type: occupant_agent_type,
+            occupant_caps_digest: occupant_caps_digest,
         };
 
         become cell <- Cell(next_cell);
+    }
+
+    entry move(
+        dx: int,
+        dy: int,
+        next_custom_data_digest: byte[32],
+        empty_agent_covid: covid,
+        empty_agent_type: actor<AgentState>,
+        empty_caps_digest: byte[32]
+    )
+    observes remote by self.occupant_agent_covid {
+        inputs {
+            agent: self.occupant_agent_type;
+        }
+
+        outputs {
+            agent: self.occupant_agent_type;
+        }
+    }
+    consumes {
+        target_cell: Cell;
+    }
+    emits {
+        source_cell: Cell;
+        target_cell: Cell;
+    } {
+        AgentState prev_state = remote.inputs.agent.state;
+
+        int distance = abs1(dx) + abs1(dy);
+        require(distance == 1);
+        require(prev_state.world_id == world_id);
+        require(prev_state.x == x);
+        require(prev_state.y == y);
+        require(prev_state.energy > 0);
+        require(prev_state.capabilities_digest == occupant_caps_digest);
+
+        require(target_cell.world_id == world_id);
+        require(target_cell.x == x + dx);
+        require(target_cell.y == y + dy);
+        require(target_cell.occupant_agent_covid == empty_agent_covid);
+        require(target_cell.occupant_agent_type == empty_agent_type);
+        require(target_cell.occupant_caps_digest == empty_caps_digest);
+
+        AgentState next_agent = {
+            world_id: prev_state.world_id,
+            agent_id: prev_state.agent_id,
+            species_id: prev_state.species_id,
+            controller_id: prev_state.controller_id,
+            capabilities_digest: prev_state.capabilities_digest,
+            custom_data_digest: next_custom_data_digest,
+            x: target_cell.x,
+            y: target_cell.y,
+            energy: prev_state.energy - 1,
+            generation: prev_state.generation,
+        };
+
+        CellState next_source = {
+            world_id: world_id,
+            x: x,
+            y: y,
+            food: food,
+            occupant_agent_covid: empty_agent_covid,
+            occupant_agent_type: empty_agent_type,
+            occupant_caps_digest: empty_caps_digest,
+        };
+
+        CellState next_target = {
+            world_id: target_cell.world_id,
+            x: target_cell.x,
+            y: target_cell.y,
+            food: target_cell.food,
+            occupant_agent_covid: occupant_agent_covid,
+            occupant_agent_type: occupant_agent_type,
+            occupant_caps_digest: occupant_caps_digest,
+        };
+
+        require remote.outputs become {
+            agent <- self.occupant_agent_type(next_agent);
+        };
+
+        become {
+            source_cell <- Cell(next_source);
+            target_cell <- Cell(next_target);
+        };
     }
 }
 

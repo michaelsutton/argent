@@ -1506,6 +1506,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1531,6 +1532,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1556,6 +1558,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1748,6 +1751,7 @@ mod tests {
                     witness_recipes: Vec::new(),
                 },
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: ["Mux", "Pawn", "Knight", "Bishop"]
                     .into_iter()
@@ -1808,6 +1812,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact { route_families, ..TemplatePlanArtifact::default() },
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: vec![
                     ActorArtifact {

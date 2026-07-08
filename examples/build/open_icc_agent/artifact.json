@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "faadd5d3d6023dee8f22b31b364080ceca43af3c4f22ae06e1d08daa724dbfe8",
+  "id": "7634225c6be8d5a83ae93d5d79f60c9a7f83c171011389424844d60ff90a877f",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -16,6 +16,11 @@
         "id": "template/agent",
         "actor": "Agent",
         "symbol": "gen__agent_template"
+      },
+      {
+        "id": "template/forager",
+        "actor": "Forager",
+        "symbol": "gen__forager_template"
       }
     ],
     "template_plan": {
@@ -25,14 +30,35 @@
           "actor": "Agent",
           "contract": "Agent",
           "symbol": "gen__agent_template",
-          "hash_hex": "a3fe262bbcfad8c1a4e30bf7da5a585644edb7141bb4dff1f124992bee2531a1"
+          "hash_hex": "d934dea8a8cc904d43206b6baa39bf5cb52f402f5d96f00539758c42204bd179"
+        },
+        {
+          "id": "template/forager",
+          "actor": "Forager",
+          "contract": "Forager",
+          "symbol": "gen__forager_template",
+          "hash_hex": "62b31f332f7e8e24db678cd8a4633281e0555bc459bd3812dffbf497e4bc46df"
         }
       ],
       "runtime_states": [],
       "route_tables": [],
       "route_proofs": [],
       "route_families": [],
-      "witness_recipes": []
+      "witness_recipes": [
+        {
+          "id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
+          "subject": {
+            "kind": "state_expansion",
+            "state": "ForagerState",
+            "field": "custom_data_digest",
+            "memory_state": "ForagerMemory"
+          },
+          "param": "gen__custom_data_digest_forager_memory_preimage",
+          "purpose": {
+            "kind": "state_expansion_preimage"
+          }
+        }
+      ]
     },
     "interfaces": {
       "exports": [
@@ -40,7 +66,13 @@
           "id": "interface/actor/Agent",
           "actor": "Agent",
           "state": "AgentState",
-          "fingerprint_hex": "0cc79bd82ed0eebd91320bd38ed82c645fe12430cd6826d5d846e4fbeeacb3e3"
+          "fingerprint_hex": "34782986f640d2eb3c23d3ff997d857abce605ca9b27b520a99c9842e82e2fa4"
+        },
+        {
+          "id": "interface/actor/Forager",
+          "actor": "Forager",
+          "state": "ForagerState",
+          "fingerprint_hex": "a7a54859bdf4be3d084d361c75413de947fdb5be7722c02bb66104309b4e0382"
         }
       ],
       "imports": []
@@ -50,6 +82,27 @@
         "name": "AgentState",
         "fields": [
           {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
             "name": "controller_id",
             "type": {
               "kind": "fixed_bytes",
@@ -57,10 +110,29 @@
             }
           },
           {
-            "name": "caps_digest",
+            "name": "capabilities_digest",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
+            }
+          },
+          {
+            "name": "custom_data_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
             }
           },
           {
@@ -68,6 +140,119 @@
             "type": {
               "kind": "int"
             }
+          },
+          {
+            "name": "generation",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "ForagerMemory",
+        "fields": [
+          {
+            "name": "hunger",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "mood",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "target_agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      },
+      {
+        "name": "ForagerState",
+        "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "capabilities_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "custom_data_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "generation",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "state_expansions": [
+      {
+        "state": "ForagerState",
+        "base": "AgentState",
+        "digests": [
+          {
+            "field": "custom_data_digest",
+            "state": "ForagerMemory"
           }
         ]
       }
@@ -164,6 +349,131 @@
             ]
           }
         ]
+      },
+      {
+        "name": "Forager",
+        "state": "ForagerState",
+        "abi": {
+          "actor": "Forager"
+        },
+        "entries": [
+          {
+            "name": "step",
+            "kind": "leader",
+            "abi": {
+              "actor": "Forager",
+              "entry": "step"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Forager",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Forager",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "agent",
+                  "auth_index": 0,
+                  "actors": [
+                    "Forager"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "agent",
+                      "auth_index": 0,
+                      "actor": "Forager",
+                      "template_id": "template/forager",
+                      "state_expr": "next_agent",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": []
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
+                "name": "gen__custom_data_digest_forager_memory_preimage",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 48
+                },
+                "subject": {
+                  "kind": "state_expansion",
+                  "state": "ForagerState",
+                  "field": "custom_data_digest",
+                  "memory_state": "ForagerMemory"
+                },
+                "purpose": {
+                  "kind": "state_expansion_preimage"
+                }
+              }
+            ],
+            "template_selectors": [],
+            "witnesses": [
+              {
+                "recipe_id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
+                "param": "gen__custom_data_digest_forager_memory_preimage",
+                "subject": {
+                  "kind": "state_expansion",
+                  "state": "ForagerState",
+                  "field": "custom_data_digest",
+                  "memory_state": "ForagerMemory"
+                },
+                "purpose": {
+                  "kind": "state_expansion_preimage"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "agent",
+                  "auth_index": 0,
+                  "actors": [
+                    "Forager"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "agent",
+                "actor": "Forager",
+                "template_id": "template/forager",
+                "state_expr": "next_agent"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "agent",
+                    "actor": "Forager",
+                    "template_id": "template/forager",
+                    "state_expr": "next_agent"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
       }
     ]
   },
@@ -174,6 +484,27 @@
         "name": "AgentState",
         "fields": [
           {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
             "name": "controller_id",
             "type": {
               "kind": "fixed_bytes",
@@ -181,14 +512,134 @@
             }
           },
           {
-            "name": "caps_digest",
+            "name": "capabilities_digest",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
             }
           },
           {
+            "name": "custom_data_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
             "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "generation",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "ForagerMemory",
+        "fields": [
+          {
+            "name": "hunger",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "mood",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "target_agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      },
+      {
+        "name": "ForagerState",
+        "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "capabilities_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "custom_data_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "generation",
             "type": {
               "kind": "int"
             }
@@ -204,6 +655,27 @@
           "source": "AgentState",
           "fields": [
             {
+              "name": "world_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "agent_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "species_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
               "name": "controller_id",
               "type": {
                 "kind": "fixed_bytes",
@@ -211,14 +683,39 @@
               }
             },
             {
-              "name": "caps_digest",
+              "name": "capabilities_digest",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
               }
             },
             {
+              "name": "custom_data_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "x",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "y",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
               "name": "energy",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "generation",
               "type": {
                 "kind": "int"
               }
@@ -241,15 +738,135 @@
           }
         ],
         "compiled": {
-          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c695279d000a069557953798769547952798769557901207c7e557901207c7e557958cd01087c7e7e7eb976c97602a20094014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000080000000000000000080000000000000000080000000000000000b9cb519c695679d000a0690113795a79876901127959798769011179587987696079577987695f79567987695e79557987695a79789c6901137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602b1019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757575757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "b9cb519c695279d000a069557953798769547952798769557901207c7e557901207c7e557958cd01087c7e7e7eb976c97602a20094014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
-            "hash_hex": "a3fe262bbcfad8c1a4e30bf7da5a585644edb7141bb4dff1f124992bee2531a1"
+            "suffix_hex": "b9cb519c695679d000a0690113795a79876901127959798769011179587987696079577987695f79567987695e79557987695a79789c6901137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602b1019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757575757575757551",
+            "hash_hex": "d934dea8a8cc904d43206b6baa39bf5cb52f402f5d96f00539758c42204bd179"
           },
           "state_span": {
             "offset": 0,
-            "len": 75
+            "len": 234
+          }
+        }
+      },
+      {
+        "name": "Forager",
+        "source_path": "sil/Forager.sil",
+        "runtime_state": {
+          "source": "ForagerState",
+          "fields": [
+            {
+              "name": "world_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "agent_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "species_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "controller_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "capabilities_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "custom_data_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "x",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "y",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "energy",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "generation",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "step",
+            "selector": null,
+            "params": [
+              {
+                "name": "next_x",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "next_y",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "next_energy",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__custom_data_digest_forager_memory_preimage",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 48
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000000800000000000000000800000000000000005a79aa55798769b9cb519c695679d000a0695b79527951949c695b7900a269597901207c7e597901207c7e597901207c7e597901207c7e597901207c7e5f7900587fce519358cd607958607fce58cd7e60796001307f7eaa01207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e597958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602a5019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "5a79aa55798769b9cb519c695679d000a0695b79527951949c695b7900a269597901207c7e597901207c7e597901207c7e597901207c7e597901207c7e5f7900587fce519358cd607958607fce58cd7e60796001307f7eaa01207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e597958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602a5019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757551",
+            "hash_hex": "62b31f332f7e8e24db678cd8a4633281e0555bc459bd3812dffbf497e4bc46df"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 234
           }
         }
       }

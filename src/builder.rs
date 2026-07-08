@@ -1410,17 +1410,28 @@ mod tests {
             "open-icc-expanded-agent",
             r#"
             state AgentState {
+                byte[32] world_id;
+                byte[32] agent_id;
+                byte[32] species_id;
+
                 covid controller_id;
-                byte[32] caps_digest;
+                byte[32] capabilities_digest;
+                byte[32] custom_data_digest;
+
+                int x;
+                int y;
                 int energy;
+                int generation;
             }
 
             state ForagerMemory {
                 int hunger;
+                int mood;
+                byte[32] target_agent_id;
             }
 
             state ForagerState expands AgentState {
-                expand caps_digest as ForagerMemory;
+                expand custom_data_digest as ForagerMemory;
             }
 
             actor Forager owns ForagerState {
@@ -1430,9 +1441,18 @@ mod tests {
                     require(controller_id.authorized());
 
                     ForagerState next_agent = {
+                        world_id: world_id,
+                        agent_id: agent_id,
+                        species_id: species_id,
                         controller_id: controller_id,
+                        capabilities_digest: capabilities_digest,
                         hunger: hunger + 1,
+                        mood: mood,
+                        target_agent_id: target_agent_id,
+                        x: x,
+                        y: y,
                         energy: energy - 1,
+                        generation: generation,
                     };
 
                     become agent <- Forager(next_agent);
@@ -1570,27 +1590,47 @@ mod tests {
         ])
     }
 
-    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, tick: i64) -> BTreeMap<String, ArtifactValue> {
+    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, _tick: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
-            ("agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
-            ("agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
-            ("tick".to_string(), ArtifactValue::Int(tick)),
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("x".to_string(), ArtifactValue::Int(0)),
+            ("y".to_string(), ArtifactValue::Int(0)),
+            ("food".to_string(), ArtifactValue::Int(0)),
+            ("occupant_agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
+            ("occupant_agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
+            ("occupant_caps_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
         ])
     }
 
     fn open_agent_state(controller_id: Hash, caps_digest: Vec<u8>, energy: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
+            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
-            ("caps_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("capabilities_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("custom_data_digest".to_string(), ArtifactValue::Bytes(vec![0x44; 32])),
+            ("x".to_string(), ArtifactValue::Int(0)),
+            ("y".to_string(), ArtifactValue::Int(0)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
+            ("generation".to_string(), ArtifactValue::Int(0)),
         ])
     }
 
     fn expanded_open_agent_state(controller_id: Hash, hunger: i64, energy: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
+            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
+            ("capabilities_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
             ("hunger".to_string(), ArtifactValue::Int(hunger)),
+            ("mood".to_string(), ArtifactValue::Int(1)),
+            ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
+            ("x".to_string(), ArtifactValue::Int(0)),
+            ("y".to_string(), ArtifactValue::Int(0)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
+            ("generation".to_string(), ArtifactValue::Int(0)),
         ])
     }
 

@@ -1,45 +1,97 @@
-# Open ICC Baseline
+# Open ICC Lattice
 
-This example is the smallest real open-ICC shape:
+This example is a small cooperative-game fixture built out of two covenant apps:
 
-- `agent.ag` is an independently deployed open-agent covenant app.
-- `core.ag` is a controller/cell covenant app that observes the agent app.
+- `agent.ag` defines independently deployed agent actors.
+- `core.ag` defines cells that observe an agent by covenant id and apply local physics.
 
-The agent preserves its capability header and requires the controller covenant
-to be co-spent. The core app reads the observed agent state and enforces one
-physics step over it:
+The core idea is:
 
 ```text
-energy -> energy - 1
+Cells apply physical transitions.
+Agents authorize their own strategy state.
 ```
 
-The core cell stores the observed covenant id and an `actor<AgentState>` handle.
-The `observes` clause constrains both the input and output to that stored
-handle:
+The cell does not know which concrete agent template it is controlling. It stores
+an `actor<AgentState>` handle and uses it in the `observes` clause:
 
 ```rust
-agent: self.agent_type;
+observes remote by self.occupant_agent_covid {
+    inputs {
+        agent: self.occupant_agent_type;
+    }
+
+    outputs {
+        agent: self.occupant_agent_type;
+    }
+}
 ```
 
-and validates the output through the same handle:
+At runtime that handle may point to `Agent`, `Forager`, or another app-specific
+actor whose stored state satisfies the shared `AgentState` capsule layout.
+
+## State Shape
+
+`AgentState` is the fixed capability header the cell can reason about:
 
 ```rust
-agent <- self.agent_type(next_state);
+state AgentState {
+    byte[32] world_id;
+    byte[32] agent_id;
+    byte[32] species_id;
+
+    covid controller_id;
+    byte[32] capabilities_digest;
+    byte[32] custom_data_digest;
+
+    int x;
+    int y;
+    int energy;
+    int generation;
+}
 ```
 
-This fixture is the baseline that later open-agent header views and
-digest-backed custom data should grow from.
+`Forager` extends that header through a digest-backed source view:
 
-Runtime naming has four distinct layers:
+```rust
+state ForagerState expands AgentState {
+    expand custom_data_digest as ForagerMemory;
+}
+```
+
+Forager code uses memory fields directly:
+
+```rust
+ForagerState next_agent = {
+    world_id: world_id,
+    agent_id: agent_id,
+    species_id: species_id,
+    controller_id: controller_id,
+    capabilities_digest: capabilities_digest,
+    hunger: hunger + 1,
+    mood: mood,
+    target_agent_id: target_agent_id,
+    x: next_x,
+    y: next_y,
+    energy: next_energy,
+    generation: generation,
+};
+```
+
+The generated Sil still stores only `custom_data_digest`. The runtime supplies a
+packed hidden preimage for `ForagerMemory`; the contract verifies the digest and
+the compiler rewrites mutations back into a new digest.
+
+## Runtime Naming
+
+The runtime builder keeps four names separate:
 
 ```text
-remote      observe name local to Cell::advance
+remote      observe name local to Cell entries
 open_agent  attached artifact app alias
 agent       observed input/output handle inside the observes clause
-Agent       concrete actor in the attached app
+Forager     concrete actor in the attached app
 ```
-
-The runtime builder keeps those layers separate:
 
 ```rust
 let bundle = ArtifactBundle::new(&core_artifact)?
@@ -48,20 +100,10 @@ let bundle = ArtifactBundle::new(&core_artifact)?
 let observed = BTreeMap::from([(
     "remote".to_string(),
     ObservedCovenantContext::from_app("open_agent")
-        .input("agent", "Agent", agent_utxo, agent_state)
-        .output("agent", "Agent", next_agent_state),
+        .input("agent", "Forager", agent_utxo, forager_state)
+        .output("agent", "Forager", next_forager_state),
 )]);
-
-let agent_outputs = builder.observed_outputs(
-    "Cell",
-    "advance",
-    "remote",
-    observed.get("remote").unwrap(),
-    values,
-    1,
-    agent_covenant_id,
-)?;
 ```
 
-The observe name is not an app identity. It is only the coordinate used by the
+The observe name is not an app identity. It is the local coordinate used by the
 entry being invoked.
