@@ -4,20 +4,24 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract KCC20(
+    byte[32] gen__init_kcc20_template,
     byte[32] init_owner_identifier,
     byte init_identifier_type,
     int init_amount
 ) {
     // :: shared constants
     byte constant IDENTIFIER_PUBKEY = 0x00;
+    byte constant IDENTIFIER_COVENANT_ID = 0x02;
 
     // :: state layouts
     struct MinterProxyState {
+        byte[32] gen__kcc20_template;
+        // :: gen__ ^ | src:
         byte[32] controller_id;
     }
 
     // :: route templates
-    // No foreign route templates required.
+    byte[32] gen__kcc20_template = gen__init_kcc20_template;
 
     // :: state fields: KCC20
     byte[32] owner_identifier = init_owner_identifier;
@@ -25,11 +29,31 @@ contract KCC20(
     int amount = init_amount;
 
     // :: entrypoints
-    entrypoint function hold() {
+    entrypoint function transfer(
+        byte[32] new_owner_identifier,
+        byte new_identifier_type,
+        sig owner_sig
+    ) {
         // :: auth outputs
-        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output next: KCC20
 
-        require(amount >= 0);
+        if (identifier_type == IDENTIFIER_PUBKEY) {
+            require(checkSig(owner_sig, owner_identifier));
+        } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
+            require(OpCovInputCount(owner_identifier) > 0);
+        } else {
+            require(false);
+        }
+        State next_state = {
+            gen__kcc20_template: gen__kcc20_template,
+            // :: gen__ ^ | src:
+            owner_identifier: new_owner_identifier,
+            identifier_type: new_identifier_type,
+            amount: amount,
+        };
+        // :: become KCC20
+        validateOutputState(gen__next_output_idx, next_state);
     }
 
 }

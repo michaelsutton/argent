@@ -445,12 +445,11 @@ Done so far:
 - Observed output template prefix/suffix bytes are exposed as hidden witnesses,
   while observed output template hashes are committed as generated observer state
   fields.
-- `examples/icc/minter_proxy_observer_real.ag` is a compiling subset fixture
-  that tracks this feature without changing the full target sketch in
-  `examples/icc/minter_proxy_observer.ag`.
-- `check.sh --full` regenerates the ICC fixture build output.
-- A separate `examples/icc/kcc20_asset_real.ag` fixture keeps the observed asset
-  app distinct from the mint controller app, preserving `app == cov`.
+- `examples/icc/kcc20_asset.ag` contains the observed asset covenant app.
+- `examples/icc/minter.ag` contains the mint controller app and
+  imports the observed asset declarations, preserving `app == cov` without
+  requiring multi-app artifact bundles yet.
+- `check.sh --full` regenerates both tracked ICC build outputs.
 - `argent-runtime` can attach observed app artifacts, validate observed input
   UTXOs against semantic actor/state pairs, derive observed template witnesses,
   and build observed covenant outputs in declaration order.
@@ -458,7 +457,7 @@ Done so far:
   asset app, then rejects missing observed input, wrong observed input state,
   wrong recipient output, and wrong observed covenant id.
 
-Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
+Implement the ICC sketch pattern from `examples/icc/minter.ag`:
 
 ```text
 observes asset by self.kcc20_covid {

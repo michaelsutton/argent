@@ -1,46 +1,28 @@
-// First compiling ICC slice.
+// KCC20 mint controller app.
 //
-// The sibling `minter_proxy_observer.ag` is the target sketch. This file is the
-// concrete version that should keep compiling as ICC support grows.
+// The observed asset covenant family lives in `kcc20_asset.ag`; this controller
+// imports those state and actor declarations and commits to their templates via
+// the observed-covenant lowering.
 
-const byte IDENTIFIER_PUBKEY = 0x00;
-
-state KCC20State {
-    byte[32] owner_identifier;
-    byte identifier_type;
-    int amount;
-}
-
-state MinterProxyState {
-    byte[32] controller_id;
-}
+import "./kcc20_asset.ag";
 
 state MinterState {
     pubkey owner;
-    byte[32] kcc20_covid;
+    covid kcc20_covid;
     int amount;
     bool initialized;
 }
 
-actor KCC20 owns KCC20State {
-    entry hold() emits none {
-        require(amount >= 0);
-    }
-}
-
-actor MinterProxy owns MinterProxyState {
-    entry hold() emits none {
-        require(controller_id == controller_id);
-    }
-}
-
 actor Minter owns MinterState {
     entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
+    // `observes` declares a foreign covenant id for this transition.
     observes asset by self.kcc20_covid {
+        // Named handles are exhaustive over the observed covenant inputs.
         inputs {
             proxy: MinterProxy;
         }
 
+        // Declaration order defines the op_cov_output_idx order; no auth/cov index syntax.
         outputs {
             proxy: MinterProxy;
             recipient: KCC20;
@@ -71,14 +53,14 @@ actor Minter owns MinterState {
             recipient <- KCC20(next_recipient);
         };
 
-        MinterState next_minter = {
+        MinterState next_controller = {
             owner: owner,
             kcc20_covid: kcc20_covid,
             amount: amount - minted_amount,
             initialized: initialized,
         };
 
-        become controller <- Minter(next_minter);
+        become controller <- Minter(next_controller);
     }
 }
 

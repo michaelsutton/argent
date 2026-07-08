@@ -4,30 +4,58 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract MinterProxy(
+    byte[32] gen__init_kcc20_template,
     byte[32] init_controller_id
 ) {
     // :: shared constants
     byte constant IDENTIFIER_PUBKEY = 0x00;
+    byte constant IDENTIFIER_COVENANT_ID = 0x02;
 
     // :: state layouts
     struct KCC20State {
+        byte[32] gen__kcc20_template;
+        // :: gen__ ^ | src:
         byte[32] owner_identifier;
         byte identifier_type;
         int amount;
     }
 
     // :: route templates
-    // No foreign route templates required.
+    byte[32] gen__kcc20_template = gen__init_kcc20_template;
 
     // :: state fields: MinterProxy
     byte[32] controller_id = init_controller_id;
 
     // :: entrypoints
-    entrypoint function hold() {
-        // :: auth outputs
-        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+    entrypoint function mint(
+        State next_proxy,
+        KCC20State recipient,
+        byte[] gen__kcc20_prefix,
+        byte[] gen__kcc20_suffix
+    ) {
+        // :: witness lens
+        int gen__kcc20_prefix_len = gen__kcc20_prefix.length;
+        int gen__kcc20_suffix_len = gen__kcc20_suffix.length;
 
-        require(controller_id == controller_id);
+        // :: auth outputs
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+        // :: output proxy: MinterProxy
+        int gen__proxy_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output recipient: KCC20
+        int gen__recipient_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
+
+        require(OpCovInputCount(controller_id) > 0);
+        require(next_proxy.controller_id == controller_id);
+        // :: become MinterProxy
+        validateOutputState(gen__proxy_output_idx, next_proxy);
+        // :: become KCC20
+        validateOutputStateWithTemplate(
+            gen__recipient_output_idx,
+            recipient,
+            gen__kcc20_prefix,
+            gen__kcc20_suffix,
+            gen__kcc20_template
+        );
     }
 
 }

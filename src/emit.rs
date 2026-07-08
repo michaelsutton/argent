@@ -130,8 +130,16 @@ impl<'a> Model<'a> {
         }
 
         let actor_enums = build_actor_enums(&actor_enum_decls, &all_actors, &states, &template_actors)?;
-        let state_template_deps = compute_state_template_deps(&actors, &all_actors, &template_actors, &actor_enums)?;
-        let direct_state_template_deps = compute_direct_state_template_deps(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let layout_actors = all_actors.values().copied().collect::<Vec<_>>();
+        let mut layout_template_actors = template_actors.clone();
+        for actor in all_actors.keys() {
+            if !layout_template_actors.contains(actor) {
+                layout_template_actors.push(actor.clone());
+            }
+        }
+        let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
+        let direct_state_template_deps =
+            compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors, &actor_enums)?;
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
@@ -1407,7 +1415,7 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     let witness_specs = entry_witness_specs(actor, entry, model);
-    let sil_params = lower_entry_params(&entry.params, &witness_specs, model);
+    let sil_params = lower_entry_params(actor, &entry.params, &witness_specs, model);
     push_entry_signature(out, &entry.name, &sil_params);
 
     let has_byte_witnesses =
@@ -1637,6 +1645,7 @@ struct BodyLowerer<'a, 'm> {
     entry: &'a EntryDecl,
     model: &'m Model<'a>,
     types: BTreeMap<String, String>,
+    source_types: BTreeMap<String, String>,
     selectors: BTreeMap<String, TemplateSelector>,
     materialized_selectors: BTreeSet<String>,
     input_names: BTreeSet<String>,
@@ -1650,11 +1659,14 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .map_err(|err| ArgentError::new(format!("failed to lex body for `{}::{}`: {}", actor.name, entry.name, err.message)))?;
 
         let mut types = BTreeMap::new();
+        let mut source_types = BTreeMap::new();
         for field in &model.state(&actor.state)?.fields {
             types.insert(field.name.clone(), lower_type_ref(&field.ty, model));
+            source_types.insert(field.name.clone(), source_type_ref(&field.ty));
         }
         for param in &entry.params {
-            types.insert(param.name.clone(), lower_type_ref(&param.ty, model));
+            types.insert(param.name.clone(), lower_entry_param_type(actor, &param.ty, model));
+            source_types.insert(param.name.clone(), source_type_ref(&param.ty));
         }
 
         let mut input_names = BTreeSet::new();
@@ -1697,6 +1709,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             entry,
             model,
             types,
+            source_types,
             selectors,
             materialized_selectors: BTreeSet::new(),
             input_names,
@@ -1732,11 +1745,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn lower_if(&mut self, out: &mut String, indent: usize) -> Result<()> {
+        self.lower_if_inner(out, indent, true)
+    }
+
+    fn lower_if_inner(&mut self, out: &mut String, indent: usize, push_leading_indent: bool) -> Result<()> {
         self.expect_symbol('(')?;
         let condition = self.take_balanced_expr('(', ')')?;
         self.expect_symbol('{')?;
 
-        push_indent(out, indent);
+        if push_leading_indent {
+            push_indent(out, indent);
+        }
         out.push_str(&format!("if ({}) {{\n", self.lower_expr(&condition, None, indent)?));
         self.lower_statements(out, indent + 4, Some('}'))?;
         self.expect_symbol('}')?;
@@ -1744,6 +1763,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         out.push('}');
 
         if self.consume_ident("else") {
+            if self.consume_ident("if") {
+                out.push_str(" else ");
+                self.lower_if_inner(out, indent, false)?;
+                return Ok(());
+            }
             self.expect_symbol('{')?;
             out.push_str(" else {\n");
             self.lower_statements(out, indent + 4, Some('}'))?;
@@ -1765,6 +1789,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             let ty = self.lower_local_type(source_ty);
             let lowered = self.lower_typed_local_initializer(source_ty, &ty, expr, indent)?;
             self.types.insert(name.to_string(), ty.clone());
+            self.source_types.insert(name.to_string(), source_ty.to_string());
 
             push_indent(out, indent);
             out.push_str(&format!("{ty} {name} = {lowered};\n"));
@@ -2160,6 +2185,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if self.model.actor_enums.contains_key(source_ty) {
             return "int".to_string();
         }
+        if source_ty == "covid" {
+            return "byte[32]".to_string();
+        }
         if source_ty == self.actor.state { "State".to_string() } else { source_ty.to_string() }
     }
 
@@ -2198,6 +2226,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for field in &self.model.state(&self.actor.state)?.fields {
             out = out.replace(&format!("self.{}", field.name), &field.name);
         }
+        out = lower_authorized_calls(&out, &self.source_types)?;
         for (source, lowered) in &self.observed_input_state_refs {
             out = out.replace(source, lowered);
         }
@@ -2708,10 +2737,10 @@ fn route_validation_kind(actor: &ActorDecl, route: &RouteCall) -> RouteValidatio
     RouteValidationKind::ForeignTemplate
 }
 
-fn lower_entry_params(params: &[ParamDecl], witness_specs: &EntryWitnessSpecs, model: &Model<'_>) -> Vec<String> {
+fn lower_entry_params(actor: &ActorDecl, params: &[ParamDecl], witness_specs: &EntryWitnessSpecs, model: &Model<'_>) -> Vec<String> {
     let mut out = Vec::new();
     for param in params {
-        out.push(format!("{} {}", lower_type_ref(&param.ty, model), param.name));
+        out.push(format!("{} {}", lower_entry_param_type(actor, &param.ty, model), param.name));
     }
     for spec in &witness_specs.templates {
         match spec.form {
@@ -3337,6 +3366,7 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
         ("byte", None) => Ok(SilExpr::byte(0)),
         ("string", None) => Ok(SilExpr::string("")),
         ("pubkey", None) => Ok(zero_byte_array_expr(32)),
+        ("covid", None) => Ok(zero_byte_array_expr(32)),
         ("sig", None) => Ok(zero_byte_array_expr(65)),
         ("datasig", None) => Ok(zero_byte_array_expr(64)),
         (name, None) => Err(ArgentError::new(format!("unsupported constructor placeholder type `{name}`"))),
@@ -3835,7 +3865,7 @@ fn sil_entry_artifact(actor: &ActorDecl, entry_index: usize, entry: &EntryDecl, 
     let mut params = entry
         .params
         .iter()
-        .map(|param| ParamArtifact { name: param.name.clone(), ty: type_artifact(&param.ty, model) })
+        .map(|param| ParamArtifact { name: param.name.clone(), ty: entry_param_type_artifact(actor, &param.ty, model) })
         .collect::<Vec<_>>();
     params.extend(
         hidden_params_for_entry(actor, entry, model).into_iter().map(|param| ParamArtifact { name: param.name, ty: param.ty }),
@@ -3871,11 +3901,33 @@ fn route_artifact(route: &RouteCall) -> RouteArtifact {
 }
 
 fn lower_type_ref(ty: &TypeRef, model: &Model<'_>) -> String {
-    if model.is_actor_enum_type(ty) { "int".to_string() } else { ty.to_sil() }
+    if model.is_actor_enum_type(ty) {
+        "int".to_string()
+    } else if ty.name == "covid" && ty.array.is_none() {
+        "byte[32]".to_string()
+    } else {
+        ty.to_sil()
+    }
+}
+
+fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) -> String {
+    if ty.name == actor.state && ty.array.is_none() { "State".to_string() } else { lower_type_ref(ty, model) }
+}
+
+fn source_type_ref(ty: &TypeRef) -> String {
+    ty.to_sil()
 }
 
 fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
     if model.is_actor_enum_type(ty) { TypeArtifact::Int } else { TypeArtifact::from_parts(&ty.name, ty.array) }
+}
+
+fn entry_param_type_artifact(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
+    if ty.name == actor.state && ty.array.is_none() {
+        TypeArtifact::Struct { name: "State".to_string() }
+    } else {
+        type_artifact(ty, model)
+    }
 }
 
 fn actor_enum_variant_index(actor_enum: &ActorEnumInfo, variant: &str) -> Option<usize> {
@@ -3884,6 +3936,103 @@ fn actor_enum_variant_index(actor_enum: &ActorEnumInfo, variant: &str) -> Option
 
 fn actor_enum_variant_const_expr(actor_enum: &ActorEnumInfo, variant: &str) -> Option<String> {
     actor_enum_variant_index(actor_enum, variant).map(|index| format!("{index} /*{}*/", to_snake(variant).to_ascii_uppercase()))
+}
+
+fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -> Result<String> {
+    if !expr.contains(".authorized") {
+        return Ok(expr.to_string());
+    }
+    let tokens =
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+    let mut out = String::new();
+    let mut cursor = 0usize;
+    let mut pos = 0usize;
+    while pos < tokens.len() {
+        if let Some((replacement_start, replacement_end, next_pos, covenant_id)) =
+            parse_authorized_call(expr, &tokens, pos, source_types)?
+        {
+            out.push_str(&expr[cursor..replacement_start]);
+            out.push_str(&format!("OpCovInputCount({}) > 0", covenant_id.trim()));
+            cursor = replacement_end;
+            pos = next_pos;
+            continue;
+        }
+        if matches!(tokens[pos].kind, TokenKind::Eof) {
+            break;
+        }
+        pos += 1;
+    }
+    out.push_str(&expr[cursor..]);
+    if out.contains(".authorized") {
+        return Err(ArgentError::new("`.authorized()` is only available on `covid` values or explicit `covid(expr)` casts"));
+    }
+    Ok(out)
+}
+
+fn parse_authorized_call(
+    expr: &str,
+    tokens: &[Token],
+    pos: usize,
+    source_types: &BTreeMap<String, String>,
+) -> Result<Option<(usize, usize, usize, String)>> {
+    if is_ident(tokens, pos, "covid") && is_symbol(tokens, pos + 1, '(') {
+        let close = matching_symbol(tokens, pos + 1, '(', ')')
+            .ok_or_else(|| ArgentError::new(format!("unterminated covid(...) authorization expression `{expr}`")))?;
+        if is_symbol(tokens, close + 1, '.')
+            && is_ident(tokens, close + 2, "authorized")
+            && is_symbol(tokens, close + 3, '(')
+            && is_symbol(tokens, close + 4, ')')
+        {
+            return Ok(Some((
+                tokens[pos].span.start,
+                tokens[close + 4].span.end,
+                close + 5,
+                expr[tokens[pos + 1].span.end..tokens[close].span.start].to_string(),
+            )));
+        }
+        return Ok(None);
+    }
+
+    if matches!(tokens.get(pos).map(|token| &token.kind), Some(TokenKind::Ident(_)))
+        && is_symbol(tokens, pos + 1, '.')
+        && is_ident(tokens, pos + 2, "authorized")
+        && is_symbol(tokens, pos + 3, '(')
+        && is_symbol(tokens, pos + 4, ')')
+    {
+        let ident = expr[tokens[pos].span.start..tokens[pos].span.end].to_string();
+        if source_types.get(&ident).is_none_or(|ty| ty != "covid") {
+            return Err(ArgentError::new(format!("`.authorized()` is only available on `covid` values, found `{ident}`")));
+        }
+        return Ok(Some((tokens[pos].span.start, tokens[pos + 4].span.end, pos + 5, ident)));
+    }
+
+    Ok(None)
+}
+
+fn matching_symbol(tokens: &[Token], open_pos: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (pos, token) in tokens.iter().enumerate().skip(open_pos) {
+        match token.kind {
+            TokenKind::Symbol(symbol) if symbol == open => depth += 1,
+            TokenKind::Symbol(symbol) if symbol == close => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(pos);
+                }
+            }
+            TokenKind::Eof => return None,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn is_ident(tokens: &[Token], pos: usize, ident: &str) -> bool {
+    matches!(tokens.get(pos).map(|token| &token.kind), Some(TokenKind::Ident(candidate)) if candidate == ident)
+}
+
+fn is_symbol(tokens: &[Token], pos: usize, symbol: char) -> bool {
+    matches!(tokens.get(pos).map(|token| &token.kind), Some(TokenKind::Symbol(candidate)) if *candidate == symbol)
 }
 
 fn lower_actor_enum_literals(expr: &str, model: &Model<'_>) -> Result<String> {
@@ -4007,6 +4156,9 @@ fn reject_reserved_identifier(context: &str, name: &str) -> Result<()> {
         return Err(ArgentError::new(format!(
             "{context} identifier `{name}` uses reserved generated namespace `{RESERVED_GENERATED_PREFIX}`"
         )));
+    }
+    if name == "State" {
+        return Err(ArgentError::new(format!("{context} identifier `State` is reserved for generated Silverscript state")));
     }
     Ok(())
 }
@@ -4228,13 +4380,13 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
     }
 }
 
-fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
+fn hidden_template_object_fields_for_state(source_state: &str, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
     let mut fields = match route_field_kind(target_state, model) {
         RouteFieldKind::None => Vec::new(),
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             let mut fields = actor_templates
                 .into_iter()
-                .map(|actor| (hidden_template_name(actor), hidden_template_name(actor)))
+                .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
                 .collect::<Vec<_>>();
             fields.extend(
                 family_commitments
@@ -4248,7 +4400,10 @@ fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &s
             for family in families {
                 let table_expr = hidden_route_family_table_name(family);
                 fields.extend(
-                    family.direct_template_actors().iter().map(|actor| (hidden_template_name(actor), hidden_template_name(actor))),
+                    family
+                        .direct_template_actors()
+                        .iter()
+                        .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model))),
                 );
                 fields.push((hidden_route_family_table_name(family), table_expr));
             }
@@ -4260,6 +4415,14 @@ fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &s
         (field.clone(), field)
     }));
     fields
+}
+
+fn hidden_template_expr_for_actor(source_state: &str, actor: &str, model: &Model<'_>) -> String {
+    observed_template_specs_for_state(source_state, model)
+        .into_iter()
+        .find(|spec| spec.actor == actor)
+        .map(|spec| hidden_observed_actor_template_name(&spec))
+        .unwrap_or_else(|| hidden_template_name(actor))
 }
 
 fn template_receipt_id(actor: &str) -> String {
@@ -4489,6 +4652,28 @@ mod tests {
         program.modules[0].actors[0].entries[0].terminal_route_sets = vec![vec![route]];
 
         Model::from_program(&program).expect("route should be accepted");
+    }
+
+    #[test]
+    fn rejects_user_state_named_state() {
+        let err = parse_and_validate(
+            r#"
+            state State {}
+
+            actor Foo owns State {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#,
+        )
+        .expect_err("source `State` must be reserved");
+
+        assert!(err.to_string().contains("reserved for generated Silverscript state"), "unexpected error: {err}");
     }
 
     #[test]
@@ -4910,7 +5095,8 @@ mod tests {
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
-        assert_example_build_artifact("examples/icc/minter_proxy_observer_real.ag", "icc-minter-proxy-observer", &[]);
+        assert_example_build_artifact("examples/icc/kcc20_asset.ag", "icc-kcc20-asset", &[]);
+        assert_example_build_artifact("examples/icc/minter.ag", "icc-minter", &[]);
     }
 
     #[test]
@@ -5077,7 +5263,7 @@ mod tests {
         let out_dir = std::env::temp_dir().join(format!("argent-icc-observed-input-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
 
-        let program = crate::loader::load_program(Path::new("examples/icc/minter_proxy_observer_real.ag")).expect("ICC example loads");
+        let program = crate::loader::load_program(Path::new("examples/icc/minter.ag")).expect("ICC example loads");
         emit_build(&program, &out_dir).expect("ICC example builds");
 
         let minter_sil = fs::read_to_string(out_dir.join("sil/Minter.sil")).expect("Minter.sil exists");
@@ -5120,6 +5306,67 @@ mod tests {
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
         let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
         artifact.verify_template_plan().expect("observed witness receipts verify");
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn icc_asset_lowers_covid_authorization_and_else_if() {
+        let out_dir = std::env::temp_dir().join(format!("argent-icc-asset-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new("examples/icc/kcc20_asset.ag")).expect("ICC asset app loads");
+        emit_build(&program, &out_dir).expect("ICC asset app builds");
+
+        let kcc20_sil = fs::read_to_string(out_dir.join("sil/KCC20.sil")).expect("KCC20.sil exists");
+        assert!(kcc20_sil.contains("} else if (identifier_type == IDENTIFIER_COVENANT_ID) {"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("require(checkSig(owner_sig, owner_identifier));"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("require(OpCovInputCount(owner_identifier) > 0);"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("State next_state = {"), "{kcc20_sil}");
+
+        let proxy_sil = fs::read_to_string(out_dir.join("sil/MinterProxy.sil")).expect("MinterProxy.sil exists");
+        assert!(proxy_sil.contains("byte[32] controller_id = init_controller_id;"), "{proxy_sil}");
+        assert!(proxy_sil.contains("entrypoint function mint(\n        State next_proxy,"), "{proxy_sil}");
+        assert!(proxy_sil.contains("require(OpCovInputCount(controller_id) > 0);"), "{proxy_sil}");
+
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+        let proxy_entry =
+            artifact.sil_abi.contract("MinterProxy").expect("MinterProxy ABI exists").entry("mint").expect("mint ABI exists");
+        assert_eq!(proxy_entry.params[0].name, "next_proxy");
+        assert_eq!(proxy_entry.params[0].ty, TypeArtifact::Struct { name: "State".to_string() });
+
+        let _ = fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn rejects_authorized_on_non_covid_value() {
+        let out_dir = std::env::temp_dir().join(format!("argent-authorized-type-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+        let module = crate::parser::parse_module(
+            PathBuf::from("test.ag"),
+            r#"
+            state FooState {
+                byte[32] id;
+            }
+
+            actor Foo owns FooState {
+                entry hold() emits none {
+                    require(id.authorized());
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
+
+        let err = emit_build(&program, &out_dir).expect_err("non-covid authorization must be rejected");
+        assert!(err.to_string().contains("only available on `covid` values"), "unexpected error: {err}");
 
         let _ = fs::remove_dir_all(out_dir);
     }

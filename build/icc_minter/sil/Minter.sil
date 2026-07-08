@@ -13,12 +13,17 @@ contract Minter(
 ) {
     // :: shared constants
     byte constant IDENTIFIER_PUBKEY = 0x00;
+    byte constant IDENTIFIER_COVENANT_ID = 0x02;
 
     // :: state layouts
     struct MinterProxyState {
+        byte[32] gen__kcc20_template;
+        // :: gen__ ^ | src:
         byte[32] controller_id;
     }
     struct KCC20State {
+        byte[32] gen__kcc20_template;
+        // :: gen__ ^ | src:
         byte[32] owner_identifier;
         byte identifier_type;
         int amount;
@@ -74,9 +79,13 @@ contract Minter(
         require(amount >= minted_amount);
         require(prev_proxy.controller_id == OpInputCovenantId(this.activeInputIndex));
         MinterProxyState next_proxy = {
+            gen__kcc20_template: gen__asset_kcc20_template,
+            // :: gen__ ^ | src:
             controller_id: OpInputCovenantId(this.activeInputIndex),
         };
         KCC20State next_recipient = {
+            gen__kcc20_template: gen__asset_kcc20_template,
+            // :: gen__ ^ | src:
             owner_identifier: recipient_owner,
             identifier_type: IDENTIFIER_PUBKEY,
             amount: minted_amount,
@@ -97,7 +106,7 @@ contract Minter(
             gen__asset_kcc20_suffix,
             gen__asset_kcc20_template
         );
-        State next_minter = {
+        State next_controller = {
             gen__asset_minter_proxy_template: gen__asset_minter_proxy_template,
             gen__asset_kcc20_template: gen__asset_kcc20_template,
             owner: owner,
@@ -106,7 +115,7 @@ contract Minter(
             initialized: initialized,
         };
         // :: become Minter
-        validateOutputState(gen__controller_output_idx, next_minter);
+        validateOutputState(gen__controller_output_idx, next_controller);
     }
 
 }

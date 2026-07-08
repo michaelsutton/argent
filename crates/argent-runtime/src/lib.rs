@@ -18,7 +18,8 @@ pub use silverscript_abi::ArtifactValue;
 use argent_artifact::{
     ActorArtifact, ArtifactVersionError, EntryArtifact, HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
     ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact, RouteTemplateLeafArtifact, RouteTemplateProofArtifact,
-    RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, TemplatePlanError, route_template_proof_receipt_id,
+    RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, SilEntryArtifact, TemplatePlanError,
+    route_template_proof_receipt_id,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -33,7 +34,7 @@ use kaspa_txscript::{
     pay_to_script_hash_signature_script_with_flags, script_builder::ScriptBuilderError,
 };
 use kaspa_txscript_errors::TxScriptError;
-use silverscript_abi::{CodecError, decode_hex, encode_entry_sig_script, encode_runtime_state_script};
+use silverscript_abi::{CodecError, TypeArtifact, decode_hex, encode_entry_sig_script, encode_runtime_state_script};
 use thiserror::Error;
 
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
@@ -281,7 +282,7 @@ impl<'a> TxBuilder<'a> {
         if let Some(observed) = observed {
             self.validate_observed_contexts(actor_name, entry_name, argent_entry, observed)?;
         }
-        let mut args = user_args;
+        let mut args = self.runtime_entry_args(contract_ref.artifact, contract, sil_entry, user_args)?;
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
@@ -340,6 +341,28 @@ impl<'a> TxBuilder<'a> {
             sigscript,
             covenant_engine_flags(),
         )?)
+    }
+
+    fn runtime_entry_args(
+        &self,
+        artifact: &'a Artifact,
+        contract: &'a SilContractArtifact,
+        entry: &SilEntryArtifact,
+        user_args: Vec<ArtifactValue>,
+    ) -> BuilderResult<Vec<ArtifactValue>> {
+        let mut args = Vec::with_capacity(user_args.len());
+        for (idx, value) in user_args.into_iter().enumerate() {
+            if matches!(entry.params.get(idx).map(|param| &param.ty), Some(TypeArtifact::Struct { name }) if name == "State") {
+                let ArtifactValue::Object(fields) = value else {
+                    args.push(value);
+                    continue;
+                };
+                args.push(ArtifactValue::Object(self.runtime_state_values(artifact, contract, fields)?));
+            } else {
+                args.push(value);
+            }
+        }
+        Ok(args)
     }
 
     pub fn covenant_output(

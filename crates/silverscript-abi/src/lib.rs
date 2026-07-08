@@ -85,6 +85,7 @@ impl TypeArtifact {
     pub fn from_parts(name: &str, array_len: Option<usize>) -> Self {
         match (name, array_len) {
             ("byte", Some(len)) => Self::FixedBytes { len },
+            ("covid", Some(len)) => Self::FixedArray { item: Box::new(Self::FixedBytes { len: 32 }), len },
             (_, Some(len)) => Self::FixedArray { item: Box::new(Self::scalar(name)), len },
             (_, None) => Self::scalar(name),
         }
@@ -102,6 +103,7 @@ impl TypeArtifact {
             "bytes" => Self::Bytes,
             "string" => Self::Text,
             "pubkey" => Self::Pubkey,
+            "covid" => Self::FixedBytes { len: 32 },
             "sig" => Self::Sig,
             "datasig" => Self::Datasig,
             _ => Self::Struct { name: name.to_string() },
@@ -268,7 +270,7 @@ pub fn encode_entry_sig_script(
         });
     }
 
-    let ctx = TypeContext::new(abi);
+    let ctx = TypeContext::new(abi, contract);
     let mut builder = script_builder();
     for ((name, ty), value) in params.iter().zip(args) {
         push_sig_arg(&mut builder, &ctx, name, ty, value)?;
@@ -336,14 +338,29 @@ fn entry_params(entry: &SilEntryArtifact) -> Vec<(&str, &TypeArtifact)> {
 
 struct TypeContext<'a> {
     states: BTreeMap<&'a str, &'a StateArtifact>,
+    runtime_state: StateArtifact,
 }
 
 impl<'a> TypeContext<'a> {
-    fn new(abi: &'a SilAbiArtifact) -> Self {
-        Self { states: abi.states.iter().map(|state| (state.name.as_str(), state)).collect() }
+    fn new(abi: &'a SilAbiArtifact, contract: &'a SilContractArtifact) -> Self {
+        Self {
+            states: abi.states.iter().map(|state| (state.name.as_str(), state)).collect(),
+            runtime_state: StateArtifact {
+                name: "State".to_string(),
+                fields: contract
+                    .runtime_state
+                    .fields
+                    .iter()
+                    .map(|field| FieldArtifact { name: field.name.clone(), ty: field.ty.clone() })
+                    .collect(),
+            },
+        }
     }
 
-    fn state(&self, name: &str) -> CodecResult<&'a StateArtifact> {
+    fn state(&self, name: &str) -> CodecResult<&StateArtifact> {
+        if name == "State" {
+            return Ok(&self.runtime_state);
+        }
         self.states.get(name).copied().ok_or_else(|| CodecError::UnknownStruct(name.to_string()))
     }
 }

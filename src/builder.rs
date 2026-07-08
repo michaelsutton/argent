@@ -875,8 +875,13 @@ mod tests {
         let proxy_utxo = observed.get("asset").unwrap().inputs.get("proxy").unwrap().utxo.clone();
         let entries = vec![minter_utxo.clone(), proxy_utxo.clone()];
         let proxy_sigscript = builder
-            .p2sh_signature_script("MinterProxy", "hold", proxy_state.clone(), Vec::new())
-            .expect("proxy hold sigscript builds");
+            .p2sh_signature_script(
+                "MinterProxy",
+                "mint",
+                proxy_state.clone(),
+                vec![ArtifactValue::Object(proxy_state.clone()), ArtifactValue::Object(recipient_state.clone())],
+            )
+            .expect("proxy mint sigscript builds");
         let unsigned_tx = TxBuilder::transaction(
             vec![
                 TxBuilder::transaction_input(minter_outpoint, Vec::new()),
@@ -1081,11 +1086,11 @@ mod tests {
     }
 
     fn icc_controller_artifact() -> Artifact {
-        example_artifact("examples/icc/minter_proxy_observer_real.ag", "icc-controller")
+        example_artifact("examples/icc/minter.ag", "icc-controller")
     }
 
     fn icc_asset_artifact() -> Artifact {
-        example_artifact("examples/icc/kcc20_asset_real.ag", "icc-asset")
+        example_artifact("examples/icc/kcc20_asset.ag", "icc-asset")
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {

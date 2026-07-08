@@ -37,8 +37,8 @@ if [ "$regen_examples" = true ]; then
     cargo run -- build examples/tickets.ag --out build/tickets
     cargo run -- build examples/stones/app.ag --out build/stones
     cargo run -- build examples/toy_chess/app.ag --out build/toy_chess
-    cargo run -- build examples/icc/kcc20_asset_real.ag --out build/icc_kcc20_asset
-    cargo run -- build examples/icc/minter_proxy_observer_real.ag --out build/icc_minter_proxy_observer
+    cargo run -- build examples/icc/kcc20_asset.ag --out build/icc_kcc20_asset
+    cargo run -- build examples/icc/minter.ag --out build/icc_minter
 fi
 
 cargo test --workspace

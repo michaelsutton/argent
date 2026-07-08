@@ -1,8 +1,8 @@
 {
   "app": "KCC20Asset",
-  "root": "examples/icc/kcc20_asset_real.ag",
+  "root": "examples/icc/kcc20_asset.ag",
   "modules": [
-    "examples/icc/kcc20_asset_real.ag"
+    "examples/icc/kcc20_asset.ag"
   ],
   "templates": [
     { "actor": "KCC20", "symbol": "gen__kcc20_template", "hash": null },
@@ -15,11 +15,11 @@
       "sil": "sil/KCC20.sil",
       "entries": [
         {
-          "name": "hold",
+          "name": "transfer",
           "kind": "leader",
-          "emits": { "kind": "none" },
+          "emits": { "kind": "outputs", "outputs": [{ "name": "next", "auth_index": 0, "actors": ["KCC20"] }] },
           "consumes": [],
-          "routes": []
+          "routes": [{ "output": "next", "actor": "KCC20", "state": "next_state" }]
         }
       ]
     },
@@ -29,11 +29,11 @@
       "sil": "sil/MinterProxy.sil",
       "entries": [
         {
-          "name": "hold",
+          "name": "mint",
           "kind": "leader",
-          "emits": { "kind": "none" },
+          "emits": { "kind": "outputs", "outputs": [{ "name": "proxy", "auth_index": 0, "actors": ["MinterProxy"] }, { "name": "recipient", "auth_index": 1, "actors": ["KCC20"] }] },
           "consumes": [],
-          "routes": []
+          "routes": [{ "output": "proxy", "actor": "MinterProxy", "state": "next_proxy" }, { "output": "recipient", "actor": "KCC20", "state": "recipient" }]
         }
       ]
     }
