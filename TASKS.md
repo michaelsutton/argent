@@ -433,6 +433,13 @@ Done so far:
 - Observed actor references must resolve to known actor/state declarations, but
   they do not need to belong to the observing app's template set.
 - Observe metadata is recorded in the portable Argent artifact under the entry.
+- Observed input slots lower to deterministic covenant input indexes and typed
+  `readInputStateWithTemplate` reads.
+- Observed input template prefix and suffix lengths are exposed as hidden entry
+  witnesses under observed-actor subjects.
+- Observed input template hashes are committed as generated observer state fields,
+  so they are anchored by the observer template instead of supplied as free
+  entrypoint variables.
 - `examples/icc/minter_proxy_observer_real.ag` is a compiling subset fixture
   that tracks this feature without changing the full target sketch in
   `examples/icc/minter_proxy_observer.ag`.
@@ -440,12 +447,10 @@ Done so far:
 
 Still remaining:
 
-- Lower observed inputs to covenant-id/index reads and
-  `readInputStateWithTemplate` calls.
 - Lower observed outputs to deterministic output-index checks and
   `validateOutputStateWithTemplate` calls.
 - Connect the artifact/runtime builder so users provide semantic UTXOs and
-  states rather than hidden prefix/suffix/template plumbing.
+  states rather than observed lens and committed-template plumbing.
 
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
@@ -471,23 +476,25 @@ Obstacle to handle:
 - Observed output order must be deterministic and artifact-visible. Do not
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
-### 13. Hide Template Witnesses For `observes` Blocks
+### 13. Hide Observed Covenant Plumbing
 
-Make the builder fill observed-covenant prefix/suffix/template witnesses from
-the artifact and live UTXOs. User code should provide semantic state
-transitions, not template plumbing.
+Make the builder fill observed-covenant lens witnesses from the artifact and
+live UTXOs, while observed template hashes stay committed in generated observer
+state. User code should provide semantic state transitions, not template
+plumbing.
 
 End-to-end test:
 
 - The minter observer test should build from user args plus selected UTXOs.
-- The caller should not pass template prefix/suffix args manually.
+- The caller should not pass template prefix/suffix length args manually.
 - Corrupt a hidden witness in the builder test and assert rejection.
 
 Obstacle to handle:
 
-- Input reads need prefix and suffix lengths plus hash. Output validation needs
-  actual prefix and suffix bytes. The artifact must say which witness shape each
-  generated call expects.
+- Input reads need prefix/suffix lengths plus a committed template hash. Output
+  validation needs actual prefix and suffix bytes. The artifact must say which
+  witness shape each generated call expects, and which template hashes are
+  anchored in state.
 
 ### 14. Support Artifact Bundles And External App Dependencies
 

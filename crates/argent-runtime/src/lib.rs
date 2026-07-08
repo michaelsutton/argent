@@ -373,6 +373,14 @@ impl<'a> TxBuilder<'a> {
                         ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
                     );
                 }
+                Some(RuntimeFieldRoleArtifact::ObservedTemplate { contract, .. }) => {
+                    let value = if let Some(value) = source_state.remove(&field.name) {
+                        value
+                    } else {
+                        ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?)
+                    };
+                    values.insert(field.name.clone(), value);
+                }
                 Some(RuntimeFieldRoleArtifact::TemplateTable { contracts }) => {
                     let mut table = Vec::with_capacity(contracts.len() * 32);
                     for contract in contracts {
@@ -474,6 +482,7 @@ impl<'a> TxBuilder<'a> {
 fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
+        HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.as_str()),
         HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
         }
@@ -483,7 +492,9 @@ fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
 fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
-        HiddenParamSubjectArtifact::Actor { .. } | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
+        HiddenParamSubjectArtifact::Actor { .. }
+        | HiddenParamSubjectArtifact::ObservedActor { .. }
+        | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
         }
     }
@@ -496,6 +507,7 @@ fn hidden_template_actor(
 ) -> BuilderResult<String> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.clone()),
+        HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.clone()),
         HiddenParamSubjectArtifact::TemplateSelector { selector: selector_name } => {
             let selector = entry
                 .template_selectors

@@ -119,6 +119,7 @@ pub struct RuntimeFieldRolePlanArtifact {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RuntimeFieldRoleArtifact {
     Template { contract: String },
+    ObservedTemplate { observe: String, side: ObservedActorSideArtifact, handle: String, contract: String },
     TemplateTable { contracts: Vec<String> },
     TemplateDigest { id: String },
     TemplateRoot { leaves: Vec<RuntimeRouteLeafArtifact> },
@@ -298,8 +299,16 @@ pub struct HiddenParamArtifact {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
+    ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservedActorSideArtifact {
+    Input,
+    Output,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -764,6 +773,15 @@ impl TemplatePlanArtifact {
                     }
                     RuntimeFieldRoleArtifact::TemplateRoot { leaves } => (leaves.clone(), TypeArtifact::FixedBytes { len: 32 }),
                     RuntimeFieldRoleArtifact::Template { .. } => continue,
+                    RuntimeFieldRoleArtifact::ObservedTemplate { .. } => {
+                        if sil_field.ty != (TypeArtifact::FixedBytes { len: 32 }) {
+                            return Err(TemplatePlanError::RuntimeStatePlanMismatch {
+                                contract: runtime_state.contract.clone(),
+                                message: format!("observed template field `{}` must be byte[32]", field.name),
+                            });
+                        }
+                        continue;
+                    }
                 };
                 let id = route_template_table_receipt_id(&runtime_state.source, &field.name);
                 let Some(table) = route_tables_by_id.get(id.as_str()) else {
@@ -886,6 +904,7 @@ impl TemplatePlanArtifact {
                         });
                     }
                 }
+                HiddenParamSubjectArtifact::ObservedActor { .. } => {}
                 HiddenParamSubjectArtifact::RouteFamily { family_id } => {
                     if !route_families_by_id.contains_key(family_id.as_str()) {
                         return Err(TemplatePlanError::MissingWitnessRouteFamily {

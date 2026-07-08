@@ -24,14 +24,60 @@
           "actor": "Minter",
           "contract": "Minter",
           "symbol": "gen__minter_template",
-          "hash_hex": "895cd0bc8425f3bfacd7cf63567057903109d1ab5806e4b276c0e8956538834d"
+          "hash_hex": "1606a1e7ddcf3a34658b28ca57afe966ef3ec287b58561481d433bf99c739b09"
         }
       ],
-      "runtime_states": [],
+      "runtime_states": [
+        {
+          "contract": "Minter",
+          "source": "MinterState",
+          "field_roles": [
+            {
+              "name": "gen__asset_proxy_input_template",
+              "role": {
+                "kind": "observed_template",
+                "observe": "asset",
+                "side": "input",
+                "handle": "proxy",
+                "contract": "MinterProxy"
+              }
+            }
+          ]
+        }
+      ],
       "route_tables": [],
       "route_proofs": [],
       "route_families": [],
-      "witness_recipes": []
+      "witness_recipes": [
+        {
+          "id": "witness/observed/asset/input/proxy/template_prefix_len",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "asset",
+            "side": "input",
+            "handle": "proxy",
+            "actor": "MinterProxy"
+          },
+          "param": "gen__asset_proxy_input_prefix_len",
+          "purpose": {
+            "kind": "template_prefix_len"
+          }
+        },
+        {
+          "id": "witness/observed/asset/input/proxy/template_suffix_len",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "asset",
+            "side": "input",
+            "handle": "proxy",
+            "actor": "MinterProxy"
+          },
+          "param": "gen__asset_proxy_input_suffix_len",
+          "purpose": {
+            "kind": "template_suffix_len"
+          }
+        }
+      ]
     },
     "states": [
       {
@@ -153,9 +199,47 @@
                   "witness_recipe_ids": []
                 }
               ],
-              "witness_recipe_ids": []
+              "witness_recipe_ids": [
+                "witness/observed/asset/input/proxy/template_prefix_len",
+                "witness/observed/asset/input/proxy/template_suffix_len"
+              ]
             },
-            "hidden_params": [],
+            "hidden_params": [
+              {
+                "recipe_id": "witness/observed/asset/input/proxy/template_prefix_len",
+                "name": "gen__asset_proxy_input_prefix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "input",
+                  "handle": "proxy",
+                  "actor": "MinterProxy"
+                },
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/input/proxy/template_suffix_len",
+                "name": "gen__asset_proxy_input_suffix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "input",
+                  "handle": "proxy",
+                  "actor": "MinterProxy"
+                },
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              }
+            ],
             "template_selectors": [],
             "observes": [
               {
@@ -179,7 +263,36 @@
                 ]
               }
             ],
-            "witnesses": [],
+            "witnesses": [
+              {
+                "recipe_id": "witness/observed/asset/input/proxy/template_prefix_len",
+                "param": "gen__asset_proxy_input_prefix_len",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "input",
+                  "handle": "proxy",
+                  "actor": "MinterProxy"
+                },
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/input/proxy/template_suffix_len",
+                "param": "gen__asset_proxy_input_suffix_len",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "input",
+                  "handle": "proxy",
+                  "actor": "MinterProxy"
+                },
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              }
+            ],
             "consumes": [],
             "emits": {
               "kind": "outputs",
@@ -296,6 +409,13 @@
           "source": "MinterState",
           "fields": [
             {
+              "name": "gen__asset_proxy_input_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
               "name": "owner",
               "type": {
                 "kind": "pubkey"
@@ -338,20 +458,32 @@
                 "type": {
                   "kind": "int"
                 }
+              },
+              {
+                "name": "gen__asset_proxy_input_prefix_len",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__asset_proxy_input_suffix_len",
+                "type": {
+                  "kind": "int"
+                }
               }
             ]
           }
         ],
         "compiled": {
-          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000100b9cb519c6955795479ac697669785579a269537901207c7e537901207c7e537957799458cd01087c7e537951cd01017c7e7e7e7eb976c97602ab0094014d937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000100527976d0519c697600d1bf7800d1527900d1c95a790121935a799394537900d1c95b790121935b7993945b790121935b799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9597901219359799394527900d1c95a790121935a7993945a7993bc7800d1527900d1c95a790121935a7993945a7993012193537900d1c95b790121935b7993945b79930121935a7993bc7e56797caa87697600d17800d1c95979012193597993945979519393527900d1c95a790121935a7993945a79519393012093bcb9cb519c695a795679ac6952796953795a79a26976b9cf8769567901207c7e567901207c7e567901207c7e56795d799458cd01087c7e567951cd01017c7e7e7e7e7eb976c97602ac0194016e937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a7575757575757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "b9cb519c6955795479ac697669785579a269537901207c7e537901207c7e537957799458cd01087c7e537951cd01017c7e7e7e7eb976c97602ab0094014d937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
-            "hash_hex": "895cd0bc8425f3bfacd7cf63567057903109d1ab5806e4b276c0e8956538834d"
+            "suffix_hex": "527976d0519c697600d1bf7800d1527900d1c95a790121935a799394537900d1c95b790121935b7993945b790121935b799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9597901219359799394527900d1c95a790121935a7993945a7993bc7800d1527900d1c95a790121935a7993945a7993012193537900d1c95b790121935b7993945b79930121935a7993bc7e56797caa87697600d17800d1c95979012193597993945979519393527900d1c95a790121935a7993945a79519393012093bcb9cb519c695a795679ac6952796953795a79a26976b9cf8769567901207c7e567901207c7e567901207c7e56795d799458cd01087c7e567951cd01017c7e7e7e7e7eb976c97602ac0194016e937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a7575757575757575757551",
+            "hash_hex": "1606a1e7ddcf3a34658b28ca57afe966ef3ec287b58561481d433bf99c739b09"
           },
           "state_span": {
             "offset": 0,
-            "len": 77
+            "len": 110
           }
         }
       }

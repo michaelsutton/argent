@@ -35,6 +35,7 @@ mod tests {
     fn subject_label(subject: &HiddenParamSubjectArtifact) -> &str {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
+            HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
         }

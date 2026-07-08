@@ -206,6 +206,7 @@ impl<'a> Model<'a> {
                 self.validate_entry(actor, entry, &template_actor_set)?;
             }
         }
+        self.validate_observed_template_state_fields()?;
         Ok(())
     }
 
@@ -412,6 +413,35 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, observe.name, observed.name, observed.actor
                 ))
             })?;
+        }
+        Ok(())
+    }
+
+    fn validate_observed_template_state_fields(&self) -> Result<()> {
+        let mut seen = BTreeMap::new();
+        for actor in &self.actors {
+            for entry in &actor.entries {
+                for observe in &entry.observes {
+                    for input in &observe.inputs {
+                        let spec = ObservedActorWitnessSpec {
+                            observe: observe.name.clone(),
+                            side: ObservedActorSideArtifact::Input,
+                            handle: input.name.clone(),
+                            actor: input.actor.clone(),
+                        };
+                        let field = hidden_observed_actor_template_name(&spec);
+                        let key = (actor.state.as_str(), field.clone());
+                        if let Some(previous) = seen.insert(key, (actor.name.as_str(), entry.name.as_str(), spec.clone()))
+                            && previous.2 != spec
+                        {
+                            return Err(ArgentError::new(format!(
+                                "observed input template field `{field}` for state `{}` is used by both `{}::{}` and `{}::{}` with different actors",
+                                actor.state, previous.0, previous.1, actor.name, entry.name
+                            )));
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -1335,14 +1365,23 @@ fn emit_shared_constants(out: &mut String, model: &Model<'_>) -> Result<()> {
 fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model<'_>) -> Result<()> {
     emit_section_header(out, "State layouts");
     let mut emitted = BTreeSet::new();
-    for actor in &model.actors {
-        if actor.state == current_actor.state {
+    let mut state_names = model.actors.iter().map(|actor| actor.state.clone()).collect::<Vec<_>>();
+    for entry in &current_actor.entries {
+        for observe in &entry.observes {
+            for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
+                state_names.push(model.actor(&observed.actor)?.state.clone());
+            }
+        }
+    }
+
+    for state_name in state_names {
+        if state_name == current_actor.state {
             continue;
         }
-        if !emitted.insert(actor.state.clone()) {
+        if !emitted.insert(state_name.clone()) {
             continue;
         }
-        let state = model.state(&actor.state)?;
+        let state = model.state(&state_name)?;
         out.push_str(&format!("    struct {} {{\n", state.name));
         emit_hidden_template_fields(out, state.name.as_str(), model, 8);
         for field in &state.fields {
@@ -1450,6 +1489,10 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         out.push('\n');
     }
 
+    if !entry.observes.is_empty() {
+        emit_observed_inputs(out, actor, entry, model)?;
+    }
+
     out.push_str("        // :: auth outputs\n");
     match &entry.emits {
         EmitSpec::None => {
@@ -1481,6 +1524,44 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     out.push_str(&lower_entry_body(actor, entry, model)?);
     out.push_str("    }\n");
     Ok(())
+}
+
+fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
+    out.push_str("        // :: observed covenants\n");
+    for observe in &entry.observes {
+        let cov_id = hidden_observe_cov_id_name(&observe.name);
+        let cov_expr = lower_entry_expr(actor, entry, model, &observe.covenant_expr, Some("byte[32]"))?;
+        out.push_str(&format!("        byte[32] {cov_id} = {cov_expr}; // observe {}\n", observe.name));
+        out.push_str(&format!("        require(OpCovInputCount({cov_id}) == {});\n", observe.inputs.len()));
+        for (idx, input) in observe.inputs.iter().enumerate() {
+            let spec = ObservedActorWitnessSpec {
+                observe: observe.name.clone(),
+                side: ObservedActorSideArtifact::Input,
+                handle: input.name.clone(),
+                actor: input.actor.clone(),
+            };
+            let input_idx = hidden_observed_input_idx_name(&observe.name, &input.name);
+            let state_name = hidden_observed_input_state_name(&observe.name, &input.name);
+            let state_struct = contract_state_type_for_actor(&input.actor, actor, model)?;
+            out.push_str(&format!(
+                "        int {input_idx} = OpCovInputIdx({cov_id}, {idx}); // observed input {}.{}: {}\n",
+                observe.name, input.name, input.actor
+            ));
+            out.push_str(&format!(
+                "        {state_struct} {state_name} = readInputStateWithTemplate({}, {}, {}, {});\n",
+                input_idx,
+                hidden_observed_actor_prefix_len_name(&spec),
+                hidden_observed_actor_suffix_len_name(&spec),
+                hidden_observed_actor_template_name(&spec)
+            ));
+        }
+    }
+    out.push('\n');
+    Ok(())
+}
+
+fn lower_entry_expr(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, expr: &str, expected_ty: Option<&str>) -> Result<String> {
+    BodyLowerer::new(actor, entry, model)?.lower_expr(expr, expected_ty, 8)
 }
 
 fn emit_entry_template_locals(out: &mut String, _actor: &ActorDecl, witness_specs: &EntryWitnessSpecs, _model: &Model<'_>) -> bool {
@@ -1536,6 +1617,7 @@ struct BodyLowerer<'a, 'm> {
     materialized_selectors: BTreeSet<String>,
     input_names: BTreeSet<String>,
     output_names: BTreeSet<String>,
+    observed_input_state_refs: Vec<(String, String)>,
 }
 
 impl<'a, 'm> BodyLowerer<'a, 'm> {
@@ -1568,6 +1650,19 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
         }
 
+        let observed_input_state_refs = entry
+            .observes
+            .iter()
+            .flat_map(|observe| {
+                observe.inputs.iter().map(|input| {
+                    (
+                        format!("{}.inputs.{}.state", observe.name, input.name),
+                        hidden_observed_input_state_name(&observe.name, &input.name),
+                    )
+                })
+            })
+            .collect();
+
         let selectors = model.template_selectors_for_entry(actor, entry)?;
 
         Ok(Self {
@@ -1582,6 +1677,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             materialized_selectors: BTreeSet::new(),
             input_names,
             output_names,
+            observed_input_state_refs,
         })
     }
 
@@ -1961,6 +2057,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_refs(&self, expr: &str) -> Result<String> {
         let mut out = expr.replace("self.value", "tx.inputs[this.activeInputIndex].value");
+        out = out.replace("self.covenant_id", "OpInputCovenantId(this.activeInputIndex)");
+        for field in &self.model.state(&self.actor.state)?.fields {
+            out = out.replace(&format!("self.{}", field.name), &field.name);
+        }
+        for (source, lowered) in &self.observed_input_state_refs {
+            out = out.replace(source, lowered);
+        }
         for name in &self.input_names {
             out = out.replace(&format!("{name}.value"), &format!("tx.inputs[{}].value", hidden_input_idx_name(name)));
         }
@@ -2339,11 +2442,20 @@ struct TemplateSelectorWitnessSpec {
     variants: Vec<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct ObservedActorWitnessSpec {
+    observe: String,
+    side: ObservedActorSideArtifact,
+    handle: String,
+    actor: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct EntryWitnessSpecs {
     templates: Vec<TemplateWitnessSpec>,
     families: Vec<RouteFamilyWitnessSpec>,
     selectors: Vec<TemplateSelectorWitnessSpec>,
+    observed_actors: Vec<ObservedActorWitnessSpec>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2393,6 +2505,18 @@ fn lower_entry_params(params: &[ParamDecl], witness_specs: &EntryWitnessSpecs, m
         out.push(format!("byte[] {}", hidden_template_selector_prefix_name(&spec.name)));
         out.push(format!("byte[] {}", hidden_template_selector_suffix_name(&spec.name)));
     }
+    for spec in &witness_specs.observed_actors {
+        match spec.side {
+            ObservedActorSideArtifact::Input => {
+                out.push(format!("int {}", hidden_observed_actor_prefix_len_name(spec)));
+                out.push(format!("int {}", hidden_observed_actor_suffix_len_name(spec)));
+            }
+            ObservedActorSideArtifact::Output => {
+                out.push(format!("byte[] {}", hidden_observed_actor_prefix_name(spec)));
+                out.push(format!("byte[] {}", hidden_observed_actor_suffix_name(spec)));
+            }
+        }
+    }
     out
 }
 
@@ -2417,7 +2541,23 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
         .collect::<BTreeSet<_>>();
     let mut specs = template_witness_specs_for_actor(actor, model, read_actors, byte_actors);
     specs.selectors = selector_specs;
+    specs.observed_actors = observed_actor_witness_specs(entry);
     specs
+}
+
+fn observed_actor_witness_specs(entry: &EntryDecl) -> Vec<ObservedActorWitnessSpec> {
+    entry
+        .observes
+        .iter()
+        .flat_map(|observe| {
+            observe.inputs.iter().map(|input| ObservedActorWitnessSpec {
+                observe: observe.name.clone(),
+                side: ObservedActorSideArtifact::Input,
+                handle: input.name.clone(),
+                actor: input.actor.clone(),
+            })
+        })
+        .collect()
 }
 
 fn template_witness_specs_for_actor(
@@ -2439,7 +2579,12 @@ fn template_witness_specs_for_actor(
                 .or_insert(RouteFamilyWitnessSpec { family_id: family.id.clone(), byte_len: family.table_byte_len() });
         }
     }
-    EntryWitnessSpecs { templates: specs, families: family_specs.into_values().collect(), selectors: Vec::new() }
+    EntryWitnessSpecs {
+        templates: specs,
+        families: family_specs.into_values().collect(),
+        selectors: Vec::new(),
+        observed_actors: Vec::new(),
+    }
 }
 
 fn template_witness_specs(
@@ -2482,6 +2627,32 @@ fn template_source_for_actor(state: &str, actor: &str, model: &Model<'_>) -> Tem
         .position(|candidate| candidate == actor)
         .map(|index| TemplateWitnessSource::FamilyTable { family_id: family.id.clone(), offset: index * 32 })
         .unwrap_or(TemplateWitnessSource::Field)
+}
+
+fn observed_input_template_specs_for_state(state: &str, model: &Model<'_>) -> Vec<ObservedActorWitnessSpec> {
+    let mut seen = BTreeSet::new();
+    let mut specs = Vec::new();
+    for actor in &model.actors {
+        if actor.state != state {
+            continue;
+        }
+        for entry in &actor.entries {
+            for observe in &entry.observes {
+                for input in &observe.inputs {
+                    let spec = ObservedActorWitnessSpec {
+                        observe: observe.name.clone(),
+                        side: ObservedActorSideArtifact::Input,
+                        handle: input.name.clone(),
+                        actor: input.actor.clone(),
+                    };
+                    if seen.insert(spec.clone()) {
+                        specs.push(spec);
+                    }
+                }
+            }
+        }
+    }
+    specs
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -2671,6 +2842,7 @@ fn template_plan_artifact(
                         id: param.recipe_id.clone(),
                         template_id: match &param.subject {
                             HiddenParamSubjectArtifact::Actor { actor } => Some(template_receipt_id(actor)),
+                            HiddenParamSubjectArtifact::ObservedActor { .. } => None,
                             HiddenParamSubjectArtifact::RouteFamily { .. } => None,
                             HiddenParamSubjectArtifact::TemplateSelector { .. } => None,
                         },
@@ -2731,6 +2903,7 @@ fn route_template_tables_artifact(
                 RuntimeFieldRoleArtifact::TemplateDigest { .. } => continue,
                 RuntimeFieldRoleArtifact::TemplateRoot { leaves } => (leaves.clone(), TypeArtifact::FixedBytes { len: 32 }),
                 RuntimeFieldRoleArtifact::Template { .. } => continue,
+                RuntimeFieldRoleArtifact::ObservedTemplate { .. } => continue,
             };
             let id = route_template_table_receipt_id(&runtime_state.source, &field.name);
             let byte_len = leaves.len() * 32;
@@ -2854,6 +3027,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
             }
         }
     }
+    args.extend(observed_input_template_specs_for_state(&actor.state, model).iter().map(|_| zero_byte_array_expr(32)));
     for field in &state.fields {
         args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
             ArgentError::new(format!(
@@ -2954,6 +3128,18 @@ fn runtime_state_field_defs(state: &StateDecl, model: &Model<'_>) -> Vec<(String
             }
         }
     }
+    for spec in observed_input_template_specs_for_state(&state.name, model) {
+        fields.push((
+            hidden_observed_actor_template_name(&spec),
+            TypeArtifact::from_parts("byte", Some(32)),
+            Some(RuntimeFieldRoleArtifact::ObservedTemplate {
+                observe: spec.observe,
+                side: spec.side,
+                handle: spec.handle,
+                contract: spec.actor,
+            }),
+        ));
+    }
     for field in &state.fields {
         fields.push((field.name.clone(), type_artifact(&field.ty, model), None));
     }
@@ -3049,6 +3235,52 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
             route_proof_id: None,
         });
+    }
+    for spec in &witness_specs.observed_actors {
+        let subject = HiddenParamSubjectArtifact::ObservedActor {
+            observe: spec.observe.clone(),
+            side: spec.side,
+            handle: spec.handle.clone(),
+            actor: spec.actor.clone(),
+        };
+        match spec.side {
+            ObservedActorSideArtifact::Input => {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: observed_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplatePrefixLen),
+                    name: hidden_observed_actor_prefix_len_name(spec),
+                    ty: TypeArtifact::Int,
+                    subject: subject.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixLen,
+                    route_proof_id: None,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: observed_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplateSuffixLen),
+                    name: hidden_observed_actor_suffix_len_name(spec),
+                    ty: TypeArtifact::Int,
+                    subject: subject.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
+                    route_proof_id: None,
+                });
+            }
+            ObservedActorSideArtifact::Output => {
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: observed_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplatePrefixBytes),
+                    name: hidden_observed_actor_prefix_name(spec),
+                    ty: TypeArtifact::Bytes,
+                    subject: subject.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                    route_proof_id: None,
+                });
+                hidden_params.push(HiddenParamArtifact {
+                    recipe_id: observed_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplateSuffixBytes),
+                    name: hidden_observed_actor_suffix_name(spec),
+                    ty: TypeArtifact::Bytes,
+                    subject: subject.clone(),
+                    purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                    route_proof_id: None,
+                });
+            }
+        }
     }
     hidden_params
 }
@@ -3266,6 +3498,18 @@ fn witness_recipe_ids_for_specs(specs: EntryWitnessSpecs) -> Vec<String> {
     }
     for spec in specs.selectors {
         ids.extend(template_selector_witness_recipe_ids(&spec.name));
+    }
+    for spec in specs.observed_actors {
+        match spec.side {
+            ObservedActorSideArtifact::Input => {
+                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplatePrefixLen));
+                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplateSuffixLen));
+            }
+            ObservedActorSideArtifact::Output => {
+                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplatePrefixBytes));
+                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplateSuffixBytes));
+            }
+        }
     }
     ids
 }
@@ -3578,7 +3822,7 @@ enum RouteFieldKind<'a> {
 }
 
 fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
-    match route_field_kind(state, model) {
+    let mut args = match route_field_kind(state, model) {
         RouteFieldKind::None => Vec::new(),
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             let mut args =
@@ -3598,12 +3842,23 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
             }
             args
         }
-    }
+    };
+    args.extend(
+        observed_input_template_specs_for_state(state, model)
+            .iter()
+            .map(|spec| format!("byte[32] {}", hidden_observed_actor_template_init_name(spec))),
+    );
+    args
 }
 
 fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
+    let observed_templates = observed_input_template_specs_for_state(state, model);
     match route_field_kind(state, model) {
-        RouteFieldKind::None => out.push_str("    // No foreign route templates required.\n"),
+        RouteFieldKind::None => {
+            if observed_templates.is_empty() {
+                out.push_str("    // No foreign route templates required.\n");
+            }
+        }
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
                 out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
@@ -3630,18 +3885,36 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
             }
         }
     }
+    for spec in observed_templates {
+        out.push_str(&format!(
+            "    byte[32] {} = {};\n",
+            hidden_observed_actor_template_name(&spec),
+            hidden_observed_actor_template_init_name(&spec)
+        ));
+    }
 }
 
 fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>, indent: usize) {
     let field_indent = " ".repeat(indent);
+    let observed_templates = observed_input_template_specs_for_state(state, model);
     match route_field_kind(state, model) {
-        RouteFieldKind::None => {}
+        RouteFieldKind::None => {
+            for spec in &observed_templates {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
+            }
+            if !observed_templates.is_empty() {
+                out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
+            }
+        }
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
             }
             for family in family_commitments {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_route_family_commitment_name(family)));
+            }
+            for spec in &observed_templates {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
@@ -3656,13 +3929,16 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
                     hidden_route_family_table_name(family)
                 ));
             }
+            for spec in &observed_templates {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
+            }
             out.push_str(&format!("{field_indent}// :: {RESERVED_GENERATED_PREFIX} ^ | src:\n"));
         }
     }
 }
 
 fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
-    match route_field_kind(target_state, model) {
+    let mut fields = match route_field_kind(target_state, model) {
         RouteFieldKind::None => Vec::new(),
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             let mut fields = actor_templates
@@ -3687,7 +3963,12 @@ fn hidden_template_object_fields_for_state(_source_state: &str, target_state: &s
             }
             fields
         }
-    }
+    };
+    fields.extend(observed_input_template_specs_for_state(target_state, model).into_iter().map(|spec| {
+        let field = hidden_observed_actor_template_name(&spec);
+        (field.clone(), field)
+    }));
+    fields
 }
 
 fn template_receipt_id(actor: &str) -> String {
@@ -3708,6 +3989,16 @@ fn route_family_witness_recipe_id(family_id: &str, purpose: HiddenParamPurposeAr
 
 fn template_selector_witness_recipe_id(selector: &str, purpose: HiddenParamPurposeArtifact) -> String {
     format!("witness/template_selector/{selector}/{}", hidden_param_purpose_id(purpose))
+}
+
+fn observed_actor_witness_recipe_id(spec: &ObservedActorWitnessSpec, purpose: HiddenParamPurposeArtifact) -> String {
+    format!(
+        "witness/observed/{}/{}/{}/{}",
+        spec.observe,
+        observed_actor_side_label(spec.side),
+        spec.handle,
+        hidden_param_purpose_id(purpose)
+    )
 }
 
 fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
@@ -3761,6 +4052,49 @@ fn hidden_template_selector_index_name(selector: &str) -> String {
 
 fn hidden_template_selector_template_name(selector: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{selector}_template")
+}
+
+fn hidden_observed_actor_prefix_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_{}_prefix", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observed_actor_suffix_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_{}_suffix", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observed_actor_prefix_len_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_{}_prefix_len", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observed_actor_suffix_len_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_{}_suffix_len", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observed_actor_template_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_{}_template", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observed_actor_template_init_name(spec: &ObservedActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}init_{}_{}_{}_template", spec.observe, spec.handle, observed_actor_side_label(spec.side))
+}
+
+fn hidden_observe_cov_id_name(observe: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{observe}_cov_id")
+}
+
+fn hidden_observed_input_idx_name(observe: &str, handle: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{observe}_{handle}_input_idx")
+}
+
+fn hidden_observed_input_state_name(observe: &str, handle: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{observe}_{handle}_state")
+}
+
+fn observed_actor_side_label(side: ObservedActorSideArtifact) -> &'static str {
+    match side {
+        ObservedActorSideArtifact::Input => "input",
+        ObservedActorSideArtifact::Output => "output",
+    }
 }
 
 fn hidden_cov_id_name() -> String {
@@ -4361,6 +4695,87 @@ mod tests {
             observe.outputs.iter().map(|output| (output.name.as_str(), output.actor.as_str())).collect::<Vec<_>>(),
             vec![("proxy", "MinterProxy"), ("recipient", "KCC20")]
         );
+        assert_eq!(
+            mint.hidden_params.iter().map(|param| (param.name.as_str(), &param.subject, param.purpose)).collect::<Vec<_>>(),
+            vec![
+                (
+                    "gen__asset_proxy_input_prefix_len",
+                    &HiddenParamSubjectArtifact::ObservedActor {
+                        observe: "asset".to_string(),
+                        side: ObservedActorSideArtifact::Input,
+                        handle: "proxy".to_string(),
+                        actor: "MinterProxy".to_string(),
+                    },
+                    HiddenParamPurposeArtifact::TemplatePrefixLen,
+                ),
+                (
+                    "gen__asset_proxy_input_suffix_len",
+                    &HiddenParamSubjectArtifact::ObservedActor {
+                        observe: "asset".to_string(),
+                        side: ObservedActorSideArtifact::Input,
+                        handle: "proxy".to_string(),
+                        actor: "MinterProxy".to_string(),
+                    },
+                    HiddenParamPurposeArtifact::TemplateSuffixLen,
+                ),
+            ]
+        );
+        assert_eq!(
+            mint.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["witness/observed/asset/input/proxy/template_prefix_len", "witness/observed/asset/input/proxy/template_suffix_len",]
+        );
+        assert_eq!(
+            runtime_state_plan(&artifact, "Minter")
+                .expect("Minter runtime role overlay exists")
+                .field_roles
+                .iter()
+                .filter(|role| role.name == "gen__asset_proxy_input_template")
+                .map(|role| role.role.clone())
+                .collect::<Vec<_>>(),
+            vec![RuntimeFieldRoleArtifact::ObservedTemplate {
+                observe: "asset".to_string(),
+                side: ObservedActorSideArtifact::Input,
+                handle: "proxy".to_string(),
+                contract: "MinterProxy".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn observed_inputs_lower_to_foreign_state_reads() {
+        let out_dir = std::env::temp_dir().join(format!("argent-icc-observed-input-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out_dir);
+
+        let program = crate::loader::load_program(Path::new("examples/icc/minter_proxy_observer_real.ag")).expect("ICC example loads");
+        emit_build(&program, &out_dir).expect("ICC example builds");
+
+        let minter_sil = fs::read_to_string(out_dir.join("sil/Minter.sil")).expect("Minter.sil exists");
+        assert!(minter_sil.contains("contract Minter(\n    byte[32] gen__init_asset_proxy_input_template,"), "{minter_sil}");
+        assert!(
+            minter_sil
+                .contains("entrypoint function mint(sig owner_sig, int minted_amount, int gen__asset_proxy_input_prefix_len, int gen__asset_proxy_input_suffix_len)"),
+            "{minter_sil}"
+        );
+        assert!(
+            minter_sil.contains("byte[32] gen__asset_proxy_input_template = gen__init_asset_proxy_input_template;"),
+            "{minter_sil}"
+        );
+        assert!(minter_sil.contains("struct MinterProxyState"), "{minter_sil}");
+        assert!(minter_sil.contains("byte[32] gen__asset_cov_id = kcc20_covid; // observe asset"), "{minter_sil}");
+        assert!(minter_sil.contains("require(OpCovInputCount(gen__asset_cov_id) == 1);"), "{minter_sil}");
+        assert!(
+            minter_sil.contains(
+                "MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(gen__asset_proxy_input_idx, gen__asset_proxy_input_prefix_len, gen__asset_proxy_input_suffix_len, gen__asset_proxy_input_template);"
+            ),
+            "{minter_sil}"
+        );
+        assert!(minter_sil.contains("MinterProxyState prev_proxy = gen__asset_proxy_state;"), "{minter_sil}");
+
+        let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
+        artifact.verify_template_plan().expect("observed input witness receipts verify");
+
+        let _ = fs::remove_dir_all(out_dir);
     }
 
     #[test]
@@ -4437,6 +4852,63 @@ mod tests {
         .expect_err("duplicate observed handles must be rejected");
 
         assert!(err.to_string().contains("observe `asset` declares input `foreign` more than once"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_conflicting_observed_template_fields_for_shared_state() {
+        let err = parse_and_validate(
+            r#"
+            state ForeignState {}
+            state LocalState {}
+
+            actor ForeignA owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor ForeignB owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor LocalA owns LocalState {
+                entry step()
+                observes asset by target_id {
+                    inputs {
+                        proxy: ForeignA;
+                    }
+                }
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor LocalB owns LocalState {
+                entry step()
+                observes asset by target_id {
+                    inputs {
+                        proxy: ForeignB;
+                    }
+                }
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor LocalA;
+                actor LocalB;
+            }
+            "#,
+        )
+        .expect_err("shared state cannot reuse one observed template field for different actors");
+
+        assert!(
+            err.to_string().contains("observed input template field `gen__asset_proxy_input_template`"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -5595,6 +6067,7 @@ mod tests {
     fn subject_label(subject: &HiddenParamSubjectArtifact) -> &str {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
+            HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
         }

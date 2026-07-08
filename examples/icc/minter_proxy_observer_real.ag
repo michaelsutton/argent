@@ -49,9 +49,12 @@ actor Minter owns MinterState {
     emits {
         controller: Minter;
     } {
+        MinterProxyState prev_proxy = asset.inputs.proxy.state;
+
         require(checkSig(owner_sig, owner));
         require(initialized);
         require(amount >= minted_amount);
+        require(prev_proxy.controller_id == self.covenant_id);
 
         MinterState next_minter = {
             owner: owner,

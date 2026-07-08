@@ -4,6 +4,7 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Minter(
+    byte[32] gen__init_asset_proxy_input_template,
     pubkey init_owner,
     byte[32] init_kcc20_covid,
     int init_amount,
@@ -13,9 +14,17 @@ contract Minter(
     byte constant IDENTIFIER_PUBKEY = 0x00;
 
     // :: state layouts
+    struct MinterProxyState {
+        byte[32] controller_id;
+    }
+    struct KCC20State {
+        byte[32] owner_identifier;
+        byte identifier_type;
+        int amount;
+    }
 
     // :: route templates
-    // No foreign route templates required.
+    byte[32] gen__asset_proxy_input_template = gen__init_asset_proxy_input_template;
 
     // :: state fields: Minter
     pubkey owner = init_owner;
@@ -24,15 +33,24 @@ contract Minter(
     bool initialized = init_initialized;
 
     // :: entrypoints
-    entrypoint function mint(sig owner_sig, int minted_amount) {
+    entrypoint function mint(sig owner_sig, int minted_amount, int gen__asset_proxy_input_prefix_len, int gen__asset_proxy_input_suffix_len) {
+        // :: observed covenants
+        byte[32] gen__asset_cov_id = kcc20_covid; // observe asset
+        require(OpCovInputCount(gen__asset_cov_id) == 1);
+        int gen__asset_proxy_input_idx = OpCovInputIdx(gen__asset_cov_id, 0); // observed input asset.proxy: MinterProxy
+        MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(gen__asset_proxy_input_idx, gen__asset_proxy_input_prefix_len, gen__asset_proxy_input_suffix_len, gen__asset_proxy_input_template);
+
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__controller_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output controller: Minter
 
+        MinterProxyState prev_proxy = gen__asset_proxy_state;
         require(checkSig(owner_sig, owner));
         require(initialized);
         require(amount >= minted_amount);
+        require(prev_proxy.controller_id == OpInputCovenantId(this.activeInputIndex));
         State next_minter = {
+            gen__asset_proxy_input_template: gen__asset_proxy_input_template,
             owner: owner,
             kcc20_covid: kcc20_covid,
             amount: amount - minted_amount,
