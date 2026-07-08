@@ -1,0 +1,27 @@
+{
+  "app": "KCC20MintController",
+  "root": "examples/icc/minter.ag",
+  "modules": [
+    "examples/icc/minter.ag",
+    "examples/icc/kcc20_asset.ag"
+  ],
+  "templates": [
+    { "actor": "Minter", "symbol": "gen__minter_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Minter",
+      "state": "MinterState",
+      "sil": "sil/Minter.sil",
+      "entries": [
+        {
+          "name": "mint",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "controller", "auth_index": 0, "actors": ["Minter"] }] },
+          "consumes": [],
+          "routes": [{ "output": "controller", "actor": "Minter", "state": "next_controller" }]
+        }
+      ]
+    }
+  ]
+}

@@ -95,7 +95,17 @@ contract Player(
     int losses = init_losses;
 
     // :: entrypoints
-    entrypoint function start_game(sig owner_sig, pubkey owner_pk, int first_turn, int pile, int max_take, int gen__player_prefix_len, int gen__player_suffix_len, byte[] gen__stones_game_prefix, byte[] gen__stones_game_suffix) {
+    entrypoint function start_game(
+        sig owner_sig,
+        pubkey owner_pk,
+        int first_turn,
+        int pile,
+        int max_take,
+        int gen__player_prefix_len,
+        int gen__player_suffix_len,
+        byte[] gen__stones_game_prefix,
+        byte[] gen__stones_game_suffix
+    ) {
         // :: witness lens
         int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
         int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
@@ -105,13 +115,21 @@ contract Player(
         require(OpCovInputCount(gen__cov_id) == 2);
         require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
         int gen__opponent_input_idx = OpCovInputIdx(gen__cov_id, 1); // input Player at cov[1]
-        State opponent = readInputStateWithTemplate(gen__opponent_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+        State opponent = readInputStateWithTemplate(
+            gen__opponent_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
+            gen__player_template
+        );
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 3);
-        int gen__self_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output self_out: Player
-        int gen__opponent_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output opponent_out: Player
-        int gen__game_output_idx = OpAuthOutputIdx(this.activeInputIndex, 2); // output game: StonesGame
+        // :: output self_out: Player
+        int gen__self_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output opponent_out: Player
+        int gen__opponent_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
+        // :: output game: StonesGame
+        int gen__game_output_idx = OpAuthOutputIdx(this.activeInputIndex, 2);
 
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
@@ -164,16 +182,32 @@ contract Player(
         // :: become Player
         validateOutputState(gen__opponent_out_output_idx, next_opponent);
         // :: become StonesGame
-        validateOutputStateWithTemplate(gen__game_output_idx, next_game, gen__stones_game_prefix, gen__stones_game_suffix, gen__stones_game_template);
+        validateOutputStateWithTemplate(
+            gen__game_output_idx,
+            next_game,
+            gen__stones_game_prefix,
+            gen__stones_game_suffix,
+            gen__stones_game_template
+        );
     }
 
-    entrypoint function accept_start(sig owner_sig, pubkey owner_pk, int gen__player_prefix_len, int gen__player_suffix_len) {
+    entrypoint function accept_start(
+        sig owner_sig,
+        pubkey owner_pk,
+        int gen__player_prefix_len,
+        int gen__player_suffix_len
+    ) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__starter_input_idx = OpCovInputIdx(gen__cov_id, 0); // input Player at cov[0]
-        State starter = readInputStateWithTemplate(gen__starter_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+        State starter = readInputStateWithTemplate(
+            gen__starter_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
+            gen__player_template
+        );
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
@@ -183,13 +217,21 @@ contract Player(
         require(starter.player_id != player_id);
     }
 
-    entrypoint function settle(int gen__stones_settle_prefix_len, int gen__stones_settle_suffix_len) {
+    entrypoint function settle(
+        int gen__stones_settle_prefix_len,
+        int gen__stones_settle_suffix_len
+    ) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) >= 2);
         require(OpCovInputIdx(gen__cov_id, 0) != this.activeInputIndex);
         int gen__settle_input_idx = OpCovInputIdx(gen__cov_id, 0); // input StonesSettle at cov[0]
-        SettleState settle = readInputStateWithTemplate(gen__settle_input_idx, gen__stones_settle_prefix_len, gen__stones_settle_suffix_len, gen__stones_settle_template);
+        SettleState settle = readInputStateWithTemplate(
+            gen__settle_input_idx,
+            gen__stones_settle_prefix_len,
+            gen__stones_settle_suffix_len,
+            gen__stones_settle_template
+        );
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);

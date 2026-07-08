@@ -25,15 +25,23 @@ contract Issuer(
     int next_serial = init_next_serial;
 
     // :: entrypoints
-    entrypoint function issue(sig admin_sig, pubkey admin_pk, pubkey owner_pk, byte[] gen__ticket_prefix, byte[] gen__ticket_suffix) {
+    entrypoint function issue(
+        sig admin_sig,
+        pubkey admin_pk,
+        pubkey owner_pk,
+        byte[] gen__ticket_prefix,
+        byte[] gen__ticket_suffix
+    ) {
         // :: witness lens
         int gen__ticket_prefix_len = gen__ticket_prefix.length;
         int gen__ticket_suffix_len = gen__ticket_suffix.length;
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int gen__issuer_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output issuer: Issuer
-        int gen__ticket_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output ticket: Ticket
+        // :: output issuer: Issuer
+        int gen__issuer_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output ticket: Ticket
+        int gen__ticket_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
         require(blake2b(admin_pk) == admin);
         require(checkSig(admin_sig, admin_pk));
@@ -57,7 +65,13 @@ contract Issuer(
         // :: become Issuer
         validateOutputState(gen__issuer_output_idx, next_issuer);
         // :: become Ticket
-        validateOutputStateWithTemplate(gen__ticket_output_idx, new_ticket, gen__ticket_prefix, gen__ticket_suffix, gen__ticket_template);
+        validateOutputStateWithTemplate(
+            gen__ticket_output_idx,
+            new_ticket,
+            gen__ticket_prefix,
+            gen__ticket_suffix,
+            gen__ticket_template
+        );
     }
 
 }

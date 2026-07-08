@@ -1,0 +1,69 @@
+// KCC20 mint controller app.
+//
+// The observed asset covenant family lives in `kcc20_asset.ag`; this controller
+// imports those state and actor declarations and commits to their templates via
+// the observed-covenant lowering.
+
+import "./kcc20_asset.ag";
+
+state MinterState {
+    pubkey owner;
+    covid kcc20_covid;
+    int amount;
+    bool initialized;
+}
+
+actor Minter owns MinterState {
+    entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
+    // `observes` declares a foreign covenant id for this transition.
+    observes asset by self.kcc20_covid {
+        // Named handles are exhaustive over the observed covenant inputs.
+        inputs {
+            proxy: MinterProxy;
+        }
+
+        // Declaration order defines the op_cov_output_idx order; no auth/cov index syntax.
+        outputs {
+            proxy: MinterProxy;
+            recipient: KCC20;
+        }
+    }
+    emits {
+        controller: Minter;
+    } {
+        MinterProxyState prev_proxy = asset.inputs.proxy.state;
+
+        require(checkSig(owner_sig, owner));
+        require(initialized);
+        require(amount >= minted_amount);
+        require(prev_proxy.controller_id == self.covenant_id);
+
+        MinterProxyState next_proxy = {
+            controller_id: self.covenant_id,
+        };
+
+        KCC20State next_recipient = {
+            owner_identifier: recipient_owner,
+            identifier_type: IDENTIFIER_PUBKEY,
+            amount: minted_amount,
+        };
+
+        require asset.outputs become {
+            proxy <- MinterProxy(next_proxy);
+            recipient <- KCC20(next_recipient);
+        };
+
+        MinterState next_controller = {
+            owner: owner,
+            kcc20_covid: kcc20_covid,
+            amount: amount - minted_amount,
+            initialized: initialized,
+        };
+
+        become controller <- Minter(next_controller);
+    }
+}
+
+app KCC20MintController {
+    actor Minter;
+}

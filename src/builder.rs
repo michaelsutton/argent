@@ -35,6 +35,7 @@ mod tests {
     fn subject_label(subject: &HiddenParamSubjectArtifact) -> &str {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
+            HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
         }
@@ -126,6 +127,16 @@ mod tests {
             Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
         assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
+
+        let mut explicit_hidden_state = source_state;
+        explicit_hidden_state.insert("gen__ticket_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
+        let err = builder
+            .redeem_script("Ticket", explicit_hidden_state)
+            .expect_err("hidden runtime state fields must be filled by the runtime");
+        assert!(
+            matches!(err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__ticket_template"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -824,8 +835,283 @@ mod tests {
         assert!(execute_input_with_covenants(&bad_tx, entries, 0).is_err(), "exact continuation must reject a changed League state");
     }
 
+    #[test]
+    fn observed_covenant_runtime_builds_icc_mint_and_rejects_mismatches() {
+        let controller_artifact = icc_controller_artifact();
+        let asset_artifact = icc_asset_artifact();
+        let builder = TxBuilder::new(&controller_artifact)
+            .expect("builder accepts controller artifact")
+            .with_observed_artifact(&asset_artifact)
+            .expect("builder accepts observed asset artifact");
+        let owner = keypair_from_byte(9);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let recipient_owner = [0x55; 32].to_vec();
+        let controller_covenant_id = Hash::from_bytes([0xc0; 32]);
+        let asset_covenant_id = Hash::from_bytes([0xa5; 32]);
+        let wrong_asset_covenant_id = Hash::from_bytes([0xee; 32]);
+        let minter_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 0 };
+        let proxy_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x22; 32]), index: 0 };
+        let minter_value = 3_000;
+        let proxy_value = 2_000;
+        let recipient_value = 1_000;
+        let minted_amount = 17;
+
+        let minter_initial = minter_state(owner_pk.clone(), asset_covenant_id, 100, true);
+        let minter_next = minter_state(owner_pk.clone(), asset_covenant_id, 83, true);
+        let proxy_state = minter_proxy_state(controller_covenant_id);
+        let recipient_state = kcc20_state(recipient_owner.clone(), minted_amount);
+
+        let mut explicit_observed_template_state = minter_initial.clone();
+        explicit_observed_template_state.insert("gen__asset_kcc20_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
+        let hidden_field_err = builder
+            .covenant_output("Minter", explicit_observed_template_state, minter_value, 0, controller_covenant_id)
+            .expect_err("observed template fields must be filled by the runtime");
+        assert!(
+            matches!(hidden_field_err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__asset_kcc20_template"),
+            "unexpected error: {hidden_field_err}"
+        );
+
+        let observed = observed_asset_context(
+            "MinterProxy",
+            proxy_state.clone(),
+            builder
+                .covenant_utxo("MinterProxy", proxy_state.clone(), proxy_value, 0, false, Some(asset_covenant_id))
+                .expect("proxy utxo builds"),
+            "KCC20",
+            recipient_state.clone(),
+        );
+        let outputs = icc_mint_outputs(
+            &builder,
+            minter_next.clone(),
+            &observed,
+            minter_value,
+            proxy_value,
+            recipient_value,
+            controller_covenant_id,
+            asset_covenant_id,
+        );
+        let minter_utxo = builder
+            .covenant_utxo("Minter", minter_initial.clone(), minter_value, 0, false, Some(controller_covenant_id))
+            .expect("minter utxo builds");
+        let proxy_utxo = observed.get("asset").unwrap().inputs.get("proxy").unwrap().utxo.clone();
+        let entries = vec![minter_utxo.clone(), proxy_utxo.clone()];
+        let proxy_sigscript = builder
+            .p2sh_signature_script(
+                "MinterProxy",
+                "mint",
+                proxy_state.clone(),
+                vec![ArtifactValue::Object(proxy_state.clone()), ArtifactValue::Object(recipient_state.clone())],
+            )
+            .expect("proxy mint sigscript builds");
+        let unsigned_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            outputs.clone(),
+        );
+        let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
+        let sigscript = builder
+            .p2sh_signature_script_with_observed_covenants(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                vec![
+                    ArtifactValue::Bytes(signature),
+                    ArtifactValue::Bytes(recipient_owner.clone()),
+                    ArtifactValue::Int(minted_amount),
+                ],
+                &observed,
+            )
+            .expect("observed mint sigscript builds");
+        let tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, sigscript),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            outputs,
+        );
+        execute_input_with_covenants(&tx, entries.clone(), 0).expect("observed ICC mint passes");
+
+        let minter_contract = builder.contract("Minter").expect("Minter contract exists");
+        let minter_entry = minter_contract.entry("mint").expect("mint entry exists");
+        let mut bad_proxy_suffix =
+            decode_hex(&builder.contract("MinterProxy").unwrap().compiled.template.suffix_hex).expect("proxy suffix decodes");
+        bad_proxy_suffix.push(0);
+        let corrupt_hidden_sigscript = encode_entry_sig_script(
+            &controller_artifact.sil_abi,
+            minter_contract,
+            minter_entry,
+            &[
+                ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
+                ArtifactValue::Bytes(recipient_owner.clone()),
+                ArtifactValue::Int(minted_amount),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("MinterProxy").unwrap().compiled.template.prefix_hex).expect("proxy prefix decodes"),
+                ),
+                ArtifactValue::Bytes(bad_proxy_suffix),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("KCC20").unwrap().compiled.template.prefix_hex).expect("KCC20 prefix decodes"),
+                ),
+                ArtifactValue::Bytes(
+                    decode_hex(&builder.contract("KCC20").unwrap().compiled.template.suffix_hex).expect("KCC20 suffix decodes"),
+                ),
+            ],
+        )
+        .expect("manual corrupt observed sigscript encodes");
+        let corrupt_hidden_sigscript = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("Minter", minter_initial.clone()).expect("Minter redeem script builds"),
+            corrupt_hidden_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("corrupt P2SH sigscript builds");
+        let corrupt_hidden_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, corrupt_hidden_sigscript),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            tx.outputs.clone(),
+        );
+        assert!(execute_input_with_covenants(&corrupt_hidden_tx, entries.clone(), 0).is_err());
+
+        let missing_proxy = BTreeMap::from([(
+            "asset".to_string(),
+            ObservedCovenantContext { inputs: BTreeMap::new(), outputs: observed.get("asset").unwrap().outputs.clone() },
+        )]);
+        let missing_proxy_err = builder
+            .p2sh_signature_script_with_observed_covenants(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                vec![
+                    ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
+                    ArtifactValue::Bytes(recipient_owner.clone()),
+                    ArtifactValue::Int(minted_amount),
+                ],
+                &missing_proxy,
+            )
+            .expect_err("missing observed input is rejected by the runtime");
+        assert!(matches!(missing_proxy_err, BuilderError::MissingObservedActor { side: "input", handle, .. } if handle == "proxy"));
+
+        let wrong_proxy_state = minter_proxy_state(Hash::from_bytes([0xd0; 32]));
+        let wrong_observed =
+            observed_asset_context("MinterProxy", wrong_proxy_state, proxy_utxo.clone(), "KCC20", recipient_state.clone());
+        let wrong_proxy_err = builder
+            .p2sh_signature_script_with_observed_covenants(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                vec![
+                    ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
+                    ArtifactValue::Bytes(recipient_owner.clone()),
+                    ArtifactValue::Int(minted_amount),
+                ],
+                &wrong_observed,
+            )
+            .expect_err("observed input state must match its UTXO script");
+        assert!(matches!(wrong_proxy_err, BuilderError::ObservedUtxoScriptMismatch { handle, .. } if handle == "proxy"));
+
+        let wrong_recipient_outputs = icc_mint_outputs(
+            &builder,
+            minter_next.clone(),
+            &observed_asset_context(
+                "MinterProxy",
+                proxy_state.clone(),
+                proxy_utxo.clone(),
+                "KCC20",
+                kcc20_state(recipient_owner.clone(), minted_amount + 1),
+            ),
+            minter_value,
+            proxy_value,
+            recipient_value,
+            controller_covenant_id,
+            asset_covenant_id,
+        );
+        let wrong_recipient_unsigned = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            wrong_recipient_outputs.clone(),
+        );
+        let wrong_recipient_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                vec![
+                    ArtifactValue::Bytes(sign_input(&wrong_recipient_unsigned, entries.clone(), 0, &owner)),
+                    ArtifactValue::Bytes(recipient_owner.clone()),
+                    ArtifactValue::Int(minted_amount),
+                ],
+                &observed,
+            )
+            .expect("wrong-recipient sigscript still builds");
+        let wrong_recipient_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, wrong_recipient_sigscript),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            wrong_recipient_outputs,
+        );
+        assert!(execute_input_with_covenants(&wrong_recipient_tx, entries.clone(), 0).is_err());
+
+        let wrong_asset_minter_initial = minter_state(owner_pk.clone(), wrong_asset_covenant_id, 100, true);
+        let wrong_asset_minter_next = minter_state(owner_pk, wrong_asset_covenant_id, 83, true);
+        let wrong_asset_outputs = icc_mint_outputs(
+            &builder,
+            wrong_asset_minter_next,
+            &observed,
+            minter_value,
+            proxy_value,
+            recipient_value,
+            controller_covenant_id,
+            asset_covenant_id,
+        );
+        let wrong_asset_minter_utxo = builder
+            .covenant_utxo("Minter", wrong_asset_minter_initial.clone(), minter_value, 0, false, Some(controller_covenant_id))
+            .expect("wrong-asset minter utxo builds");
+        let wrong_asset_entries = vec![wrong_asset_minter_utxo, proxy_utxo];
+        let wrong_asset_unsigned = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
+            ],
+            wrong_asset_outputs.clone(),
+        );
+        let wrong_asset_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants(
+                "Minter",
+                "mint",
+                wrong_asset_minter_initial,
+                vec![
+                    ArtifactValue::Bytes(sign_input(&wrong_asset_unsigned, wrong_asset_entries.clone(), 0, &owner)),
+                    ArtifactValue::Bytes(recipient_owner),
+                    ArtifactValue::Int(minted_amount),
+                ],
+                &observed,
+            )
+            .expect("wrong-asset sigscript still builds");
+        let wrong_asset_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(minter_outpoint, wrong_asset_sigscript),
+                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript),
+            ],
+            wrong_asset_outputs,
+        );
+        assert!(execute_input_with_covenants(&wrong_asset_tx, wrong_asset_entries, 0).is_err());
+    }
+
     fn tickets_artifact() -> Artifact {
         example_artifact("examples/tickets.ag", "tickets")
+    }
+
+    fn icc_controller_artifact() -> Artifact {
+        example_artifact("examples/icc/minter.ag", "icc-controller")
+    }
+
+    fn icc_asset_artifact() -> Artifact {
+        example_artifact("examples/icc/kcc20_asset.ag", "icc-asset")
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -929,6 +1215,81 @@ mod tests {
 
     fn board_state(selector: i64, ply: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([("selector".to_string(), ArtifactValue::Int(selector)), ("ply".to_string(), ArtifactValue::Int(ply))])
+    }
+
+    fn minter_state(owner: Vec<u8>, kcc20_covid: Hash, amount: i64, initialized: bool) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("owner".to_string(), ArtifactValue::Bytes(owner)),
+            ("kcc20_covid".to_string(), ArtifactValue::Bytes(kcc20_covid.as_bytes().to_vec())),
+            ("amount".to_string(), ArtifactValue::Int(amount)),
+            ("initialized".to_string(), ArtifactValue::Bool(initialized)),
+        ])
+    }
+
+    fn minter_proxy_state(controller_id: Hash) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec()))])
+    }
+
+    fn kcc20_state(owner_identifier: Vec<u8>, amount: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("owner_identifier".to_string(), ArtifactValue::Bytes(owner_identifier)),
+            ("identifier_type".to_string(), ArtifactValue::Byte(0)),
+            ("amount".to_string(), ArtifactValue::Int(amount)),
+        ])
+    }
+
+    fn observed_asset_context(
+        proxy_actor: &str,
+        proxy_state: BTreeMap<String, ArtifactValue>,
+        proxy_utxo: UtxoEntry,
+        recipient_actor: &str,
+        recipient_state: BTreeMap<String, ArtifactValue>,
+    ) -> BTreeMap<String, ObservedCovenantContext> {
+        BTreeMap::from([(
+            "asset".to_string(),
+            ObservedCovenantContext {
+                inputs: BTreeMap::from([(
+                    "proxy".to_string(),
+                    ObservedInput { actor: proxy_actor.to_string(), state: proxy_state.clone(), utxo: proxy_utxo },
+                )]),
+                outputs: BTreeMap::from([
+                    ("proxy".to_string(), ObservedOutput { actor: proxy_actor.to_string(), state: proxy_state }),
+                    ("recipient".to_string(), ObservedOutput { actor: recipient_actor.to_string(), state: recipient_state }),
+                ]),
+            },
+        )])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn icc_mint_outputs(
+        builder: &TxBuilder<'_>,
+        minter_next: BTreeMap<String, ArtifactValue>,
+        observed: &BTreeMap<String, ObservedCovenantContext>,
+        minter_value: u64,
+        proxy_value: u64,
+        recipient_value: u64,
+        controller_covenant_id: Hash,
+        asset_covenant_id: Hash,
+    ) -> Vec<kaspa_consensus_core::tx::TransactionOutput> {
+        let mut outputs = vec![
+            builder
+                .covenant_output("Minter", minter_next, minter_value, 0, controller_covenant_id)
+                .expect("minter controller output builds"),
+        ];
+        outputs.extend(
+            builder
+                .observed_covenant_outputs(ObservedCovenantOutputRequest {
+                    actor_name: "Minter",
+                    entry_name: "mint",
+                    observe: "asset",
+                    context: observed.get("asset").expect("asset observed context exists"),
+                    output_values: BTreeMap::from([("proxy".to_string(), proxy_value), ("recipient".to_string(), recipient_value)]),
+                    authorizing_input: 1,
+                    covenant_id: asset_covenant_id,
+                })
+                .expect("observed asset outputs build"),
+        );
+        outputs
     }
 
     fn stones_player_id(outpoint: &TransactionOutpoint) -> Vec<u8> {

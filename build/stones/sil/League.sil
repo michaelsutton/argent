@@ -92,15 +92,22 @@ contract League(
     int default_max_take = init_default_max_take;
 
     // :: entrypoints
-    entrypoint function register_player(sig owner_sig, pubkey owner_pk, byte[] gen__player_prefix, byte[] gen__player_suffix) {
+    entrypoint function register_player(
+        sig owner_sig,
+        pubkey owner_pk,
+        byte[] gen__player_prefix,
+        byte[] gen__player_suffix
+    ) {
         // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;
         int gen__player_suffix_len = gen__player_suffix.length;
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int gen__league_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output league: League
-        int gen__player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player: Player
+        // :: output league: League
+        int gen__league_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output player: Player
+        int gen__player_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
         require(checkSig(owner_sig, owner_pk));
         byte[32] owner = blake2b(owner_pk);
@@ -120,9 +127,18 @@ contract League(
         require(tx.outputs[gen__league_output_idx].value == tx.inputs[this.activeInputIndex].value);
         require(tx.outputs[gen__player_output_idx].value > 0);
         // :: become League
-        require(tx.outputs[gen__league_output_idx].scriptPubKey == tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(
+            tx.outputs[gen__league_output_idx].scriptPubKey
+                == tx.inputs[this.activeInputIndex].scriptPubKey
+        );
         // :: become Player
-        validateOutputStateWithTemplate(gen__player_output_idx, next_player, gen__player_prefix, gen__player_suffix, gen__player_template);
+        validateOutputStateWithTemplate(
+            gen__player_output_idx,
+            next_player,
+            gen__player_prefix,
+            gen__player_suffix,
+            gen__player_template
+        );
     }
 
 }

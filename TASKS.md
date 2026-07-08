@@ -424,7 +424,40 @@ Obstacle to handle:
 
 ### 12. Implement Concrete `observes` Blocks
 
-Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
+Status: done.
+
+Done so far:
+
+- `observes` blocks are parsed on entries and delegates.
+- Observe handles, input handles, and output handles are structurally validated.
+- Observed actor references must resolve to known actor/state declarations, but
+  they do not need to belong to the observing app's template set.
+- Observe metadata is recorded in the portable Argent artifact under the entry.
+- Observed input slots lower to deterministic covenant input indexes and typed
+  `readInputStateWithTemplate` reads.
+- Observed input template prefix and suffix lengths are exposed as hidden entry
+  witnesses under observed-actor subjects.
+- Observed input template hashes are committed as generated observer state fields,
+  so they are anchored by the observer template instead of supplied as free
+  entrypoint variables.
+- Observed output slots lower to deterministic covenant output indexes and
+  `validateOutputStateWithTemplate` checks.
+- Observed output template prefix/suffix bytes are exposed as hidden witnesses,
+  while observed output template hashes are committed as generated observer state
+  fields.
+- `examples/icc/kcc20_asset.ag` contains the observed asset covenant app.
+- `examples/icc/minter.ag` contains the mint controller app and
+  imports the observed asset declarations, preserving `app == cov` without
+  requiring multi-app artifact bundles yet.
+- `check.sh --full` regenerates both tracked ICC build outputs.
+- `argent-runtime` can attach observed app artifacts, validate observed input
+  UTXOs against semantic actor/state pairs, derive observed template witnesses,
+  and build observed covenant outputs in declaration order.
+- The ICC runtime test builds a mint transaction across the controller app and
+  asset app, then rejects missing observed input, wrong observed input state,
+  wrong recipient output, and wrong observed covenant id.
+
+Implement the ICC sketch pattern from `examples/icc/minter.ag`:
 
 ```text
 observes asset by self.kcc20_covid {
@@ -448,23 +481,41 @@ Obstacle to handle:
 - Observed output order must be deterministic and artifact-visible. Do not
   expose raw auth/cov indexes in user syntax unless diagnostics need them.
 
-### 13. Hide Template Witnesses For `observes` Blocks
+### 13. Hide Observed Covenant Plumbing
 
-Make the builder fill observed-covenant prefix/suffix/template witnesses from
-the artifact and live UTXOs. User code should provide semantic state
-transitions, not template plumbing.
+Status: done.
+
+Done so far:
+
+- `TxBuilder::with_observed_artifact` composes a controller artifact with
+  observed foreign app artifacts without merging app/covenant identities.
+- `p2sh_signature_script_with_observed_covenants` takes semantic observed
+  contexts and fills hidden observed prefix/suffix witnesses internally.
+- `observed_covenant_outputs` builds observed outputs from named handles and
+  declaration order, so callers do not pass raw observed output indexes.
+- Observed input UTXOs are checked against the declared actor/state before the
+  runtime builds hidden witnesses.
+- The ICC runtime test includes an explicit corrupt-hidden-witness path that
+  bypasses the high-level helper and proves txscript rejects a bad observed
+  template lens.
+
+Make the builder fill observed-covenant lens witnesses from the artifact and
+live UTXOs, while observed template hashes stay committed in generated observer
+state. User code should provide semantic state transitions, not template
+plumbing.
 
 End-to-end test:
 
 - The minter observer test should build from user args plus selected UTXOs.
-- The caller should not pass template prefix/suffix args manually.
+- The caller should not pass template prefix/suffix length args manually.
 - Corrupt a hidden witness in the builder test and assert rejection.
 
 Obstacle to handle:
 
-- Input reads need prefix and suffix lengths plus hash. Output validation needs
-  actual prefix and suffix bytes. The artifact must say which witness shape each
-  generated call expects.
+- Input reads need prefix/suffix lengths plus a committed template hash. Output
+  validation needs actual prefix and suffix bytes. The artifact must say which
+  witness shape each generated call expects, and which template hashes are
+  anchored in state.
 
 ### 14. Support Artifact Bundles And External App Dependencies
 
@@ -511,6 +562,36 @@ Obstacle to handle:
   object.
 
 ### 15. Introduce Typed Template Handles
+
+Status: in progress.
+
+Done so far:
+
+- Actor enums provide source-level typed target sets such as `MoveActor`.
+- Enum variants are validated to share the same owned source state.
+- Runtime-selected actor variables support `actor<State>` values from enum
+  selectors and enum constants.
+- `ActorEnum::Variant` comparisons lower to stable selector constants with
+  generated Sil comments that preserve the variant name.
+- Route-family tables are ordered from the enum variant order, so selector math
+  and table slices share one source of truth.
+- Generated Sil uses selector math over fixed route tables for multiplexed
+  route families instead of if/else template selection.
+- The artifact records selector metadata and route-family receipts.
+- `argent-runtime` exposes
+  `p2sh_signature_script_with_template_selector` for artifact-only test/runtime
+  construction.
+- `examples/toy_chess/app.ag` and its tracked build output exercise the closed
+  mux pattern.
+
+Still remaining:
+
+- Generalize the same typed-handle model to open-agent/persisted template-hash
+  fields.
+- Decide the surface for persisted handles such as an agent's accepted template
+  commitment and capability/header view.
+- Add rejection tests for mismatched compiled state ABI/cut classes once open
+  handles exist.
 
 Model runtime-selected actor templates as typed handles instead of raw
 `byte[32]` hashes. This covers both closed multiplex routing and open-agent

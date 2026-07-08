@@ -70,6 +70,7 @@ pub struct EntryDecl {
     pub name: String,
     pub params: Vec<ParamDecl>,
     pub consumes: Vec<ConsumeDecl>,
+    pub observes: Vec<ObserveDecl>,
     pub emits: EmitSpec,
     pub body: String,
     pub routes: Vec<RouteCall>,
@@ -90,6 +91,20 @@ pub struct ParamDecl {
 
 #[derive(Debug, Clone)]
 pub struct ConsumeDecl {
+    pub name: String,
+    pub actor: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObserveDecl {
+    pub name: String,
+    pub covenant_expr: String,
+    pub inputs: Vec<ObservedActorDecl>,
+    pub outputs: Vec<ObservedActorDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ObservedActorDecl {
     pub name: String,
     pub actor: String,
 }

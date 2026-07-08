@@ -56,9 +56,17 @@ contract Mux(
         int gen__target_selector = target;
         require(gen__target_selector >= 0);
         require(gen__target_selector < 2);
-        byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));
+        byte[32] gen__target_template = byte[32](
+            gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)
+        );
         // :: become target
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__target_prefix,
+            gen__target_suffix,
+            gen__target_template
+        );
     }
 
     entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix) {
@@ -80,9 +88,17 @@ contract Mux(
         int gen__target_selector = 1 /*KNIGHT*/;
         require(gen__target_selector >= 0);
         require(gen__target_selector < 2);
-        byte[32] gen__target_template = byte[32](gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32));
+        byte[32] gen__target_template = byte[32](
+            gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)
+        );
         // :: become target
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__target_prefix, gen__target_suffix, gen__target_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__target_prefix,
+            gen__target_suffix,
+            gen__target_template
+        );
     }
 
     entrypoint function choose_pawn(byte[] gen__pawn_prefix, byte[] gen__pawn_suffix) {
@@ -105,7 +121,13 @@ contract Mux(
             ply: ply + 1,
         };
         // :: become Pawn
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__pawn_prefix, gen__pawn_suffix, gen__pawn_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__pawn_prefix,
+            gen__pawn_suffix,
+            gen__pawn_template
+        );
     }
 
     entrypoint function choose_knight(byte[] gen__knight_prefix, byte[] gen__knight_suffix) {
@@ -128,7 +150,13 @@ contract Mux(
             ply: ply + 1,
         };
         // :: become Knight
-        validateOutputStateWithTemplate(gen__next_output_idx, next_board, gen__knight_prefix, gen__knight_suffix, gen__knight_template);
+        validateOutputStateWithTemplate(
+            gen__next_output_idx,
+            next_board,
+            gen__knight_prefix,
+            gen__knight_suffix,
+            gen__knight_template
+        );
     }
 
 }

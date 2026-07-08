@@ -102,14 +102,26 @@ contract StonesSettle(
         require(OpCovInputCount(gen__cov_id) == 3);
         require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
         int gen__player_a_in_input_idx = OpCovInputIdx(gen__cov_id, 1); // input Player at cov[1]
-        PlayerState player_a_in = readInputStateWithTemplate(gen__player_a_in_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+        PlayerState player_a_in = readInputStateWithTemplate(
+            gen__player_a_in_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
+            gen__player_template
+        );
         int gen__player_b_in_input_idx = OpCovInputIdx(gen__cov_id, 2); // input Player at cov[2]
-        PlayerState player_b_in = readInputStateWithTemplate(gen__player_b_in_input_idx, gen__player_prefix_len, gen__player_suffix_len, gen__player_template);
+        PlayerState player_b_in = readInputStateWithTemplate(
+            gen__player_b_in_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
+            gen__player_template
+        );
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
-        int gen__player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output player_a_out: Player
-        int gen__player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1); // output player_b_out: Player
+        // :: output player_a_out: Player
+        int gen__player_a_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output player_b_out: Player
+        int gen__player_b_out_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
         require(status == A_WIN || status == B_WIN);
         byte[32] player_a_ref = player_ref(player_a_in.owner, player_a_in.player_id);
@@ -158,9 +170,21 @@ contract StonesSettle(
             losses: player_b_losses,
         };
         // :: become Player
-        validateOutputStateWithTemplate(gen__player_a_out_output_idx, next_player_a, gen__player_prefix, gen__player_suffix, gen__player_template);
+        validateOutputStateWithTemplate(
+            gen__player_a_out_output_idx,
+            next_player_a,
+            gen__player_prefix,
+            gen__player_suffix,
+            gen__player_template
+        );
         // :: become Player
-        validateOutputStateWithTemplate(gen__player_b_out_output_idx, next_player_b, gen__player_prefix, gen__player_suffix, gen__player_template);
+        validateOutputStateWithTemplate(
+            gen__player_b_out_output_idx,
+            next_player_b,
+            gen__player_prefix,
+            gen__player_suffix,
+            gen__player_template
+        );
     }
 
 }
