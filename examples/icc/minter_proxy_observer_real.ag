@@ -35,7 +35,7 @@ actor MinterProxy owns MinterProxyState {
 }
 
 actor Minter owns MinterState {
-    entry mint(owner_sig: sig, minted_amount: int)
+    entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
     observes asset by self.kcc20_covid {
         inputs {
             proxy: MinterProxy;
@@ -55,6 +55,21 @@ actor Minter owns MinterState {
         require(initialized);
         require(amount >= minted_amount);
         require(prev_proxy.controller_id == self.covenant_id);
+
+        MinterProxyState next_proxy = {
+            controller_id: self.covenant_id,
+        };
+
+        KCC20State next_recipient = {
+            owner_identifier: recipient_owner,
+            identifier_type: IDENTIFIER_PUBKEY,
+            amount: minted_amount,
+        };
+
+        require asset.outputs become {
+            proxy <- MinterProxy(next_proxy);
+            recipient <- KCC20(next_recipient);
+        };
 
         MinterState next_minter = {
             owner: owner,

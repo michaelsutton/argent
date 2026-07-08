@@ -440,6 +440,11 @@ Done so far:
 - Observed input template hashes are committed as generated observer state fields,
   so they are anchored by the observer template instead of supplied as free
   entrypoint variables.
+- Observed output slots lower to deterministic covenant output indexes and
+  `validateOutputStateWithTemplate` checks.
+- Observed output template prefix/suffix bytes are exposed as hidden witnesses,
+  while observed output template hashes are committed as generated observer state
+  fields.
 - `examples/icc/minter_proxy_observer_real.ag` is a compiling subset fixture
   that tracks this feature without changing the full target sketch in
   `examples/icc/minter_proxy_observer.ag`.
@@ -447,8 +452,6 @@ Done so far:
 
 Still remaining:
 
-- Lower observed outputs to deterministic output-index checks and
-  `validateOutputStateWithTemplate` calls.
 - Connect the artifact/runtime builder so users provide semantic UTXOs and
   states rather than observed lens and committed-template plumbing.
 

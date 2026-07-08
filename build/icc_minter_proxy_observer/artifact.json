@@ -24,7 +24,7 @@
           "actor": "Minter",
           "contract": "Minter",
           "symbol": "gen__minter_template",
-          "hash_hex": "1606a1e7ddcf3a34658b28ca57afe966ef3ec287b58561481d433bf99c739b09"
+          "hash_hex": "5c737c8950d6cb7107f09d59460be233b0ea4bac5fda9238127a3010817da06b"
         }
       ],
       "runtime_states": [
@@ -33,13 +33,23 @@
           "source": "MinterState",
           "field_roles": [
             {
-              "name": "gen__asset_proxy_input_template",
+              "name": "gen__asset_minter_proxy_template",
               "role": {
                 "kind": "observed_template",
                 "observe": "asset",
-                "side": "input",
+                "side": "output",
                 "handle": "proxy",
                 "contract": "MinterProxy"
+              }
+            },
+            {
+              "name": "gen__asset_kcc20_template",
+              "role": {
+                "kind": "observed_template",
+                "observe": "asset",
+                "side": "output",
+                "handle": "recipient",
+                "contract": "KCC20"
               }
             }
           ]
@@ -50,31 +60,59 @@
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/observed/asset/input/proxy/template_prefix_len",
+          "id": "witness/observed/asset/output/minter_proxy/template_prefix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "asset",
-            "side": "input",
+            "side": "output",
             "handle": "proxy",
             "actor": "MinterProxy"
           },
-          "param": "gen__asset_proxy_input_prefix_len",
+          "param": "gen__asset_minter_proxy_prefix",
           "purpose": {
-            "kind": "template_prefix_len"
+            "kind": "template_prefix_bytes"
           }
         },
         {
-          "id": "witness/observed/asset/input/proxy/template_suffix_len",
+          "id": "witness/observed/asset/output/minter_proxy/template_suffix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "asset",
-            "side": "input",
+            "side": "output",
             "handle": "proxy",
             "actor": "MinterProxy"
           },
-          "param": "gen__asset_proxy_input_suffix_len",
+          "param": "gen__asset_minter_proxy_suffix",
           "purpose": {
-            "kind": "template_suffix_len"
+            "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/observed/asset/output/kcc20/template_prefix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "asset",
+            "side": "output",
+            "handle": "recipient",
+            "actor": "KCC20"
+          },
+          "param": "gen__asset_kcc20_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/observed/asset/output/kcc20/template_suffix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "asset",
+            "side": "output",
+            "handle": "recipient",
+            "actor": "KCC20"
+          },
+          "param": "gen__asset_kcc20_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
           }
         }
       ]
@@ -200,43 +238,79 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/observed/asset/input/proxy/template_prefix_len",
-                "witness/observed/asset/input/proxy/template_suffix_len"
+                "witness/observed/asset/output/minter_proxy/template_prefix_bytes",
+                "witness/observed/asset/output/minter_proxy/template_suffix_bytes",
+                "witness/observed/asset/output/kcc20/template_prefix_bytes",
+                "witness/observed/asset/output/kcc20/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/observed/asset/input/proxy/template_prefix_len",
-                "name": "gen__asset_proxy_input_prefix_len",
+                "recipe_id": "witness/observed/asset/output/minter_proxy/template_prefix_bytes",
+                "name": "gen__asset_minter_proxy_prefix",
                 "type": {
-                  "kind": "int"
+                  "kind": "bytes"
                 },
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "asset",
-                  "side": "input",
+                  "side": "output",
                   "handle": "proxy",
                   "actor": "MinterProxy"
                 },
                 "purpose": {
-                  "kind": "template_prefix_len"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/asset/input/proxy/template_suffix_len",
-                "name": "gen__asset_proxy_input_suffix_len",
+                "recipe_id": "witness/observed/asset/output/minter_proxy/template_suffix_bytes",
+                "name": "gen__asset_minter_proxy_suffix",
                 "type": {
-                  "kind": "int"
+                  "kind": "bytes"
                 },
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "asset",
-                  "side": "input",
+                  "side": "output",
                   "handle": "proxy",
                   "actor": "MinterProxy"
                 },
                 "purpose": {
-                  "kind": "template_suffix_len"
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/output/kcc20/template_prefix_bytes",
+                "name": "gen__asset_kcc20_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "output",
+                  "handle": "recipient",
+                  "actor": "KCC20"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/output/kcc20/template_suffix_bytes",
+                "name": "gen__asset_kcc20_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "output",
+                  "handle": "recipient",
+                  "actor": "KCC20"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -265,31 +339,59 @@
             ],
             "witnesses": [
               {
-                "recipe_id": "witness/observed/asset/input/proxy/template_prefix_len",
-                "param": "gen__asset_proxy_input_prefix_len",
+                "recipe_id": "witness/observed/asset/output/minter_proxy/template_prefix_bytes",
+                "param": "gen__asset_minter_proxy_prefix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "asset",
-                  "side": "input",
+                  "side": "output",
                   "handle": "proxy",
                   "actor": "MinterProxy"
                 },
                 "purpose": {
-                  "kind": "template_prefix_len"
+                  "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/asset/input/proxy/template_suffix_len",
-                "param": "gen__asset_proxy_input_suffix_len",
+                "recipe_id": "witness/observed/asset/output/minter_proxy/template_suffix_bytes",
+                "param": "gen__asset_minter_proxy_suffix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "asset",
-                  "side": "input",
+                  "side": "output",
                   "handle": "proxy",
                   "actor": "MinterProxy"
                 },
                 "purpose": {
-                  "kind": "template_suffix_len"
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/output/kcc20/template_prefix_bytes",
+                "param": "gen__asset_kcc20_prefix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "output",
+                  "handle": "recipient",
+                  "actor": "KCC20"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/asset/output/kcc20/template_suffix_bytes",
+                "param": "gen__asset_kcc20_suffix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "asset",
+                  "side": "output",
+                  "handle": "recipient",
+                  "actor": "KCC20"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
                 }
               }
             ],
@@ -409,7 +511,14 @@
           "source": "MinterState",
           "fields": [
             {
-              "name": "gen__asset_proxy_input_template",
+              "name": "gen__asset_minter_proxy_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "gen__asset_kcc20_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -454,36 +563,55 @@
                 }
               },
               {
+                "name": "recipient_owner",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                }
+              },
+              {
                 "name": "minted_amount",
                 "type": {
                   "kind": "int"
                 }
               },
               {
-                "name": "gen__asset_proxy_input_prefix_len",
+                "name": "gen__asset_minter_proxy_prefix",
                 "type": {
-                  "kind": "int"
+                  "kind": "bytes"
                 }
               },
               {
-                "name": "gen__asset_proxy_input_suffix_len",
+                "name": "gen__asset_minter_proxy_suffix",
                 "type": {
-                  "kind": "int"
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__asset_kcc20_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__asset_kcc20_suffix",
+                "type": {
+                  "kind": "bytes"
                 }
               }
             ]
           }
         ],
         "compiled": {
-          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000100527976d0519c697600d1bf7800d1527900d1c95a790121935a799394537900d1c95b790121935b7993945b790121935b799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9597901219359799394527900d1c95a790121935a7993945a7993bc7800d1527900d1c95a790121935a7993945a7993012193537900d1c95b790121935b7993945b79930121935a7993bc7e56797caa87697600d17800d1c95979012193597993945979519393527900d1c95a790121935a7993945a79519393012093bcb9cb519c695a795679ac6952796953795a79a26976b9cf8769567901207c7e567901207c7e567901207c7e56795d799458cd01087c7e567951cd01017c7e7e7e7e7eb976c97602ac0194016e937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a7575757575757575757551",
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000100527976d0519c6976d2529c697600d1bf7800d1527900d1c95d79827c7551960121935d79827c7551969394537900d1c95e79827c7551960121935e79827c75519693945e79827c7551960121935e79827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95c79827c7551960121935c79827c7551969394527900d1c95d79827c7551960121935d79827c75519693945d79827c75519693bc7800d1527900d1c95d79827c7551960121935d79827c75519693945d79827c75519693012193537900d1c95e79827c7551960121935e79827c75519693945e79827c755196930121935d79827c75519693bc7e57797caa87697600d17800d1c95c79827c7551960121935c79827c75519693945c79827c755196519393527900d1c95d79827c7551960121935d79827c75519693945d79827c755196519393012093bcb9cb519c695e795679ac6952796953795d79a26976b9cf87695b795b797e58797caa8769b9cf01207c7e5c797c7e5b797eaa02000001aa7e01207e7c7e01877e527900d3c38769597959797e57797caa87695d7901207c7e010001017c7e5e7958cd01087c7e7e7e5a797c7e59797eaa02000001aa7e01207e7c7e01877e527951d3c38769577901207c7e577901207c7e577901207c7e577901207c7e57790111799458cd01087c7e577951cd01017c7e7e7e7e7e7eb976c97602c30294028f00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a757575757575757575757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "527976d0519c697600d1bf7800d1527900d1c95a790121935a799394537900d1c95b790121935b7993945b790121935b799393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9597901219359799394527900d1c95a790121935a7993945a7993bc7800d1527900d1c95a790121935a7993945a7993012193537900d1c95b790121935b7993945b79930121935a7993bc7e56797caa87697600d17800d1c95979012193597993945979519393527900d1c95a790121935a7993945a79519393012093bcb9cb519c695a795679ac6952796953795a79a26976b9cf8769567901207c7e567901207c7e567901207c7e56795d799458cd01087c7e567951cd01017c7e7e7e7e7eb976c97602ac0194016e937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a7575757575757575757551",
-            "hash_hex": "1606a1e7ddcf3a34658b28ca57afe966ef3ec287b58561481d433bf99c739b09"
+            "suffix_hex": "527976d0519c6976d2529c697600d1bf7800d1527900d1c95d79827c7551960121935d79827c7551969394537900d1c95e79827c7551960121935e79827c75519693945e79827c7551960121935e79827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95c79827c7551960121935c79827c7551969394527900d1c95d79827c7551960121935d79827c75519693945d79827c75519693bc7800d1527900d1c95d79827c7551960121935d79827c75519693945d79827c75519693012193537900d1c95e79827c7551960121935e79827c75519693945e79827c755196930121935d79827c75519693bc7e57797caa87697600d17800d1c95c79827c7551960121935c79827c75519693945c79827c755196519393527900d1c95d79827c7551960121935d79827c75519693945d79827c755196519393012093bcb9cb519c695e795679ac6952796953795d79a26976b9cf87695b795b797e58797caa8769b9cf01207c7e5c797c7e5b797eaa02000001aa7e01207e7c7e01877e527900d3c38769597959797e57797caa87695d7901207c7e010001017c7e5e7958cd01087c7e7e7e5a797c7e59797eaa02000001aa7e01207e7c7e01877e527951d3c38769577901207c7e577901207c7e577901207c7e577901207c7e57790111799458cd01087c7e577951cd01017c7e7e7e7e7e7eb976c97602c30294028f00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a757575757575757575757575757551",
+            "hash_hex": "5c737c8950d6cb7107f09d59460be233b0ea4bac5fda9238127a3010817da06b"
           },
           "state_span": {
             "offset": 0,
-            "len": 110
+            "len": 143
           }
         }
       }
