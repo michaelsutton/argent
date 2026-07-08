@@ -34,7 +34,9 @@ use kaspa_txscript::{
     pay_to_script_hash_signature_script_with_flags, script_builder::ScriptBuilderError,
 };
 use kaspa_txscript_errors::TxScriptError;
-use silverscript_abi::{CodecError, TypeArtifact, decode_hex, encode_entry_sig_script, encode_runtime_state_script};
+use silverscript_abi::{
+    CodecError, TypeArtifact, decode_hex, encode_entry_sig_script, encode_runtime_state_script, encode_struct_payload,
+};
 use thiserror::Error;
 
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
@@ -75,6 +77,8 @@ pub enum BuilderError {
     RuntimeStatePlanMismatch { contract: String, message: String },
     #[error("runtime state field `{field}` for contract `{contract}` is generated and must be filled by the runtime")]
     HiddenRuntimeFieldProvided { contract: String, field: String },
+    #[error("state expansion preimage `{contract}.{field}` as `{memory_state}` cannot be built from the source state")]
+    MissingStateExpansionPreimage { contract: String, field: String, memory_state: String },
     #[error("hidden param `{param}` is missing route proof metadata")]
     MissingHiddenRouteProof { param: String },
     #[error("unknown route proof `{0}`")]
@@ -525,6 +529,9 @@ impl<'a> TxBuilder<'a> {
                         },
                     )?)
                 }
+                HiddenParamPurposeArtifact::StateExpansionPreimage => {
+                    self.state_expansion_preimage_arg(entry_ref.artifact, contract, hidden, &input_source_state)?
+                }
             });
         }
 
@@ -815,7 +822,7 @@ impl<'a> TxBuilder<'a> {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
                 self.contract_ref_in_artifact(primary_artifact, &actor)
             }
-            HiddenParamSubjectArtifact::RouteFamily { .. } => {
+            HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::StateExpansion { .. } => {
                 Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
             }
         }
@@ -1056,7 +1063,15 @@ impl<'a> TxBuilder<'a> {
         for field in &contract.runtime_state.fields {
             match role_by_field.get(field.name.as_str()) {
                 None => {
-                    let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
+                    let value = if let Some(memory_state) =
+                        state_expansion_memory_for_field(artifact, &contract.runtime_state.source, &field.name)
+                    {
+                        let payload =
+                            self.state_expansion_preimage_payload(artifact, contract, &field.name, memory_state, &mut source_state)?;
+                        ArtifactValue::Bytes(blake2b32(&payload))
+                    } else {
+                        source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?
+                    };
                     values.insert(field.name.clone(), value);
                 }
                 Some(role) => {
@@ -1109,6 +1124,47 @@ impl<'a> TxBuilder<'a> {
             return Err(CodecError::UnknownField(extra).into());
         }
         Ok(values)
+    }
+
+    fn state_expansion_preimage_arg(
+        &self,
+        artifact: &'a Artifact,
+        contract: &SilContractArtifact,
+        hidden: &HiddenParamArtifact,
+        source_state: &BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<ArtifactValue> {
+        let HiddenParamSubjectArtifact::StateExpansion { state, field, memory_state } = &hidden.subject else {
+            return Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "state expansion" });
+        };
+        if state != &contract.runtime_state.source {
+            return Err(BuilderError::UnexpectedHiddenSubject {
+                param: hidden.name.clone(),
+                expected: "current contract state expansion",
+            });
+        }
+        let mut source_state = source_state.clone();
+        Ok(ArtifactValue::Bytes(self.state_expansion_preimage_payload(artifact, contract, field, memory_state, &mut source_state)?))
+    }
+
+    fn state_expansion_preimage_payload(
+        &self,
+        artifact: &'a Artifact,
+        contract: &SilContractArtifact,
+        digest_field: &str,
+        memory_state: &str,
+        source_state: &mut BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<Vec<u8>> {
+        let memory = state_artifact(artifact, memory_state)?;
+        let mut fields = BTreeMap::new();
+        for field in &memory.fields {
+            let value = source_state.remove(&field.name).ok_or_else(|| BuilderError::MissingStateExpansionPreimage {
+                contract: contract.name.clone(),
+                field: digest_field.to_string(),
+                memory_state: memory_state.to_string(),
+            })?;
+            fields.insert(field.name.clone(), value);
+        }
+        Ok(encode_struct_payload(&artifact.sil_abi, contract, memory_state, &fields)?)
     }
 
     fn route_template_proof_in_artifact(
@@ -1216,7 +1272,9 @@ fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
         HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.as_str()),
-        HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
+        HiddenParamSubjectArtifact::RouteFamily { .. }
+        | HiddenParamSubjectArtifact::TemplateSelector { .. }
+        | HiddenParamSubjectArtifact::StateExpansion { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
         }
     }
@@ -1227,7 +1285,8 @@ fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
         HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
         HiddenParamSubjectArtifact::Actor { .. }
         | HiddenParamSubjectArtifact::ObservedActor { .. }
-        | HiddenParamSubjectArtifact::TemplateSelector { .. } => {
+        | HiddenParamSubjectArtifact::TemplateSelector { .. }
+        | HiddenParamSubjectArtifact::StateExpansion { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
         }
     }
@@ -1268,7 +1327,7 @@ fn hidden_template_actor(
             }
             Ok(selected_actor.clone())
         }
-        HiddenParamSubjectArtifact::RouteFamily { .. } => {
+        HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::StateExpansion { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
         }
     }
@@ -1300,6 +1359,16 @@ fn state_artifact<'a>(artifact: &'a Artifact, state: &str) -> BuilderResult<&'a 
 fn state_satisfies(artifact: &Artifact, found_state: &str, expected_state: &str) -> bool {
     found_state == expected_state
         || artifact.argent.state_expansions.iter().any(|expansion| expansion.state == found_state && expansion.base == expected_state)
+}
+
+fn state_expansion_memory_for_field<'a>(artifact: &'a Artifact, state: &str, field: &str) -> Option<&'a str> {
+    artifact
+        .argent
+        .state_expansions
+        .iter()
+        .find(|expansion| expansion.state == state)
+        .and_then(|expansion| expansion.digests.iter().find(|digest| digest.field == field))
+        .map(|digest| digest.state.as_str())
 }
 
 fn artifact_app_alias(app: &str) -> String {

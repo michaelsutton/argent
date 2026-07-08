@@ -320,6 +320,16 @@ pub fn decode_runtime_state_script(
     Ok(values)
 }
 
+pub fn encode_struct_payload(
+    abi: &SilAbiArtifact,
+    contract: &SilContractArtifact,
+    state_name: &str,
+    values: &BTreeMap<String, ArtifactValue>,
+) -> CodecResult<Vec<u8>> {
+    let ctx = TypeContext::new(abi, contract);
+    encode_struct_fields_payload(ctx.state(state_name)?, values)
+}
+
 pub fn decode_hex(hex: &str) -> CodecResult<Vec<u8>> {
     let mut bytes = vec![0; hex.len() / 2];
     faster_hex::hex_decode(hex.as_bytes(), &mut bytes)?;
@@ -478,6 +488,16 @@ fn encode_state_payload(name: &str, ty: &TypeArtifact, value: &ArtifactValue) ->
         TypeArtifact::DynamicArray { item } => encode_array_payload(name, item, None, value),
         _ => encode_fixed_payload(name, ty, value),
     }
+}
+
+fn encode_struct_fields_payload(state: &StateArtifact, fields: &BTreeMap<String, ArtifactValue>) -> CodecResult<Vec<u8>> {
+    assert_no_extra_fields(fields, &state.fields)?;
+    let mut out = Vec::new();
+    for field in &state.fields {
+        let value = fields.get(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
+        out.extend(encode_state_payload(&field.name, &field.ty, value)?);
+    }
+    Ok(out)
 }
 
 fn decode_state_payload(name: &str, ty: &TypeArtifact, payload: &[u8]) -> CodecResult<ArtifactValue> {
@@ -780,6 +800,27 @@ mod tests {
         assert_eq!(decode_hex("01110401020304515100").expect("hex decodes"), vec![1, 17, 4, 1, 2, 3, 4, 81, 81, 0]);
         assert!(matches!(decode_hex("abc"), Err(CodecError::InvalidHex(_))));
         assert!(matches!(decode_hex("zz"), Err(CodecError::InvalidHex(_))));
+    }
+
+    #[test]
+    fn encodes_struct_payload_without_push_framing() {
+        let mut abi = tiny_sil_abi();
+        abi.states.push(StateArtifact {
+            name: "Memory".to_string(),
+            fields: vec![
+                FieldArtifact { name: "hunger".to_string(), ty: TypeArtifact::Int },
+                FieldArtifact { name: "tag".to_string(), ty: TypeArtifact::FixedBytes { len: 2 } },
+            ],
+        });
+        let values = BTreeMap::from([
+            ("hunger".to_string(), ArtifactValue::Int(17)),
+            ("tag".to_string(), ArtifactValue::Bytes(vec![0xaa, 0xbb])),
+        ]);
+
+        let payload = encode_struct_payload(&abi, abi.contract("Foo").expect("contract exists"), "Memory", &values)
+            .expect("struct payload encodes");
+
+        assert_eq!(encode_hex(&payload), "1100000000000000aabb");
     }
 
     #[test]

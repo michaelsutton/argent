@@ -38,6 +38,7 @@ mod tests {
             HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
+            HiddenParamSubjectArtifact::StateExpansion { memory_state, .. } => memory_state,
         }
     }
 
@@ -1285,8 +1286,8 @@ mod tests {
             .expect("expanded agent artifact attaches under the same app alias");
         let expanded_builder = TxBuilder::from_bundle(&expanded_bundle).expect("builder accepts expanded agent bundle");
         let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
-        let expanded_agent_initial = open_agent_state(controller_covenant_id, vec![0x88; 32], 5);
-        let expanded_agent_next = open_agent_state(controller_covenant_id, vec![0x88; 32], 4);
+        let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        let expanded_agent_next = expanded_open_agent_state(controller_covenant_id, 3, 4);
         let expanded_agent_utxo = expanded_builder
             .covenant_utxo_in_app(
                 "open_agent",
@@ -1302,6 +1303,15 @@ mod tests {
         expanded_builder
             .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, vec![], &expanded_observed)
             .expect("open observed actor accepts a state that expands the expected base state");
+        expanded_builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Forager",
+                "step",
+                expanded_open_agent_state(controller_covenant_id, 2, 5),
+                vec![],
+            )
+            .expect("expanded agent sigscript is built from flattened source fields");
 
         let outputs = open_icc_advance_outputs(
             &builder,
@@ -1414,12 +1424,16 @@ mod tests {
             }
 
             actor Forager owns ForagerState {
-                entry step(next_agent: ForagerState) emits {
+                entry step() emits {
                     agent: Forager;
                 } {
                     require(controller_id.authorized());
-                    require(next_agent.controller_id == controller_id);
-                    require(next_agent.caps_digest == caps_digest);
+
+                    ForagerState next_agent = {
+                        controller_id: controller_id,
+                        hunger: hunger + 1,
+                        energy: energy - 1,
+                    };
 
                     become agent <- Forager(next_agent);
                 }
@@ -1568,6 +1582,14 @@ mod tests {
         BTreeMap::from([
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
             ("caps_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("energy".to_string(), ArtifactValue::Int(energy)),
+        ])
+    }
+
+    fn expanded_open_agent_state(controller_id: Hash, hunger: i64, energy: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
+            ("hunger".to_string(), ArtifactValue::Int(hunger)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
         ])
     }

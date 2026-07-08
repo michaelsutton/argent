@@ -356,6 +356,7 @@ pub enum HiddenParamSubjectArtifact {
     ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
+    StateExpansion { state: String, field: String, memory_state: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -376,6 +377,7 @@ pub enum HiddenParamPurposeArtifact {
     RouteTemplateProof,
     RouteFamilyTable,
     RouteFamilyProof,
+    StateExpansionPreimage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -978,6 +980,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::TemplateSelector { .. } => {}
+                HiddenParamSubjectArtifact::StateExpansion { .. } => {}
             }
             if let Some(route_proof_id) = &recipe.route_proof_id
                 && !route_proof_ids.contains(route_proof_id.as_str())
