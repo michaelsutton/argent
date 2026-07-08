@@ -1274,6 +1274,35 @@ mod tests {
             ),
             "unexpected error: {bad_layout_err}"
         );
+
+        let expanded_agent_artifact = open_icc_expanded_agent_artifact();
+        let expanded_agent_type =
+            decode_hex(&expanded_agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
+                .expect("Forager template hash decodes");
+        let expanded_bundle = ArtifactBundle::new(&core_artifact)
+            .expect("core artifact is valid")
+            .with_app("open_agent", &expanded_agent_artifact)
+            .expect("expanded agent artifact attaches under the same app alias");
+        let expanded_builder = TxBuilder::from_bundle(&expanded_bundle).expect("builder accepts expanded agent bundle");
+        let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
+        let expanded_agent_initial = open_agent_state(controller_covenant_id, vec![0x88; 32], 5);
+        let expanded_agent_next = open_agent_state(controller_covenant_id, vec![0x88; 32], 4);
+        let expanded_agent_utxo = expanded_builder
+            .covenant_utxo_in_app(
+                "open_agent",
+                "Forager",
+                expanded_agent_initial.clone(),
+                agent_value,
+                0,
+                false,
+                Some(agent_covenant_id),
+            )
+            .expect("expanded agent utxo builds");
+        let expanded_observed = open_agent_context("Forager", expanded_agent_initial, expanded_agent_utxo, expanded_agent_next);
+        expanded_builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, vec![], &expanded_observed)
+            .expect("open observed actor accepts a state that expands the expected base state");
+
         let outputs = open_icc_advance_outputs(
             &builder,
             cell_next,
@@ -1364,6 +1393,43 @@ mod tests {
 
     fn open_icc_agent_artifact() -> Artifact {
         example_artifact("examples/open_icc/agent.ag", "open-icc-agent")
+    }
+
+    fn open_icc_expanded_agent_artifact() -> Artifact {
+        inline_artifact(
+            "open-icc-expanded-agent",
+            r#"
+            state AgentState {
+                covid controller_id;
+                byte[32] caps_digest;
+                int energy;
+            }
+
+            state ForagerMemory {
+                int hunger;
+            }
+
+            state ForagerState expands AgentState {
+                expand caps_digest as ForagerMemory;
+            }
+
+            actor Forager owns ForagerState {
+                entry step(next_agent: ForagerState) emits {
+                    agent: Forager;
+                } {
+                    require(controller_id.authorized());
+                    require(next_agent.controller_id == controller_id);
+                    require(next_agent.caps_digest == caps_digest);
+
+                    become agent <- Forager(next_agent);
+                }
+            }
+
+            app OpenAgent {
+                actor Forager;
+            }
+            "#,
+        )
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {

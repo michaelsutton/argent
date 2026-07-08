@@ -982,7 +982,7 @@ impl<'a> TxBuilder<'a> {
     ) -> BuilderResult<()> {
         if let Some(expected_state) = expected.open_state.as_deref() {
             let found = self.argent_actor_ref_in_artifact(self.bundle.app(app)?, found_actor)?;
-            if found.actor.state != expected_state {
+            if !state_satisfies(found.artifact, &found.actor.state, expected_state) {
                 return Err(BuilderError::ObservedActorMismatch {
                     observe: observe_name.to_string(),
                     side: observed_side_label(side),
@@ -993,7 +993,7 @@ impl<'a> TxBuilder<'a> {
             }
             let expected_layout = state_artifact(self.bundle.primary, expected_state)?;
             let found_layout = state_artifact(found.artifact, &found.actor.state)?;
-            if expected_layout != found_layout {
+            if expected_layout.fields != found_layout.fields {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
                     side: observed_side_label(side),
@@ -1295,6 +1295,11 @@ fn state_artifact<'a>(artifact: &'a Artifact, state: &str) -> BuilderResult<&'a 
         .iter()
         .find(|candidate| candidate.name == state)
         .ok_or_else(|| BuilderError::UnknownState { app: artifact.app.clone(), state: state.to_string() })
+}
+
+fn state_satisfies(artifact: &Artifact, found_state: &str, expected_state: &str) -> bool {
+    found_state == expected_state
+        || artifact.argent.state_expansions.iter().any(|expansion| expansion.state == found_state && expansion.base == expected_state)
 }
 
 fn artifact_app_alias(app: &str) -> String {
