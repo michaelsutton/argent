@@ -1,0 +1,26 @@
+{
+  "app": "KCC20MintController",
+  "root": "examples/icc/minter_proxy_observer_real.ag",
+  "modules": [
+    "examples/icc/minter_proxy_observer_real.ag"
+  ],
+  "templates": [
+    { "actor": "Minter", "symbol": "gen__minter_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Minter",
+      "state": "MinterState",
+      "sil": "sil/Minter.sil",
+      "entries": [
+        {
+          "name": "mint",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "controller", "auth_index": 0, "actors": ["Minter"] }] },
+          "consumes": [],
+          "routes": [{ "output": "controller", "actor": "Minter", "state": "next_minter" }]
+        }
+      ]
+    }
+  ]
+}

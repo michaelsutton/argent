@@ -156,7 +156,7 @@ impl Parser {
         self.expect_ident("entry")?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let consumes = if self.check_ident("consumes") { self.parse_consumes()? } else { Vec::new() };
+        let (observes, consumes) = self.parse_entry_clauses()?;
         self.expect_ident("emits")?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
@@ -166,6 +166,7 @@ impl Parser {
             name,
             params,
             consumes,
+            observes,
             emits,
             body,
             routes: route_analysis.routes,
@@ -177,7 +178,7 @@ impl Parser {
         self.expect_ident("delegate")?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let consumes = if self.check_ident("consumes") { self.parse_consumes()? } else { Vec::new() };
+        let (observes, consumes) = self.parse_entry_clauses()?;
         let body = self.consume_block_text()?;
         let route_analysis = analyze_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
         Ok(EntryDecl {
@@ -185,6 +186,7 @@ impl Parser {
             name,
             params,
             consumes,
+            observes,
             emits: EmitSpec::None,
             body,
             routes: route_analysis.routes,
@@ -239,6 +241,77 @@ impl Parser {
         }
         self.expect_symbol('}')?;
         Ok(consumes)
+    }
+
+    fn parse_entry_clauses(&mut self) -> Result<(Vec<ObserveDecl>, Vec<ConsumeDecl>)> {
+        let mut observes = Vec::new();
+        let mut consumes = Vec::new();
+        let mut parsed_consumes = false;
+        loop {
+            if self.check_ident("observes") {
+                observes.push(self.parse_observes()?);
+            } else if self.check_ident("consumes") {
+                if parsed_consumes {
+                    return Err(self.error("entry declares `consumes` more than once"));
+                }
+                consumes = self.parse_consumes()?;
+                parsed_consumes = true;
+            } else {
+                break;
+            }
+        }
+        Ok((observes, consumes))
+    }
+
+    fn parse_observes(&mut self) -> Result<ObserveDecl> {
+        self.expect_ident("observes")?;
+        let name = self.expect_any_ident()?;
+        self.expect_ident("by")?;
+        let covenant_expr_start = self.current().span.start;
+        while !self.check_symbol('{') && !self.is_eof() {
+            self.advance();
+        }
+        let covenant_expr = self.source[covenant_expr_start..self.current().span.start].trim().to_string();
+        if covenant_expr.is_empty() {
+            return Err(self.error("observes clause has an empty covenant expression"));
+        }
+
+        self.expect_symbol('{')?;
+        let mut inputs = None;
+        let mut outputs = None;
+        while !self.check_symbol('}') {
+            if self.check_ident("inputs") {
+                if inputs.is_some() {
+                    return Err(self.error("observes clause declares `inputs` more than once"));
+                }
+                inputs = Some(self.parse_observed_actor_list("inputs")?);
+            } else if self.check_ident("outputs") {
+                if outputs.is_some() {
+                    return Err(self.error("observes clause declares `outputs` more than once"));
+                }
+                outputs = Some(self.parse_observed_actor_list("outputs")?);
+            } else {
+                return Err(self.error(format!("expected `inputs` or `outputs`, found {}", self.describe_current())));
+            }
+        }
+        self.expect_symbol('}')?;
+
+        Ok(ObserveDecl { name, covenant_expr, inputs: inputs.unwrap_or_default(), outputs: outputs.unwrap_or_default() })
+    }
+
+    fn parse_observed_actor_list(&mut self, section: &str) -> Result<Vec<ObservedActorDecl>> {
+        self.expect_ident(section)?;
+        self.expect_symbol('{')?;
+        let mut actors = Vec::new();
+        while !self.check_symbol('}') {
+            let name = self.expect_any_ident()?;
+            self.expect_symbol(':')?;
+            let actor = self.expect_any_ident()?;
+            self.expect_symbol(';')?;
+            actors.push(ObservedActorDecl { name, actor });
+        }
+        self.expect_symbol('}')?;
+        Ok(actors)
     }
 
     fn parse_type(&mut self) -> Result<TypeRef> {

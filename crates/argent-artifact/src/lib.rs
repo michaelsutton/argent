@@ -233,6 +233,8 @@ pub struct EntryArtifact {
     pub hidden_params: Vec<HiddenParamArtifact>,
     #[serde(default)]
     pub template_selectors: Vec<TemplateSelectorArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub observes: Vec<ObserveArtifact>,
     pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
@@ -248,6 +250,20 @@ pub struct TemplateSelectorArtifact {
     pub variants: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixed_actor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObserveArtifact {
+    pub name: String,
+    pub covenant_expr: String,
+    pub inputs: Vec<ObservedActorArtifact>,
+    pub outputs: Vec<ObservedActorArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ObservedActorArtifact {
+    pub name: String,
+    pub actor: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

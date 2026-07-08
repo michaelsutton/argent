@@ -239,6 +239,21 @@ impl<'a> Model<'a> {
                 for consume in &entry.consumes {
                     reject_reserved_identifier(&format!("entry `{}::{}` consume handle", actor.name, entry.name), &consume.name)?;
                 }
+                for observe in &entry.observes {
+                    reject_reserved_identifier(&format!("entry `{}::{}` observe handle", actor.name, entry.name), &observe.name)?;
+                    for observed in &observe.inputs {
+                        reject_reserved_identifier(
+                            &format!("entry `{}::{}` observe `{}` input handle", actor.name, entry.name, observe.name),
+                            &observed.name,
+                        )?;
+                    }
+                    for observed in &observe.outputs {
+                        reject_reserved_identifier(
+                            &format!("entry `{}::{}` observe `{}` output handle", actor.name, entry.name, observe.name),
+                            &observed.name,
+                        )?;
+                    }
+                }
                 if let EmitSpec::Outputs(outputs) = &entry.emits {
                     for output in outputs {
                         reject_reserved_identifier(&format!("entry `{}::{}` output handle", actor.name, entry.name), &output.name)?;
@@ -268,6 +283,8 @@ impl<'a> Model<'a> {
     }
 
     fn validate_entry(&self, actor: &ActorDecl, entry: &EntryDecl, template_actor_set: &BTreeSet<String>) -> Result<()> {
+        self.validate_observes(actor, entry)?;
+
         for consume in &entry.consumes {
             self.require_template_actor(
                 &consume.actor,
@@ -349,6 +366,53 @@ impl<'a> Model<'a> {
             self.validate_route_allowed(actor, entry, route)?;
         }
         self.validate_route_coverage(actor, entry)?;
+        Ok(())
+    }
+
+    fn validate_observes(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<()> {
+        let mut observe_names = BTreeSet::new();
+        for observe in &entry.observes {
+            if !observe_names.insert(observe.name.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` declares observe `{}` more than once",
+                    actor.name, entry.name, observe.name
+                )));
+            }
+            if observe.covenant_expr.trim().is_empty() {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` has an empty covenant expression",
+                    actor.name, entry.name, observe.name
+                )));
+            }
+            self.validate_observed_actor_handles(actor, entry, observe, "input", &observe.inputs)?;
+            self.validate_observed_actor_handles(actor, entry, observe, "output", &observe.outputs)?;
+        }
+        Ok(())
+    }
+
+    fn validate_observed_actor_handles(
+        &self,
+        actor: &ActorDecl,
+        entry: &EntryDecl,
+        observe: &ObserveDecl,
+        section: &str,
+        observed_actors: &[ObservedActorDecl],
+    ) -> Result<()> {
+        let mut names = BTreeSet::new();
+        for observed in observed_actors {
+            if !names.insert(observed.name.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` declares {section} `{}` more than once",
+                    actor.name, entry.name, observe.name, observed.name
+                )));
+            }
+            self.actor_state(&observed.actor).map_err(|_| {
+                ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` {section} `{}` references unknown actor `{}`",
+                    actor.name, entry.name, observe.name, observed.name, observed.actor
+                ))
+            })?;
+        }
         Ok(())
     }
 
@@ -3023,6 +3087,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
                 fixed_actor: selector.fixed_actor,
             })
             .collect(),
+        observes: entry.observes.iter().map(observe_artifact).collect(),
         witnesses,
         consumes: entry
             .consumes
@@ -3037,6 +3102,19 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             .map(|routes| TerminalPathArtifact { routes: expand_route_set(routes, &selectors).iter().map(route_artifact).collect() })
             .collect(),
     })
+}
+
+fn observe_artifact(observe: &ObserveDecl) -> ObserveArtifact {
+    ObserveArtifact {
+        name: observe.name.clone(),
+        covenant_expr: compact_expr(&observe.covenant_expr),
+        inputs: observe.inputs.iter().map(observed_actor_artifact).collect(),
+        outputs: observe.outputs.iter().map(observed_actor_artifact).collect(),
+    }
+}
+
+fn observed_actor_artifact(observed: &ObservedActorDecl) -> ObservedActorArtifact {
+    ObservedActorArtifact { name: observed.name.clone(), actor: observed.actor.clone() }
 }
 
 fn entry_route_plan_artifact(
@@ -4205,6 +4283,160 @@ mod tests {
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
+        assert_example_build_artifact("examples/icc/minter_proxy_observer_real.ag", "icc-minter-proxy-observer", &[]);
+    }
+
+    #[test]
+    fn observes_blocks_are_recorded_in_artifact() {
+        let artifact = inline_artifact(
+            "icc-observes",
+            r#"
+            state KCC20State {
+                int amount;
+            }
+
+            state MinterProxyState {
+                byte[32] controller_id;
+            }
+
+            state MinterState {
+                byte[32] kcc20_covid;
+                int amount;
+            }
+
+            actor KCC20 owns KCC20State {
+                entry hold() emits none {
+                    require(amount >= 0);
+                }
+            }
+
+            actor MinterProxy owns MinterProxyState {
+                entry hold() emits none {
+                    require(controller_id == controller_id);
+                }
+            }
+
+            actor Minter owns MinterState {
+                entry mint(minted_amount: int)
+                observes asset by self.kcc20_covid {
+                    inputs {
+                        proxy: MinterProxy;
+                    }
+
+                    outputs {
+                        proxy: MinterProxy;
+                        recipient: KCC20;
+                    }
+                }
+                emits {
+                    controller: Minter;
+                } {
+                    MinterState next_minter = {
+                        kcc20_covid: kcc20_covid,
+                        amount: amount - minted_amount,
+                    };
+
+                    become controller <- Minter(next_minter);
+                }
+            }
+
+            app Test {
+                actor Minter;
+            }
+            "#,
+        );
+
+        let minter = artifact.argent.actors.iter().find(|actor| actor.name == "Minter").expect("Minter actor exists");
+        let mint = minter.entries.iter().find(|entry| entry.name == "mint").expect("mint entry exists");
+
+        assert_eq!(mint.observes.len(), 1);
+        let observe = &mint.observes[0];
+        assert_eq!(observe.name, "asset");
+        assert_eq!(observe.covenant_expr, "self.kcc20_covid");
+        assert_eq!(
+            observe.inputs.iter().map(|input| (input.name.as_str(), input.actor.as_str())).collect::<Vec<_>>(),
+            vec![("proxy", "MinterProxy")]
+        );
+        assert_eq!(
+            observe.outputs.iter().map(|output| (output.name.as_str(), output.actor.as_str())).collect::<Vec<_>>(),
+            vec![("proxy", "MinterProxy"), ("recipient", "KCC20")]
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_observe_names() {
+        let err = parse_and_validate(
+            r#"
+            state ForeignState {}
+            state LocalState {}
+
+            actor Foreign owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor Local owns LocalState {
+                entry step()
+                observes asset by target_id {
+                    inputs {
+                        foreign: Foreign;
+                    }
+                }
+                observes asset by target_id {
+                    outputs {
+                        foreign: Foreign;
+                    }
+                }
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("duplicate observe names must be rejected");
+
+        assert!(err.to_string().contains("declares observe `asset` more than once"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_duplicate_observed_handles() {
+        let err = parse_and_validate(
+            r#"
+            state ForeignState {}
+            state LocalState {}
+
+            actor Foreign owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor Local owns LocalState {
+                entry step()
+                observes asset by target_id {
+                    inputs {
+                        foreign: Foreign;
+                        foreign: Foreign;
+                    }
+                }
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("duplicate observed handles must be rejected");
+
+        assert!(err.to_string().contains("observe `asset` declares input `foreign` more than once"), "unexpected error: {err}");
     }
 
     #[test]
@@ -5051,6 +5283,13 @@ mod tests {
         emit_artifact(&program, &model, &actor_sil).expect("artifact emits")
     }
 
+    fn parse_and_validate(source: &str) -> Result<()> {
+        let path = PathBuf::from("test.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string())?;
+        let program = Program { root: path, modules: vec![module] };
+        Model::from_program(&program).map(|_| ())
+    }
+
     fn toy_chess_source() -> String {
         r#"
             state LeagueState {
@@ -5382,6 +5621,7 @@ mod tests {
                             name: "step".to_string(),
                             params: Vec::new(),
                             consumes: Vec::new(),
+                            observes: Vec::new(),
                             emits: EmitSpec::Outputs(vec![EmitOutput {
                                 name: "next".to_string(),
                                 actors: vec!["Player".to_string()],

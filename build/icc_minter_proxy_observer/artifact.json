@@ -1,0 +1,360 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "KCC20MintController",
+  "root": "examples/icc/minter_proxy_observer_real.ag",
+  "modules": [
+    "examples/icc/minter_proxy_observer_real.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/minter",
+        "actor": "Minter",
+        "symbol": "gen__minter_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/minter",
+          "actor": "Minter",
+          "contract": "Minter",
+          "symbol": "gen__minter_template",
+          "hash_hex": "895cd0bc8425f3bfacd7cf63567057903109d1ab5806e4b276c0e8956538834d"
+        }
+      ],
+      "runtime_states": [],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": []
+    },
+    "states": [
+      {
+        "name": "KCC20State",
+        "fields": [
+          {
+            "name": "owner_identifier",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "identifier_type",
+            "type": {
+              "kind": "byte"
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterProxyState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterState",
+        "fields": [
+          {
+            "name": "owner",
+            "type": {
+              "kind": "pubkey"
+            }
+          },
+          {
+            "name": "kcc20_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "initialized",
+            "type": {
+              "kind": "bool"
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "Minter",
+        "state": "MinterState",
+        "abi": {
+          "actor": "Minter"
+        },
+        "entries": [
+          {
+            "name": "mint",
+            "kind": "leader",
+            "abi": {
+              "actor": "Minter",
+              "entry": "mint"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Minter",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Minter",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "controller",
+                  "auth_index": 0,
+                  "actors": [
+                    "Minter"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "controller",
+                      "auth_index": 0,
+                      "actor": "Minter",
+                      "template_id": "template/minter",
+                      "state_expr": "next_minter",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": []
+                }
+              ],
+              "witness_recipe_ids": []
+            },
+            "hidden_params": [],
+            "template_selectors": [],
+            "observes": [
+              {
+                "name": "asset",
+                "covenant_expr": "self.kcc20_covid",
+                "inputs": [
+                  {
+                    "name": "proxy",
+                    "actor": "MinterProxy"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "proxy",
+                    "actor": "MinterProxy"
+                  },
+                  {
+                    "name": "recipient",
+                    "actor": "KCC20"
+                  }
+                ]
+              }
+            ],
+            "witnesses": [],
+            "consumes": [],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "controller",
+                  "auth_index": 0,
+                  "actors": [
+                    "Minter"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "controller",
+                "actor": "Minter",
+                "template_id": "template/minter",
+                "state_expr": "next_minter"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "controller",
+                    "actor": "Minter",
+                    "template_id": "template/minter",
+                    "state_expr": "next_minter"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "KCC20State",
+        "fields": [
+          {
+            "name": "owner_identifier",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "identifier_type",
+            "type": {
+              "kind": "byte"
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterProxyState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterState",
+        "fields": [
+          {
+            "name": "owner",
+            "type": {
+              "kind": "pubkey"
+            }
+          },
+          {
+            "name": "kcc20_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "initialized",
+            "type": {
+              "kind": "bool"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "Minter",
+        "source_path": "sil/Minter.sil",
+        "runtime_state": {
+          "source": "MinterState",
+          "fields": [
+            {
+              "name": "owner",
+              "type": {
+                "kind": "pubkey"
+              }
+            },
+            {
+              "name": "kcc20_covid",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "amount",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "initialized",
+              "type": {
+                "kind": "bool"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "mint",
+            "selector": null,
+            "params": [
+              {
+                "name": "owner_sig",
+                "type": {
+                  "kind": "sig"
+                }
+              },
+              {
+                "name": "minted_amount",
+                "type": {
+                  "kind": "int"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000100b9cb519c6955795479ac697669785579a269537901207c7e537901207c7e537957799458cd01087c7e537951cd01017c7e7e7e7eb976c97602ab0094014d937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c6955795479ac697669785579a269537901207c7e537901207c7e537957799458cd01087c7e537951cd01017c7e7e7e7eb976c97602ab0094014d937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "895cd0bc8425f3bfacd7cf63567057903109d1ab5806e4b276c0e8956538834d"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 77
+          }
+        }
+      }
+    ]
+  }
+}

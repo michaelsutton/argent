@@ -1,0 +1,69 @@
+// First compiling ICC slice.
+//
+// The sibling `minter_proxy_observer.ag` is the target sketch. This file is the
+// concrete version that should keep compiling as ICC support grows.
+
+const byte IDENTIFIER_PUBKEY = 0x00;
+
+state KCC20State {
+    byte[32] owner_identifier;
+    byte identifier_type;
+    int amount;
+}
+
+state MinterProxyState {
+    byte[32] controller_id;
+}
+
+state MinterState {
+    pubkey owner;
+    byte[32] kcc20_covid;
+    int amount;
+    bool initialized;
+}
+
+actor KCC20 owns KCC20State {
+    entry hold() emits none {
+        require(amount >= 0);
+    }
+}
+
+actor MinterProxy owns MinterProxyState {
+    entry hold() emits none {
+        require(controller_id == controller_id);
+    }
+}
+
+actor Minter owns MinterState {
+    entry mint(owner_sig: sig, minted_amount: int)
+    observes asset by self.kcc20_covid {
+        inputs {
+            proxy: MinterProxy;
+        }
+
+        outputs {
+            proxy: MinterProxy;
+            recipient: KCC20;
+        }
+    }
+    emits {
+        controller: Minter;
+    } {
+        require(checkSig(owner_sig, owner));
+        require(initialized);
+        require(amount >= minted_amount);
+
+        MinterState next_minter = {
+            owner: owner,
+            kcc20_covid: kcc20_covid,
+            amount: amount - minted_amount,
+            initialized: initialized,
+        };
+
+        become controller <- Minter(next_minter);
+    }
+}
+
+app KCC20MintController {
+    actor Minter;
+}

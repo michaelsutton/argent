@@ -424,6 +424,29 @@ Obstacle to handle:
 
 ### 12. Implement Concrete `observes` Blocks
 
+Status: in progress.
+
+Done so far:
+
+- `observes` blocks are parsed on entries and delegates.
+- Observe handles, input handles, and output handles are structurally validated.
+- Observed actor references must resolve to known actor/state declarations, but
+  they do not need to belong to the observing app's template set.
+- Observe metadata is recorded in the portable Argent artifact under the entry.
+- `examples/icc/minter_proxy_observer_real.ag` is a compiling subset fixture
+  that tracks this feature without changing the full target sketch in
+  `examples/icc/minter_proxy_observer.ag`.
+- `check.sh --full` regenerates the ICC fixture build output.
+
+Still remaining:
+
+- Lower observed inputs to covenant-id/index reads and
+  `readInputStateWithTemplate` calls.
+- Lower observed outputs to deterministic output-index checks and
+  `validateOutputStateWithTemplate` calls.
+- Connect the artifact/runtime builder so users provide semantic UTXOs and
+  states rather than hidden prefix/suffix/template plumbing.
+
 Implement the ICC sketch pattern from `examples/icc/minter_proxy_observer.ag`:
 
 ```text
@@ -511,6 +534,36 @@ Obstacle to handle:
   object.
 
 ### 15. Introduce Typed Template Handles
+
+Status: in progress.
+
+Done so far:
+
+- Actor enums provide source-level typed target sets such as `MoveActor`.
+- Enum variants are validated to share the same owned source state.
+- Runtime-selected actor variables support `actor<State>` values from enum
+  selectors and enum constants.
+- `ActorEnum::Variant` comparisons lower to stable selector constants with
+  generated Sil comments that preserve the variant name.
+- Route-family tables are ordered from the enum variant order, so selector math
+  and table slices share one source of truth.
+- Generated Sil uses selector math over fixed route tables for multiplexed
+  route families instead of if/else template selection.
+- The artifact records selector metadata and route-family receipts.
+- `argent-runtime` exposes
+  `p2sh_signature_script_with_template_selector` for artifact-only test/runtime
+  construction.
+- `examples/toy_chess/app.ag` and its tracked build output exercise the closed
+  mux pattern.
+
+Still remaining:
+
+- Generalize the same typed-handle model to open-agent/persisted template-hash
+  fields.
+- Decide the surface for persisted handles such as an agent's accepted template
+  commitment and capability/header view.
+- Add rejection tests for mismatched compiled state ABI/cut classes once open
+  handles exist.
 
 Model runtime-selected actor templates as typed handles instead of raw
 `byte[32]` hashes. This covers both closed multiplex routing and open-agent
