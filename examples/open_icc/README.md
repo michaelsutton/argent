@@ -29,3 +29,39 @@ agent <- self.agent_type(next_state);
 
 This fixture is the baseline that later open-agent header views and
 digest-backed custom data should grow from.
+
+Runtime naming has four distinct layers:
+
+```text
+remote      observe name local to Cell::advance
+open_agent  attached artifact app alias
+agent       observed input/output handle inside the observes clause
+Agent       concrete actor in the attached app
+```
+
+The runtime builder keeps those layers separate:
+
+```rust
+let bundle = ArtifactBundle::new(&core_artifact)?
+    .with_app("open_agent", &agent_artifact)?;
+
+let observed = BTreeMap::from([(
+    "remote".to_string(),
+    ObservedCovenantContext::from_app("open_agent")
+        .input("agent", "Agent", agent_utxo, agent_state)
+        .output("agent", "Agent", next_agent_state),
+)]);
+
+let agent_outputs = builder.observed_outputs(
+    "Cell",
+    "advance",
+    "remote",
+    observed.get("remote").unwrap(),
+    values,
+    1,
+    agent_covenant_id,
+)?;
+```
+
+The observe name is not an app identity. It is only the coordinate used by the
+entry being invoked.

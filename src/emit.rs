@@ -6766,6 +6766,61 @@ mod tests {
     }
 
     #[test]
+    fn actor_enum_selectors_must_cover_the_inferred_route_family() {
+        let source = r#"
+            state BoardState {
+                int selector;
+                int ply;
+            }
+
+            actor enum FirstMove {
+                Pawn;
+                Knight;
+            }
+
+            actor enum SecondMove {
+                Pawn;
+                Bishop;
+            }
+
+            actor Mux owns BoardState {
+                entry choose_first(target: FirstMove) emits one FirstMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+
+                entry choose_second(target: SecondMove) emits one SecondMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+            }
+
+            actor Pawn owns BoardState {}
+            actor Knight owns BoardState {}
+            actor Bishop owns BoardState {}
+
+            app IncompleteSelectorSet {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+                actor Bishop;
+            }
+        "#;
+        let path = PathBuf::from("incomplete-selector-set.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let err = Model::from_program(&program).expect_err("incomplete route-family selector sets must be rejected");
+        assert!(err.to_string().contains("variants must exactly match the route table actors"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn rejects_actor_enum_variants_with_different_owned_states() {
         let artifact_source = r#"
             state AState {

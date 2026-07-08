@@ -613,12 +613,18 @@ Done:
 - Added a runtime test that spends the core and agent inputs together, executes
   both scripts, and rejects an agent output that preserves the header but
   violates core physics.
+- Added state-backed open actor handles such as `self.agent_type`, so the core
+  can read and validate an observed actor through a template handle stored in
+  its own state.
+- Separated observe names from artifact app aliases in the runtime. The observe
+  name is the local entry coordinate, while the app alias identifies the
+  attached foreign artifact.
 
 ### 16. Introduce Typed Template Handles
 
-Status: in progress.
+Status: done.
 
-Done so far:
+Done:
 
 - Actor enums provide source-level typed target sets such as `MoveActor`.
 - Enum variants are validated to share the same owned source state.
@@ -636,19 +642,8 @@ Done so far:
   construction.
 - `examples/toy_chess/app.ag` and its tracked build output exercise the closed
   mux pattern.
-
-Still remaining:
-
-- Generalize the same typed-handle model to open-agent/persisted template-hash
-  fields.
-- Decide the surface for persisted handles such as an agent's accepted template
-  commitment and capability/header view.
-- Add rejection tests for mismatched compiled state ABI/cut classes once open
-  handles exist.
-
-Model runtime-selected actor templates as typed handles instead of raw
-`byte[32]` hashes. This covers both closed multiplex routing and open-agent
-locks.
+- Actor enum selector sets are rejected if they do not exactly cover the
+  inferred route-family table actors.
 
 Conceptually:
 
@@ -702,6 +697,23 @@ Obstacle to handle:
 
 ### 17. Implement Open Actor Interface Syntax
 
+Status: partially done.
+
+Done:
+
+- `observes` clauses can bind open actor handles with
+  `actor<State> as observed_name`.
+- `observes` clauses can also reference a source actor handle such as
+  `self.agent_type`.
+- The runtime binds observed prefix/suffix witnesses to the observed input or
+  output instead of exposing them as user args.
+
+Still remaining:
+
+- Keep polishing the source surface around scoped runtime handles and final
+  Open Lattice examples.
+- Add the multi-agent rejection fixture once `state extends` header views exist.
+
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
 
@@ -736,6 +748,22 @@ Obstacle to handle:
   and diagnostics.
 
 ### 18. Implement Generic `T(next_state)` Become
+
+Status: partially done.
+
+Done:
+
+- Dynamic observed `become` through a source actor handle is implemented, e.g.
+  `agent <- self.agent_type(next_state)`.
+- The Open ICC baseline uses this shape to preserve the observed implementation
+  while authorizing only the next state.
+
+Still remaining:
+
+- Decide whether the final scoped-handle spelling should remain a named runtime
+  handle or use a separate `T`-style syntax.
+- Add the explicit preserved-input-template swap rejection once multiple
+  concrete open agents share a header view.
 
 Lower:
 

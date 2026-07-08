@@ -1216,6 +1216,38 @@ mod tests {
             .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("agent utxo builds");
         let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
+        let mut observed_keyed_by_app = BTreeMap::new();
+        observed_keyed_by_app
+            .insert("open_agent".to_string(), observed.get("remote").expect("remote observed context exists").clone());
+        let wrong_observe_key_err = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed_keyed_by_app)
+            .expect_err("observed context map is keyed by observe name, not app alias");
+        assert!(
+            matches!(
+                &wrong_observe_key_err,
+                BuilderError::UnknownObserve { actor, entry, observe }
+                    if actor == "Cell" && entry == "advance" && observe == "open_agent"
+            ),
+            "unexpected error: {wrong_observe_key_err}"
+        );
+        let wrong_app_context = ObservedCovenantContext::from_app("remote")
+            .input("agent", "Agent", agent_utxo.clone(), agent_initial.clone())
+            .output("agent", "Agent", agent_next.clone());
+        let wrong_app_alias_err = builder
+            .observed_outputs(
+                "Cell",
+                "advance",
+                "remote",
+                &wrong_app_context,
+                BTreeMap::from([("agent".to_string(), agent_value)]),
+                1,
+                agent_covenant_id,
+            )
+            .expect_err("observed context app is the attached artifact alias, not the observe name");
+        assert!(
+            matches!(&wrong_app_alias_err, BuilderError::UnknownAppAlias(alias) if alias == "remote"),
+            "unexpected error: {wrong_app_alias_err}"
+        );
         let outputs = open_icc_advance_outputs(
             &builder,
             cell_next,
