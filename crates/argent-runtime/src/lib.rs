@@ -19,7 +19,7 @@ use argent_artifact::{
     ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, EntryArtifact, HiddenParamArtifact,
     HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact,
     RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact,
-    SilEntryArtifact, TemplatePlanError, route_template_proof_receipt_id,
+    SilEntryArtifact, StateArtifact, TemplatePlanError, route_template_proof_receipt_id,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -105,6 +105,10 @@ pub enum BuilderError {
     UnknownObservedActor { observe: String, side: &'static str, handle: String },
     #[error("observed {side} `{observe}.{handle}` expected actor `{expected}`, got `{found}`")]
     ObservedActorMismatch { observe: String, side: &'static str, handle: String, expected: String, found: String },
+    #[error("observed {side} `{observe}.{handle}` state `{state}` layout does not match attached actor `{actor}`")]
+    ObservedStateLayoutMismatch { observe: String, side: &'static str, handle: String, state: String, actor: String },
+    #[error("artifact `{app}` has no state `{state}`")]
+    UnknownState { app: String, state: String },
     #[error("observed input `{observe}.{handle}` UTXO does not match actor `{actor}` and state")]
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -987,6 +991,17 @@ impl<'a> TxBuilder<'a> {
                     found: format!("{}: actor<{}>", found_actor, found.actor.state),
                 });
             }
+            let expected_layout = state_artifact(self.bundle.primary, expected_state)?;
+            let found_layout = state_artifact(found.artifact, &found.actor.state)?;
+            if expected_layout != found_layout {
+                return Err(BuilderError::ObservedStateLayoutMismatch {
+                    observe: observe_name.to_string(),
+                    side: observed_side_label(side),
+                    handle: expected.name.clone(),
+                    state: expected_state.to_string(),
+                    actor: found_actor.to_string(),
+                });
+            }
             return Ok(());
         }
         if expected.actor != found_actor {
@@ -1271,6 +1286,15 @@ fn observed_side_label(side: ObservedActorSideArtifact) -> &'static str {
         ObservedActorSideArtifact::Input => "input",
         ObservedActorSideArtifact::Output => "output",
     }
+}
+
+fn state_artifact<'a>(artifact: &'a Artifact, state: &str) -> BuilderResult<&'a StateArtifact> {
+    artifact
+        .argent
+        .states
+        .iter()
+        .find(|candidate| candidate.name == state)
+        .ok_or_else(|| BuilderError::UnknownState { app: artifact.app.clone(), state: state.to_string() })
 }
 
 fn artifact_app_alias(app: &str) -> String {

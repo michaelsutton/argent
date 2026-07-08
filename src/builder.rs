@@ -5,7 +5,7 @@ mod tests {
     use super::*;
     use crate::{
         artifact::{
-            HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, TemplatePlanError, route_template_proof_receipt_id,
+            HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, TemplatePlanError, TypeArtifact, route_template_proof_receipt_id,
             route_template_table_receipt_id,
         },
         codec::{CodecError, decode_hex, encode_entry_sig_script},
@@ -1247,6 +1247,32 @@ mod tests {
         assert!(
             matches!(&wrong_app_alias_err, BuilderError::UnknownAppAlias(alias) if alias == "remote"),
             "unexpected error: {wrong_app_alias_err}"
+        );
+        let mut bad_layout_agent_artifact = agent_artifact.clone();
+        let bad_energy_field = bad_layout_agent_artifact
+            .argent
+            .states
+            .iter_mut()
+            .find(|state| state.name == "AgentState")
+            .and_then(|state| state.fields.iter_mut().find(|field| field.name == "energy"))
+            .expect("AgentState.energy exists");
+        bad_energy_field.ty = TypeArtifact::Bool;
+        bad_layout_agent_artifact.id = bad_layout_agent_artifact.computed_id_hex().expect("mutated agent artifact id computes");
+        let bad_layout_bundle = ArtifactBundle::new(&core_artifact)
+            .expect("core artifact is valid")
+            .with_app("open_agent", &bad_layout_agent_artifact)
+            .expect("layout mismatch is checked when open observed actor is used");
+        let bad_layout_builder = TxBuilder::from_bundle(&bad_layout_bundle).expect("builder accepts bundle shape");
+        let bad_layout_err = bad_layout_builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect_err("open observed actor state layout mismatch is rejected");
+        assert!(
+            matches!(
+                &bad_layout_err,
+                BuilderError::ObservedStateLayoutMismatch { observe, side, handle, state, actor }
+                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentState" && actor == "Agent"
+            ),
+            "unexpected error: {bad_layout_err}"
         );
         let outputs = open_icc_advance_outputs(
             &builder,
