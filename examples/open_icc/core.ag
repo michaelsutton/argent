@@ -6,41 +6,43 @@
 import "./agent.ag";
 
 state CellState {
-    covid agent_id;
+    covid agent_covid;
+    actor<AgentState> agent_type;
     int tick;
 }
 
 actor Cell owns CellState {
     entry advance()
-    observes agent by self.agent_id {
+    observes agent by self.agent_covid {
         inputs {
-            agent: Agent;
+            agent: self.agent_type;
         }
 
         outputs {
-            agent: Agent;
+            agent: self.agent_type;
         }
     }
     emits {
         cell: Cell;
     } {
-        AgentState prev_agent = agent.inputs.agent.state;
+        AgentState prev_state = agent.inputs.agent.state;
 
-        require(prev_agent.controller_id == self.covenant_id);
-        require(prev_agent.energy > 0);
+        require(prev_state.controller_id == self.covenant_id);
+        require(prev_state.energy > 0);
 
-        AgentState next_agent = {
-            controller_id: prev_agent.controller_id,
-            caps_digest: prev_agent.caps_digest,
-            energy: prev_agent.energy - 1,
+        AgentState next_state = {
+            controller_id: prev_state.controller_id,
+            caps_digest: prev_state.caps_digest,
+            energy: prev_state.energy - 1,
         };
 
         require agent.outputs become {
-            agent <- Agent(next_agent);
+            agent <- self.agent_type(next_state);
         };
 
         CellState next_cell = {
-            agent_id: agent_id,
+            agent_covid: agent_covid,
+            agent_type: agent_type,
             tick: tick + 1,
         };
 

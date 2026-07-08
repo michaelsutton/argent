@@ -4,8 +4,8 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Cell(
-    byte[32] gen__init_agent_agent_template,
-    byte[32] init_agent_id,
+    byte[32] init_agent_covid,
+    byte[32] init_agent_type,
     int init_tick
 ) {
     // :: state layouts
@@ -16,54 +16,58 @@ contract Cell(
     }
 
     // :: route templates
-    byte[32] gen__agent_agent_template = gen__init_agent_agent_template;
+    // No foreign route templates required.
 
     // :: state fields: Cell
-    byte[32] agent_id = init_agent_id;
+    byte[32] agent_covid = init_agent_covid;
+    byte[32] agent_type = init_agent_type;
     int tick = init_tick;
 
     // :: entrypoints
-    entrypoint function advance(byte[] gen__agent_agent_prefix, byte[] gen__agent_agent_suffix) {
+    entrypoint function advance(
+        byte[] gen__agent_agent_type_prefix,
+        byte[] gen__agent_agent_type_suffix
+    ) {
         // :: observed covenants
-        byte[32] gen__agent_cov_id = agent_id; // observe agent
+        byte[32] gen__agent_cov_id = agent_covid; // observe agent
         require(OpCovInputCount(gen__agent_cov_id) == 1);
         require(OpCovOutputCount(gen__agent_cov_id) == 1);
-        // :: observed input agent.agent: Agent
+        // :: observed input agent.agent: self.agent_type
         int gen__agent_agent_input_idx = OpCovInputIdx(gen__agent_cov_id, 0);
-        int gen__agent_agent_prefix_len = gen__agent_agent_prefix.length;
-        int gen__agent_agent_suffix_len = gen__agent_agent_suffix.length;
+        int gen__agent_agent_type_prefix_len = gen__agent_agent_type_prefix.length;
+        int gen__agent_agent_type_suffix_len = gen__agent_agent_type_suffix.length;
         AgentState gen__agent_agent_state = readInputStateWithTemplate(
             gen__agent_agent_input_idx,
-            gen__agent_agent_prefix_len,
-            gen__agent_agent_suffix_len,
-            gen__agent_agent_template
+            gen__agent_agent_type_prefix_len,
+            gen__agent_agent_type_suffix_len,
+            agent_type
         );
-        // :: observed output agent.agent: Agent
+        // :: observed output agent.agent: self.agent_type
         int gen__agent_agent_output_idx = OpCovOutputIdx(gen__agent_cov_id, 0);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output cell: Cell
 
-        AgentState prev_agent = gen__agent_agent_state;
-        require(prev_agent.controller_id == OpInputCovenantId(this.activeInputIndex));
-        require(prev_agent.energy > 0);
-        AgentState next_agent = {
-            controller_id: prev_agent.controller_id,
-            caps_digest: prev_agent.caps_digest,
-            energy: prev_agent.energy - 1,
+        AgentState prev_state = gen__agent_agent_state;
+        require(prev_state.controller_id == OpInputCovenantId(this.activeInputIndex));
+        require(prev_state.energy > 0);
+        AgentState next_state = {
+            controller_id: prev_state.controller_id,
+            caps_digest: prev_state.caps_digest,
+            energy: prev_state.energy - 1,
         };
-        // :: observed become agent.agent -> Agent
+        // :: observed become agent.agent -> self.agent_type
         validateOutputStateWithTemplate(
             gen__agent_agent_output_idx,
-            next_agent,
-            gen__agent_agent_prefix,
-            gen__agent_agent_suffix,
-            gen__agent_agent_template
+            next_state,
+            gen__agent_agent_type_prefix,
+            gen__agent_agent_type_suffix,
+            agent_type
         );
         State next_cell = {
-            gen__agent_agent_template: gen__agent_agent_template,
-            agent_id: agent_id,
+            agent_covid: agent_covid,
+            agent_type: agent_type,
             tick: tick + 1,
         };
         // :: become Cell

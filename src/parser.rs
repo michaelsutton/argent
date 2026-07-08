@@ -306,12 +306,50 @@ impl Parser {
         while !self.check_symbol('}') {
             let name = self.expect_any_ident()?;
             self.expect_symbol(':')?;
-            let actor = self.expect_any_ident()?;
+            let (actor, open_state) = if self.consume_ident("actor") {
+                if section != "inputs" {
+                    return Err(self.error("open observed actor bindings are only declared in `inputs`"));
+                }
+                self.expect_symbol('<')?;
+                let state = self.expect_any_ident()?;
+                self.expect_symbol('>')?;
+                self.expect_ident("as")?;
+                (self.expect_any_ident()?, Some(state))
+            } else {
+                (self.take_observed_actor_target()?, None)
+            };
             self.expect_symbol(';')?;
-            actors.push(ObservedActorDecl { name, actor });
+            actors.push(ObservedActorDecl { name, actor, open_state });
         }
         self.expect_symbol('}')?;
         Ok(actors)
+    }
+
+    fn take_observed_actor_target(&mut self) -> Result<String> {
+        let start = self.current().span.start;
+        let mut depth = 0usize;
+        while !self.is_eof() {
+            let token = self.current().clone();
+            match token.kind {
+                TokenKind::Symbol('{') | TokenKind::Symbol('(') | TokenKind::Symbol('[') | TokenKind::Symbol('<') => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Symbol('}') | TokenKind::Symbol(')') | TokenKind::Symbol(']') | TokenKind::Symbol('>') => {
+                    depth = depth.saturating_sub(1);
+                    self.advance();
+                }
+                TokenKind::Symbol(';') if depth == 0 => {
+                    let text = self.source[start..token.span.start].trim().to_string();
+                    if text.is_empty() {
+                        return Err(self.error("observed actor target is empty"));
+                    }
+                    return Ok(text);
+                }
+                _ => self.advance(),
+            }
+        }
+        Err(self.error("unterminated observed actor target"))
     }
 
     fn parse_type(&mut self) -> Result<TypeRef> {
@@ -324,7 +362,11 @@ impl Parser {
     }
 
     fn parse_type_tail(&mut self, name: String) -> Result<TypeRef> {
-        if self.consume_symbol('[') {
+        if name == "actor" && self.consume_symbol('<') {
+            let state = self.expect_any_ident()?;
+            self.expect_symbol('>')?;
+            Ok(TypeRef::actor_handle(state))
+        } else if self.consume_symbol('[') {
             let len = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid array length"))?;
             self.expect_symbol(']')?;
             Ok(TypeRef::array(name, len))

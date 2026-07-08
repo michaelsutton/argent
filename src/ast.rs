@@ -107,6 +107,7 @@ pub struct ObserveDecl {
 pub struct ObservedActorDecl {
     pub name: String,
     pub actor: String,
+    pub open_state: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -140,18 +141,30 @@ pub struct RouteCall {
 pub struct TypeRef {
     pub name: String,
     pub array: Option<usize>,
+    pub actor_state: Option<String>,
 }
 
 impl TypeRef {
     pub fn new(name: impl Into<String>) -> Self {
-        Self { name: name.into(), array: None }
+        Self { name: name.into(), array: None, actor_state: None }
     }
 
     pub fn array(name: impl Into<String>, len: usize) -> Self {
-        Self { name: name.into(), array: Some(len) }
+        Self { name: name.into(), array: Some(len), actor_state: None }
+    }
+
+    pub fn actor_handle(state: impl Into<String>) -> Self {
+        Self { name: "actor".to_string(), array: None, actor_state: Some(state.into()) }
+    }
+
+    pub fn is_actor_handle(&self) -> bool {
+        self.array.is_none() && self.actor_state.is_some()
     }
 
     pub fn to_sil(&self) -> String {
+        if self.is_actor_handle() {
+            return "byte[32]".to_string();
+        }
         match self.array {
             Some(len) => format!("{}[{}]", self.name, len),
             None => self.name.clone(),

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "c55cf3e2cccec9172f5c95165827772110081ec457243f2d25af53bb6e8b9fc0",
+  "id": "451a40224ef2f6bdc7f3836bc442eeccb21ad6f8fcc7a85d1037d2df70d82965",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -26,55 +26,38 @@
           "actor": "Cell",
           "contract": "Cell",
           "symbol": "gen__cell_template",
-          "hash_hex": "01f6296fd5dc0e9faeff1ef50a28b7b8907b0e285a12a467510bdbcd3a709adc"
+          "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
         }
       ],
-      "runtime_states": [
-        {
-          "contract": "Cell",
-          "source": "CellState",
-          "field_roles": [
-            {
-              "name": "gen__agent_agent_template",
-              "role": {
-                "kind": "observed_template",
-                "observe": "agent",
-                "side": "output",
-                "handle": "agent",
-                "contract": "Agent"
-              }
-            }
-          ]
-        }
-      ],
+      "runtime_states": [],
       "route_tables": [],
       "route_proofs": [],
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/observed/agent/output/agent/template_prefix_bytes",
+          "id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "agent",
             "side": "output",
             "handle": "agent",
-            "actor": "Agent"
+            "actor": "self.agent_type"
           },
-          "param": "gen__agent_agent_prefix",
+          "param": "gen__agent_agent_type_prefix",
           "purpose": {
             "kind": "template_prefix_bytes"
           }
         },
         {
-          "id": "witness/observed/agent/output/agent/template_suffix_bytes",
+          "id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "agent",
             "side": "output",
             "handle": "agent",
-            "actor": "Agent"
+            "actor": "self.agent_type"
           },
-          "param": "gen__agent_agent_suffix",
+          "param": "gen__agent_agent_type_suffix",
           "purpose": {
             "kind": "template_suffix_bytes"
           }
@@ -87,17 +70,10 @@
           "id": "interface/actor/Cell",
           "actor": "Cell",
           "state": "CellState",
-          "fingerprint_hex": "ee6eefb7b590709fbf5700191c8321232a07d16ab8990f7db88f4764660e58ce"
+          "fingerprint_hex": "595bb3cfbda2a4c824258c57b70ca313f1bacd31362b8c747613316df64cb074"
         }
       ],
-      "imports": [
-        {
-          "id": "interface/actor/Agent",
-          "actor": "Agent",
-          "state": "AgentState",
-          "fingerprint_hex": "0cc79bd82ed0eebd91320bd38ed82c645fe12430cd6826d5d846e4fbeeacb3e3"
-        }
-      ]
+      "imports": []
     },
     "states": [
       {
@@ -129,7 +105,14 @@
         "name": "CellState",
         "fields": [
           {
-            "name": "agent_id",
+            "name": "agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_type",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -197,14 +180,14 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/observed/agent/output/agent/template_prefix_bytes",
-                "witness/observed/agent/output/agent/template_suffix_bytes"
+                "witness/observed/agent/output/agent_type/template_prefix_bytes",
+                "witness/observed/agent/output/agent_type/template_suffix_bytes"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/observed/agent/output/agent/template_prefix_bytes",
-                "name": "gen__agent_agent_prefix",
+                "recipe_id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
+                "name": "gen__agent_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 },
@@ -213,15 +196,15 @@
                   "observe": "agent",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "Agent"
+                  "actor": "self.agent_type"
                 },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/agent/output/agent/template_suffix_bytes",
-                "name": "gen__agent_agent_suffix",
+                "recipe_id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
+                "name": "gen__agent_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
                 },
@@ -230,7 +213,7 @@
                   "observe": "agent",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "Agent"
+                  "actor": "self.agent_type"
                 },
                 "purpose": {
                   "kind": "template_suffix_bytes"
@@ -241,45 +224,47 @@
             "observes": [
               {
                 "name": "agent",
-                "covenant_expr": "self.agent_id",
+                "covenant_expr": "self.agent_covid",
                 "inputs": [
                   {
                     "name": "agent",
-                    "actor": "Agent"
+                    "actor": "self.agent_type",
+                    "open_state": "AgentState"
                   }
                 ],
                 "outputs": [
                   {
                     "name": "agent",
-                    "actor": "Agent"
+                    "actor": "self.agent_type",
+                    "open_state": "AgentState"
                   }
                 ]
               }
             ],
             "witnesses": [
               {
-                "recipe_id": "witness/observed/agent/output/agent/template_prefix_bytes",
-                "param": "gen__agent_agent_prefix",
+                "recipe_id": "witness/observed/agent/output/agent_type/template_prefix_bytes",
+                "param": "gen__agent_agent_type_prefix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "agent",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "Agent"
+                  "actor": "self.agent_type"
                 },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/agent/output/agent/template_suffix_bytes",
-                "param": "gen__agent_agent_suffix",
+                "recipe_id": "witness/observed/agent/output/agent_type/template_suffix_bytes",
+                "param": "gen__agent_agent_type_suffix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "agent",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "Agent"
+                  "actor": "self.agent_type"
                 },
                 "purpose": {
                   "kind": "template_suffix_bytes"
@@ -356,7 +341,14 @@
         "name": "CellState",
         "fields": [
           {
-            "name": "agent_id",
+            "name": "agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_type",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -379,14 +371,14 @@
           "source": "CellState",
           "fields": [
             {
-              "name": "gen__agent_agent_template",
+              "name": "agent_covid",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
               }
             },
             {
-              "name": "agent_id",
+              "name": "agent_type",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -406,13 +398,13 @@
             "selector": null,
             "params": [
               {
-                "name": "gen__agent_agent_prefix",
+                "name": "gen__agent_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 }
               },
               {
-                "name": "gen__agent_agent_suffix",
+                "name": "gen__agent_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
                 }
@@ -421,11 +413,11 @@
           }
         ],
         "compiled": {
-          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000007876d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e54797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e59797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602cd0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "7876d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e54797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e59797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602cd0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
-            "hash_hex": "01f6296fd5dc0e9faeff1ef50a28b7b8907b0e285a12a467510bdbcd3a709adc"
+            "suffix_hex": "527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+            "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
           },
           "state_span": {
             "offset": 0,

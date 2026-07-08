@@ -1177,9 +1177,11 @@ mod tests {
         let cell_value = 4_000;
         let agent_value = 2_000;
         let caps_digest = vec![0x77; 32];
+        let agent_type = decode_hex(&agent_artifact.sil_abi.contract("Agent").expect("Agent ABI exists").compiled.template.hash_hex)
+            .expect("agent template hash decodes");
 
-        let cell_initial = open_cell_state(agent_covenant_id, 7);
-        let cell_next = open_cell_state(agent_covenant_id, 8);
+        let cell_initial = open_cell_state(agent_covenant_id, agent_type.clone(), 7);
+        let cell_next = open_cell_state(agent_covenant_id, agent_type.clone(), 8);
         let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
         let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
 
@@ -1226,7 +1228,7 @@ mod tests {
         let wrong_observed = open_agent_context("Agent", agent_initial.clone(), entries[1].clone(), wrong_agent_next.clone());
         let wrong_outputs = open_icc_advance_outputs(
             &builder,
-            open_cell_state(agent_covenant_id, 8),
+            open_cell_state(agent_covenant_id, agent_type, 8),
             &wrong_observed,
             cell_value,
             agent_value,
@@ -1403,9 +1405,10 @@ mod tests {
         ])
     }
 
-    fn open_cell_state(agent_id: Hash, tick: i64) -> BTreeMap<String, ArtifactValue> {
+    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, tick: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
-            ("agent_id".to_string(), ArtifactValue::Bytes(agent_id.as_bytes().to_vec())),
+            ("agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
+            ("agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
             ("tick".to_string(), ArtifactValue::Int(tick)),
         ])
     }

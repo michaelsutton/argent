@@ -13,7 +13,19 @@ physics step over it:
 energy -> energy - 1
 ```
 
-This fixture intentionally uses only existing features: `observes`, `covid`,
-artifact bundles, and observed input/output validation. It is the baseline that
-later open-agent header views, generic actor bindings, and digest-backed custom
-data should grow from.
+The core cell stores the observed covenant id and an `actor<AgentState>` handle.
+The `observes` clause constrains both the input and output to that stored
+handle:
+
+```rust
+agent: self.agent_type;
+```
+
+and validates the output through the same handle:
+
+```rust
+agent <- self.agent_type(next_state);
+```
+
+This fixture is the baseline that later open-agent header views and
+digest-backed custom data should grow from.

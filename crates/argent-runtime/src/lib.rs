@@ -235,6 +235,9 @@ impl<'a> ArtifactBundle<'a> {
     fn validate_app_interfaces(&self, alias: &str, artifact: &Artifact) -> BuilderResult<()> {
         let observed_actors = self.observed_actors_for_alias(alias);
         if observed_actors.is_empty() {
+            if self.observes_alias(alias) {
+                return Ok(());
+            }
             return Err(BuilderError::UnknownObservedAppAlias(alias.to_string()));
         }
         self.validate_actor_interfaces(alias, artifact, &observed_actors)
@@ -272,12 +275,25 @@ impl<'a> ArtifactBundle<'a> {
                         continue;
                     }
                     for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
+                        if observed.open_state.is_some() {
+                            continue;
+                        }
                         observed_actors.insert(observed.actor.as_str(), observed.actor.as_str());
                     }
                 }
             }
         }
         observed_actors.into_keys().map(str::to_string).collect()
+    }
+
+    fn observes_alias(&self, alias: &str) -> bool {
+        self.primary
+            .argent
+            .actors
+            .iter()
+            .flat_map(|actor| actor.entries.iter())
+            .flat_map(|entry| entry.observes.iter())
+            .any(|observe| observe.name == alias)
     }
 
     fn observed_aliases(&self) -> Vec<String> {
@@ -542,22 +558,22 @@ impl<'a> TxBuilder<'a> {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
                     let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
                     let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
                     let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
                     let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors)?;
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
@@ -814,10 +830,24 @@ impl<'a> TxBuilder<'a> {
         hidden: &HiddenParamArtifact,
         entry: &EntryArtifact,
         template_selectors: &BTreeMap<String, String>,
+        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
     ) -> BuilderResult<ContractRef<'a>> {
         match &hidden.subject {
             HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
-            HiddenParamSubjectArtifact::ObservedActor { observe, actor, .. } => self.contract_ref_in_app(observe, actor),
+            HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, actor } => {
+                if let Some(contexts) = observed
+                    && let Some(context) = contexts.get(observe)
+                {
+                    let observed_actor = match side {
+                        ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
+                        ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
+                    };
+                    if let Some(observed_actor) = observed_actor {
+                        return self.contract_ref_in_app(observe, observed_actor);
+                    }
+                }
+                self.contract_ref_in_app(observe, actor)
+            }
             HiddenParamSubjectArtifact::TemplateSelector { .. } => {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
                 self.contract_ref_in_artifact(primary_artifact, &actor)
@@ -985,6 +1015,19 @@ impl<'a> TxBuilder<'a> {
         expected: &ObservedActorArtifact,
         found_actor: &str,
     ) -> BuilderResult<()> {
+        if let Some(expected_state) = expected.open_state.as_deref() {
+            let found = self.argent_actor_ref_in_artifact(self.bundle.app(observe_name)?, found_actor)?;
+            if found.actor.state != expected_state {
+                return Err(BuilderError::ObservedActorMismatch {
+                    observe: observe_name.to_string(),
+                    side: observed_side_label(side),
+                    handle: expected.name.clone(),
+                    expected: format!("actor<{expected_state}>"),
+                    found: format!("{}: actor<{}>", found_actor, found.actor.state),
+                });
+            }
+            return Ok(());
+        }
         if expected.actor != found_actor {
             return Err(BuilderError::ObservedActorMismatch {
                 observe: observe_name.to_string(),

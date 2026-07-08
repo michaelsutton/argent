@@ -197,19 +197,17 @@ An open ICC entry can then observe that agent:
 entry advance()
 observes remote by self.agent_covid {
     inputs {
-        agent: actor<AgentState> as observed_agent;
+        agent: self.agent_type;
     }
 
     outputs {
-        agent: observed_agent;
+        agent: self.agent_type;
     }
 }
 emits {
     cell: Cell;
 } {
     AgentState prev_state = remote.inputs.agent.state;
-
-    require(agent_type == observed_agent);
 
     AgentState next_state = {
         controller_id: prev_state.controller_id,
@@ -218,7 +216,7 @@ emits {
     };
 
     require remote.outputs become {
-        agent <- observed_agent(next_state);
+        agent <- self.agent_type(next_state);
     };
 
     CellState next_cell = {
@@ -231,11 +229,31 @@ emits {
 }
 ```
 
-`observed_agent` is scoped to this `observes` clause. It is not an actor
-instance; it is a runtime actor handle bound from the observed transition. The
-`actor<AgentState>` constraint says that whatever implementation the handle
-denotes must expose the `AgentState` state shape. The equality check binds that
-dynamically observed handle to the `agent_type` value stored by the cell.
+`self.agent_type` is not an actor instance; it is an actor handle value. The
+`actor<AgentState>` type says that whatever implementation the handle denotes
+must expose the `AgentState` state shape. Using the same handle in the observed
+input and output means the observed transition must preserve that implementation
+identity while changing only the state the cell authorizes.
+
+When the handle is not already stored or passed by the observer, the entry can
+bind a scoped runtime handle with `as`:
+
+```rust
+observes remote by self.agent_covid {
+    inputs {
+        agent: actor<AgentState> as observed_agent;
+    }
+
+    outputs {
+        agent: observed_agent;
+    }
+}
+```
+
+`observed_agent` is scoped to this `observes` clause and names whatever actor
+handle the observed transition carries. That form is useful when the observer
+only needs same-implementation preservation, not equality to a handle already
+committed in observer state.
 
 Open ICC is the right model when the observer wants to support independently
 published agent contracts that share a state ABI or interface discipline.
@@ -276,11 +294,9 @@ Legal entry-parameter form:
 entry inspect(agent_type: actor<AgentState>)
 observes remote by self.agent_covid {
     inputs {
-        agent: actor<AgentState> as observed_agent;
+        agent: self.agent_type;
     }
 } {
-    require(agent_type == observed_agent);
-
     AgentState current_state = remote.inputs.agent.state;
     require(current_state.energy >= 0);
 }
@@ -318,6 +334,10 @@ Current and expected source-level ICC features:
 - `observes <name> by <covid_expr>`: declare an observed covenant view
 - `inputs { handle: Actor; }`: name observed inputs
 - `outputs { handle: Actor; }`: name observed outputs
+- `inputs { handle: self.actor_field; }`: constrain an observed input by a
+  stored actor handle
+- `outputs { handle: self.actor_field; }`: constrain an observed output by a
+  stored actor handle
 - `inputs { handle: actor<State> as observed; }`: bind an open observed actor handle
 - `outputs { handle: observed; }`: require an output to use the same open actor handle
 - `<observe>.inputs.<handle>.state`: read observed input state
