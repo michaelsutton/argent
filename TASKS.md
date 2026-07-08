@@ -594,7 +594,27 @@ Obstacle to handle:
   interface views across artifacts without merging the artifacts into one mutable
   object.
 
-### 15. Introduce Typed Template Handles
+### 15. Add Open ICC Baseline
+
+Status: done.
+
+Done:
+
+- Added `examples/open_icc/agent.ag` as a separate open-agent covenant app.
+- Added `examples/open_icc/core.ag` as a core cell/controller app that observes
+  the agent app by covenant id.
+- Kept the baseline to existing features: `observes`, `covid`,
+  `ArtifactBundle`, and observed input/output validation.
+- The agent app enforces controller co-spend authorization and preserves a
+  fixed capability digest.
+- The core app reads the observed agent state and enforces one small physics
+  step: `energy -> energy - 1`.
+- `check.sh --full` regenerates tracked Open ICC build outputs.
+- Added a runtime test that spends the core and agent inputs together, executes
+  both scripts, and rejects an agent output that preserves the header but
+  violates core physics.
+
+### 16. Introduce Typed Template Handles
 
 Status: in progress.
 
@@ -680,7 +700,7 @@ Obstacle to handle:
   open or preserve that template. Closed mux handles can be table-driven;
   open-agent handles must be bound to the co-spent input/template witness.
 
-### 16. Implement Open Actor Interface Syntax
+### 17. Implement Open Actor Interface Syntax
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
@@ -715,7 +735,7 @@ Obstacle to handle:
   arbitrary foreign strategy determinism. Keep this distinction visible in docs
   and diagnostics.
 
-### 17. Implement Generic `T(next_state)` Become
+### 18. Implement Generic `T(next_state)` Become
 
 Lower:
 
@@ -740,7 +760,7 @@ Obstacle to handle:
   layout information. The builder must bind this bundle to the observed input,
   not to a user-provided arbitrary template.
 
-### 18. Implement Fixed Capability Header Preservation
+### 19. Implement Fixed Capability Header Preservation
 
 Add a reusable way for observed/open actors to declare which header fields are
 immutable under a transition and which fields the observing physics may mutate.
@@ -772,7 +792,7 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 19. Implement `state extends` For Header Views
+### 20. Implement `state extends` For Header Views
 
 Allow concrete agent states to extend a shared header state:
 
@@ -796,7 +816,7 @@ Obstacle to handle:
 - Header offsets must be stable and artifact-visible. Do not rely on source
   field names alone; record byte/push positions and type descriptors.
 
-### 20. Implement `expand <digest_field> as <State>`
+### 21. Implement `expand <digest_field> as <State>`
 
 Support fixed digest-backed substate:
 
@@ -823,7 +843,7 @@ Obstacle to handle:
 - The digest preimage serialization must use the same artifact codec as state
   encoding. Otherwise expanded memory and stored state will drift.
 
-### 21. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
+### 22. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
 
 Keep a closed-world fixture that does not require open actor generics. It should
 exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
@@ -841,7 +861,7 @@ Obstacle to handle:
   should be. Replace placeholders only when the artifact/builder can support the
   actual observed actor identity cleanly.
 
-### 22. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
+### 23. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
 
 After `observes` blocks, generic actors, header views, and digest expansion exist,
 turn the sketch into a real compiler fixture.
@@ -859,7 +879,7 @@ Obstacle to handle:
 - This fixture combines most hard features. Do not start here. It should be the
   integration proof that the smaller features were designed correctly.
 
-### 23. Add Chunk Or Cell-Birth Board Authority
+### 24. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -878,7 +898,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 24. Add Optional Intent UTXO Layer
+### 25. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
@@ -907,7 +927,7 @@ Obstacle to handle:
 - Intent binding commits to one chosen action. It still does not prove the
   strategy contract could not have chosen another legal action.
 
-### 25. Prune Generated State Layouts
+### 26. Prune Generated State Layouts
 
 Stop emitting every other actor state struct into every generated Silverscript
 contract. A contract should only contain foreign state layouts it can actually
@@ -987,5 +1007,5 @@ The second milestone is tasks 7 through 12. That turns existing Argent routing,
 template witnesses, and the minter observer sketch into artifact-driven ICC
 transactions.
 
-The third milestone is tasks 13 through 21. That unlocks the Open Lattice open-agent
+The third milestone is tasks 13 through 22. That unlocks the Open Lattice open-agent
 game pattern.

@@ -41,6 +41,7 @@ contract KCC20(
         if (identifier_type == IDENTIFIER_PUBKEY) {
             require(checkSig(owner_sig, owner_identifier));
         } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
+            // :: authorized by owner_identifier (via co-spend)
             require(OpCovInputCount(owner_identifier) > 0);
         } else {
             require(false);

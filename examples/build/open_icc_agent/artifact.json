@@ -1,0 +1,258 @@
+{
+  "schema_version": 1,
+  "id": "faadd5d3d6023dee8f22b31b364080ceca43af3c4f22ae06e1d08daa724dbfe8",
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "OpenAgent",
+  "root": "examples/open_icc/agent.ag",
+  "modules": [
+    "examples/open_icc/agent.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/agent",
+        "actor": "Agent",
+        "symbol": "gen__agent_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/agent",
+          "actor": "Agent",
+          "contract": "Agent",
+          "symbol": "gen__agent_template",
+          "hash_hex": "a3fe262bbcfad8c1a4e30bf7da5a585644edb7141bb4dff1f124992bee2531a1"
+        }
+      ],
+      "runtime_states": [],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": []
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Agent",
+          "actor": "Agent",
+          "state": "AgentState",
+          "fingerprint_hex": "0cc79bd82ed0eebd91320bd38ed82c645fe12430cd6826d5d846e4fbeeacb3e3"
+        }
+      ],
+      "imports": []
+    },
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "Agent",
+        "state": "AgentState",
+        "abi": {
+          "actor": "Agent"
+        },
+        "entries": [
+          {
+            "name": "step",
+            "kind": "leader",
+            "abi": {
+              "actor": "Agent",
+              "entry": "step"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Agent",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Agent",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "agent",
+                  "auth_index": 0,
+                  "actors": [
+                    "Agent"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "agent",
+                      "auth_index": 0,
+                      "actor": "Agent",
+                      "template_id": "template/agent",
+                      "state_expr": "next_agent",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": []
+                }
+              ],
+              "witness_recipe_ids": []
+            },
+            "hidden_params": [],
+            "template_selectors": [],
+            "witnesses": [],
+            "consumes": [],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "agent",
+                  "auth_index": 0,
+                  "actors": [
+                    "Agent"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "agent",
+                "actor": "Agent",
+                "template_id": "template/agent",
+                "state_expr": "next_agent"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "agent",
+                    "actor": "Agent",
+                    "template_id": "template/agent",
+                    "state_expr": "next_agent"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "Agent",
+        "source_path": "sil/Agent.sil",
+        "runtime_state": {
+          "source": "AgentState",
+          "fields": [
+            {
+              "name": "controller_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "caps_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "energy",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "step",
+            "selector": null,
+            "params": [
+              {
+                "name": "next_agent",
+                "type": {
+                  "kind": "struct",
+                  "name": "State"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c695279d000a069557953798769547952798769557901207c7e557901207c7e557958cd01087c7e7e7eb976c97602a20094014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c695279d000a069557953798769547952798769557901207c7e557901207c7e557958cd01087c7e7e7eb976c97602a20094014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "a3fe262bbcfad8c1a4e30bf7da5a585644edb7141bb4dff1f124992bee2531a1"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 75
+          }
+        }
+      }
+    ]
+  }
+}

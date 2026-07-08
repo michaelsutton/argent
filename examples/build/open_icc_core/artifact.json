@@ -1,0 +1,438 @@
+{
+  "schema_version": 1,
+  "id": "c55cf3e2cccec9172f5c95165827772110081ec457243f2d25af53bb6e8b9fc0",
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "OpenCore",
+  "root": "examples/open_icc/core.ag",
+  "modules": [
+    "examples/open_icc/core.ag",
+    "examples/open_icc/agent.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/cell",
+        "actor": "Cell",
+        "symbol": "gen__cell_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/cell",
+          "actor": "Cell",
+          "contract": "Cell",
+          "symbol": "gen__cell_template",
+          "hash_hex": "01f6296fd5dc0e9faeff1ef50a28b7b8907b0e285a12a467510bdbcd3a709adc"
+        }
+      ],
+      "runtime_states": [
+        {
+          "contract": "Cell",
+          "source": "CellState",
+          "field_roles": [
+            {
+              "name": "gen__agent_agent_template",
+              "role": {
+                "kind": "observed_template",
+                "observe": "agent",
+                "side": "output",
+                "handle": "agent",
+                "contract": "Agent"
+              }
+            }
+          ]
+        }
+      ],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": [
+        {
+          "id": "witness/observed/agent/output/agent/template_prefix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "agent",
+            "side": "output",
+            "handle": "agent",
+            "actor": "Agent"
+          },
+          "param": "gen__agent_agent_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/observed/agent/output/agent/template_suffix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "agent",
+            "side": "output",
+            "handle": "agent",
+            "actor": "Agent"
+          },
+          "param": "gen__agent_agent_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        }
+      ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Cell",
+          "actor": "Cell",
+          "state": "CellState",
+          "fingerprint_hex": "ee6eefb7b590709fbf5700191c8321232a07d16ab8990f7db88f4764660e58ce"
+        }
+      ],
+      "imports": [
+        {
+          "id": "interface/actor/Agent",
+          "actor": "Agent",
+          "state": "AgentState",
+          "fingerprint_hex": "0cc79bd82ed0eebd91320bd38ed82c645fe12430cd6826d5d846e4fbeeacb3e3"
+        }
+      ]
+    },
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "tick",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "Cell",
+        "state": "CellState",
+        "abi": {
+          "actor": "Cell"
+        },
+        "entries": [
+          {
+            "name": "advance",
+            "kind": "leader",
+            "abi": {
+              "actor": "Cell",
+              "entry": "advance"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "cell",
+                      "auth_index": 0,
+                      "actor": "Cell",
+                      "template_id": "template/cell",
+                      "state_expr": "next_cell",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": []
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/observed/agent/output/agent/template_prefix_bytes",
+                "witness/observed/agent/output/agent/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/observed/agent/output/agent/template_prefix_bytes",
+                "name": "gen__agent_agent_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "agent",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "Agent"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/agent/output/agent/template_suffix_bytes",
+                "name": "gen__agent_agent_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "agent",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "Agent"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "template_selectors": [],
+            "observes": [
+              {
+                "name": "agent",
+                "covenant_expr": "self.agent_id",
+                "inputs": [
+                  {
+                    "name": "agent",
+                    "actor": "Agent"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "agent",
+                    "actor": "Agent"
+                  }
+                ]
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/observed/agent/output/agent/template_prefix_bytes",
+                "param": "gen__agent_agent_prefix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "agent",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "Agent"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/agent/output/agent/template_suffix_bytes",
+                "param": "gen__agent_agent_suffix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "agent",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "Agent"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "cell",
+                "actor": "Cell",
+                "template_id": "template/cell",
+                "state_expr": "next_cell"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "cell",
+                    "actor": "Cell",
+                    "template_id": "template/cell",
+                    "state_expr": "next_cell"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "tick",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "Cell",
+        "source_path": "sil/Cell.sil",
+        "runtime_state": {
+          "source": "CellState",
+          "fields": [
+            {
+              "name": "gen__agent_agent_template",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "agent_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "tick",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "advance",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__agent_agent_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__agent_agent_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000007876d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e54797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e59797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602cd0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "7876d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e54797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e59797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602cd0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+            "hash_hex": "01f6296fd5dc0e9faeff1ef50a28b7b8907b0e285a12a467510bdbcd3a709adc"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 75
+          }
+        }
+      }
+    ]
+  }
+}

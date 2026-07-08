@@ -1160,6 +1160,105 @@ mod tests {
         );
     }
 
+    #[test]
+    fn open_icc_baseline_spends_core_and_agent_covenants() {
+        let core_artifact = open_icc_core_artifact();
+        let agent_artifact = open_icc_agent_artifact();
+        let bundle = ArtifactBundle::new(&core_artifact)
+            .expect("bundle accepts open ICC core")
+            .with_app("agent", &agent_artifact)
+            .expect("bundle accepts open ICC agent app");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts open ICC bundle");
+
+        let controller_covenant_id = Hash::from_bytes([0x31; 32]);
+        let agent_covenant_id = Hash::from_bytes([0x41; 32]);
+        let cell_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x51; 32]), index: 0 };
+        let agent_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x52; 32]), index: 0 };
+        let cell_value = 4_000;
+        let agent_value = 2_000;
+        let caps_digest = vec![0x77; 32];
+
+        let cell_initial = open_cell_state(agent_covenant_id, 7);
+        let cell_next = open_cell_state(agent_covenant_id, 8);
+        let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
+        let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
+
+        let agent_utxo = builder
+            .covenant_utxo_in_app("agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("agent utxo builds");
+        let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
+        let outputs = open_icc_advance_outputs(
+            &builder,
+            cell_next,
+            &observed,
+            cell_value,
+            agent_value,
+            controller_covenant_id,
+            agent_covenant_id,
+        );
+        let cell_utxo = builder
+            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("cell utxo builds");
+        let entries = vec![cell_utxo, agent_utxo];
+        let agent_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "agent",
+                "Agent",
+                "step",
+                agent_initial.clone(),
+                vec![ArtifactValue::Object(agent_next.clone())],
+            )
+            .expect("agent step sigscript builds");
+        let cell_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect("cell advance sigscript builds");
+        let tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(cell_outpoint, cell_sigscript),
+                TxBuilder::transaction_input(agent_outpoint, agent_sigscript),
+            ],
+            outputs,
+        );
+        execute_input_with_covenants(&tx, entries.clone(), 0).expect("core cell input passes");
+        execute_input_with_covenants(&tx, entries.clone(), 1).expect("agent input passes");
+
+        let wrong_agent_next = open_agent_state(controller_covenant_id, vec![0x77; 32], 5);
+        let wrong_observed = open_agent_context("Agent", agent_initial.clone(), entries[1].clone(), wrong_agent_next.clone());
+        let wrong_outputs = open_icc_advance_outputs(
+            &builder,
+            open_cell_state(agent_covenant_id, 8),
+            &wrong_observed,
+            cell_value,
+            agent_value,
+            controller_covenant_id,
+            agent_covenant_id,
+        );
+        let wrong_agent_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "agent",
+                "Agent",
+                "step",
+                agent_initial.clone(),
+                vec![ArtifactValue::Object(wrong_agent_next)],
+            )
+            .expect("agent accepts controller-authorized non-physics state");
+        let wrong_cell_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect("cell sigscript builds for wrong-output tx");
+        let wrong_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(cell_outpoint, wrong_cell_sigscript),
+                TxBuilder::transaction_input(agent_outpoint, wrong_agent_sigscript),
+            ],
+            wrong_outputs,
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_tx, entries.clone(), 0).is_err(),
+            "core physics rejects an agent output that does not spend one energy"
+        );
+        execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts authorized header-preserving output");
+    }
+
     fn tickets_artifact() -> Artifact {
         example_artifact("examples/tickets.ag", "tickets")
     }
@@ -1170,6 +1269,14 @@ mod tests {
 
     fn icc_asset_artifact() -> Artifact {
         example_artifact("examples/icc/kcc20_asset.ag", "icc-asset")
+    }
+
+    fn open_icc_core_artifact() -> Artifact {
+        example_artifact("examples/open_icc/core.ag", "open-icc-core")
+    }
+
+    fn open_icc_agent_artifact() -> Artifact {
+        example_artifact("examples/open_icc/agent.ag", "open-icc-agent")
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -1296,6 +1403,21 @@ mod tests {
         ])
     }
 
+    fn open_cell_state(agent_id: Hash, tick: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("agent_id".to_string(), ArtifactValue::Bytes(agent_id.as_bytes().to_vec())),
+            ("tick".to_string(), ArtifactValue::Int(tick)),
+        ])
+    }
+
+    fn open_agent_state(controller_id: Hash, caps_digest: Vec<u8>, energy: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
+            ("caps_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("energy".to_string(), ArtifactValue::Int(energy)),
+        ])
+    }
+
     fn observed_asset_context(
         proxy_actor: &str,
         proxy_state: BTreeMap<String, ArtifactValue>,
@@ -1340,6 +1462,49 @@ mod tests {
                     asset_covenant_id,
                 )
                 .expect("observed asset outputs build"),
+        );
+        outputs
+    }
+
+    fn open_agent_context(
+        agent_actor: &str,
+        agent_state: BTreeMap<String, ArtifactValue>,
+        agent_utxo: UtxoEntry,
+        next_agent_state: BTreeMap<String, ArtifactValue>,
+    ) -> BTreeMap<String, ObservedCovenantContext> {
+        BTreeMap::from([(
+            "agent".to_string(),
+            ObservedCovenantContext::new().input("agent", agent_actor, agent_utxo, agent_state).output(
+                "agent",
+                agent_actor,
+                next_agent_state,
+            ),
+        )])
+    }
+
+    fn open_icc_advance_outputs(
+        builder: &TxBuilder<'_>,
+        cell_next: BTreeMap<String, ArtifactValue>,
+        observed: &BTreeMap<String, ObservedCovenantContext>,
+        cell_value: u64,
+        agent_value: u64,
+        controller_covenant_id: Hash,
+        agent_covenant_id: Hash,
+    ) -> Vec<kaspa_consensus_core::tx::TransactionOutput> {
+        let mut outputs =
+            vec![builder.covenant_output("Cell", cell_next, cell_value, 0, controller_covenant_id).expect("cell output builds")];
+        outputs.extend(
+            builder
+                .observed_outputs(
+                    "Cell",
+                    "advance",
+                    "agent",
+                    observed.get("agent").expect("agent observed context exists"),
+                    BTreeMap::from([("agent".to_string(), agent_value)]),
+                    1,
+                    agent_covenant_id,
+                )
+                .expect("agent output builds"),
         );
         outputs
     }

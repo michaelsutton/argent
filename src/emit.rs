@@ -1796,6 +1796,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             return Ok(());
         }
 
+        if let Some(require_expr) = parse_require_statement(&statement) {
+            for covenant_id in authorized_covenant_ids(require_expr, &self.source_types)? {
+                push_indent(out, indent);
+                out.push_str(&format!("// :: authorized by {} (via co-spend)\n", covenant_id.trim()));
+            }
+        }
+
         push_indent(out, indent);
         out.push_str(&self.lower_expr(&statement, None, indent)?);
         out.push_str(";\n");
@@ -4007,6 +4014,36 @@ fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -
     Ok(out)
 }
 
+fn authorized_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
+    if !expr.contains(".authorized") {
+        return Ok(Vec::new());
+    }
+    let tokens =
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+    let mut ids = Vec::new();
+    let mut pos = 0usize;
+    while pos < tokens.len() {
+        if let Some((_replacement_start, _replacement_end, next_pos, covenant_id)) =
+            parse_authorized_call(expr, &tokens, pos, source_types)?
+        {
+            ids.push(covenant_id.trim().to_string());
+            pos = next_pos;
+            continue;
+        }
+        if matches!(tokens[pos].kind, TokenKind::Eof) {
+            break;
+        }
+        pos += 1;
+    }
+    Ok(ids)
+}
+
+fn parse_require_statement(statement: &str) -> Option<&str> {
+    let statement = statement.trim();
+    let inner = statement.strip_prefix("require(")?.strip_suffix(')')?;
+    Some(inner)
+}
+
 fn parse_authorized_call(
     expr: &str,
     tokens: &[Token],
@@ -5359,12 +5396,14 @@ mod tests {
         let kcc20_sil = fs::read_to_string(out_dir.join("sil/KCC20.sil")).expect("KCC20.sil exists");
         assert!(kcc20_sil.contains("} else if (identifier_type == IDENTIFIER_COVENANT_ID) {"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(checkSig(owner_sig, owner_identifier));"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("// :: authorized by owner_identifier (via co-spend)"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(OpCovInputCount(owner_identifier) > 0);"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("State next_state = {"), "{kcc20_sil}");
 
         let proxy_sil = fs::read_to_string(out_dir.join("sil/MinterProxy.sil")).expect("MinterProxy.sil exists");
         assert!(proxy_sil.contains("byte[32] controller_id = init_controller_id;"), "{proxy_sil}");
         assert!(proxy_sil.contains("entrypoint function mint(\n        State next_proxy,"), "{proxy_sil}");
+        assert!(proxy_sil.contains("// :: authorized by controller_id (via co-spend)"), "{proxy_sil}");
         assert!(proxy_sil.contains("require(OpCovInputCount(controller_id) > 0);"), "{proxy_sil}");
 
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");

@@ -1,0 +1,27 @@
+{
+  "app": "OpenCore",
+  "root": "examples/open_icc/core.ag",
+  "modules": [
+    "examples/open_icc/core.ag",
+    "examples/open_icc/agent.ag"
+  ],
+  "templates": [
+    { "actor": "Cell", "symbol": "gen__cell_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Cell",
+      "state": "CellState",
+      "sil": "sil/Cell.sil",
+      "entries": [
+        {
+          "name": "advance",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "cell", "auth_index": 0, "actors": ["Cell"] }] },
+          "consumes": [],
+          "routes": [{ "output": "cell", "actor": "Cell", "state": "next_cell" }]
+        }
+      ]
+    }
+  ]
+}

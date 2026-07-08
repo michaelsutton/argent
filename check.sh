@@ -34,11 +34,13 @@ cargo fmt --check
 cargo check --workspace
 
 if [ "$regen_examples" = true ]; then
-    cargo run -- build examples/tickets.ag --out build/tickets
-    cargo run -- build examples/stones/app.ag --out build/stones
-    cargo run -- build examples/toy_chess/app.ag --out build/toy_chess
-    cargo run -- build examples/icc/kcc20_asset.ag --out build/icc_kcc20_asset
-    cargo run -- build examples/icc/minter.ag --out build/icc_minter
+    cargo run -- build examples/tickets.ag --out examples/build/tickets
+    cargo run -- build examples/stones/app.ag --out examples/build/stones
+    cargo run -- build examples/toy_chess/app.ag --out examples/build/toy_chess
+    cargo run -- build examples/icc/kcc20_asset.ag --out examples/build/icc_kcc20_asset
+    cargo run -- build examples/icc/minter.ag --out examples/build/icc_minter
+    cargo run -- build examples/open_icc/agent.ag --out examples/build/open_icc_agent
+    cargo run -- build examples/open_icc/core.ag --out examples/build/open_icc_core
 fi
 
 cargo test --workspace
