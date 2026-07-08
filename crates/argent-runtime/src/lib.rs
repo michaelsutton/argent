@@ -55,6 +55,8 @@ pub enum BuilderError {
     UnknownActor(String),
     #[error("runtime state plan for contract `{contract}` is invalid: {message}")]
     RuntimeStatePlanMismatch { contract: String, message: String },
+    #[error("runtime state field `{field}` for contract `{contract}` is generated and must be filled by the runtime")]
+    HiddenRuntimeFieldProvided { contract: String, field: String },
     #[error("hidden param `{param}` is missing route proof metadata")]
     MissingHiddenRouteProof { param: String },
     #[error("unknown route proof `{0}`")]
@@ -689,37 +691,40 @@ impl<'a> TxBuilder<'a> {
                     let value = source_state.remove(&field.name).ok_or_else(|| CodecError::MissingField(field.name.clone()))?;
                     values.insert(field.name.clone(), value);
                 }
-                Some(RuntimeFieldRoleArtifact::Template { contract }) => {
-                    values.insert(
-                        field.name.clone(),
-                        ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
-                    );
-                }
-                Some(RuntimeFieldRoleArtifact::ObservedTemplate { contract, .. }) => {
-                    let value = if let Some(value) = source_state.remove(&field.name) {
-                        value
-                    } else {
-                        ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?)
-                    };
-                    values.insert(field.name.clone(), value);
-                }
-                Some(RuntimeFieldRoleArtifact::TemplateTable { contracts }) => {
-                    let mut table = Vec::with_capacity(contracts.len() * 32);
-                    for contract in contracts {
-                        table.extend_from_slice(&decode_hex(
-                            &self.contract_in_artifact(artifact, contract)?.compiled.template.hash_hex,
-                        )?);
+                Some(role) => {
+                    if source_state.contains_key(&field.name) {
+                        return Err(BuilderError::HiddenRuntimeFieldProvided {
+                            contract: contract.name.clone(),
+                            field: field.name.clone(),
+                        });
                     }
-                    values.insert(field.name.clone(), ArtifactValue::Bytes(table));
-                }
-                Some(RuntimeFieldRoleArtifact::TemplateDigest { id }) => {
-                    let table = self.route_family_table_bytes_in_artifact(artifact, id)?;
-                    values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
-                }
-                Some(RuntimeFieldRoleArtifact::TemplateRoot { .. }) => {
-                    let proof_id = route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
-                    let proof = self.route_template_proof_in_artifact(artifact, &proof_id)?;
-                    values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
+                    match role {
+                        RuntimeFieldRoleArtifact::Template { contract }
+                        | RuntimeFieldRoleArtifact::ObservedTemplate { contract, .. } => {
+                            values.insert(
+                                field.name.clone(),
+                                ArtifactValue::Bytes(decode_hex(&self.contract(contract)?.compiled.template.hash_hex)?),
+                            );
+                        }
+                        RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+                            let mut table = Vec::with_capacity(contracts.len() * 32);
+                            for contract in contracts {
+                                table.extend_from_slice(&decode_hex(
+                                    &self.contract_in_artifact(artifact, contract)?.compiled.template.hash_hex,
+                                )?);
+                            }
+                            values.insert(field.name.clone(), ArtifactValue::Bytes(table));
+                        }
+                        RuntimeFieldRoleArtifact::TemplateDigest { id } => {
+                            let table = self.route_family_table_bytes_in_artifact(artifact, id)?;
+                            values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
+                        }
+                        RuntimeFieldRoleArtifact::TemplateRoot { .. } => {
+                            let proof_id = route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
+                            let proof = self.route_template_proof_in_artifact(artifact, &proof_id)?;
+                            values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
+                        }
+                    }
                 }
             }
         }

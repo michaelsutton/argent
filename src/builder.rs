@@ -127,6 +127,16 @@ mod tests {
             Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
         );
         assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
+
+        let mut explicit_hidden_state = source_state;
+        explicit_hidden_state.insert("gen__ticket_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
+        let err = builder
+            .redeem_script("Ticket", explicit_hidden_state)
+            .expect_err("hidden runtime state fields must be filled by the runtime");
+        assert!(
+            matches!(err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__ticket_template"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -850,6 +860,17 @@ mod tests {
         let minter_next = minter_state(owner_pk.clone(), asset_covenant_id, 83, true);
         let proxy_state = minter_proxy_state(controller_covenant_id);
         let recipient_state = kcc20_state(recipient_owner.clone(), minted_amount);
+
+        let mut explicit_observed_template_state = minter_initial.clone();
+        explicit_observed_template_state.insert("gen__asset_kcc20_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
+        let hidden_field_err = builder
+            .covenant_output("Minter", explicit_observed_template_state, minter_value, 0, controller_covenant_id)
+            .expect_err("observed template fields must be filled by the runtime");
+        assert!(
+            matches!(hidden_field_err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__asset_kcc20_template"),
+            "unexpected error: {hidden_field_err}"
+        );
+
         let observed = observed_asset_context(
             "MinterProxy",
             proxy_state.clone(),
