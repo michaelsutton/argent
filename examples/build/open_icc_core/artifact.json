@@ -1,0 +1,430 @@
+{
+  "schema_version": 1,
+  "id": "f4cdadc4e8c95db1c566f6088af8b9ed0d45c7e8e851e886e38d2c09d595ea16",
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "OpenCore",
+  "root": "examples/open_icc/core.ag",
+  "modules": [
+    "examples/open_icc/core.ag",
+    "examples/open_icc/agent.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/cell",
+        "actor": "Cell",
+        "symbol": "gen__cell_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/cell",
+          "actor": "Cell",
+          "contract": "Cell",
+          "symbol": "gen__cell_template",
+          "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
+        }
+      ],
+      "runtime_states": [],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": [
+        {
+          "id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "remote",
+            "side": "output",
+            "handle": "agent",
+            "actor": "self.agent_type"
+          },
+          "param": "gen__remote_agent_type_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+          "subject": {
+            "kind": "observed_actor",
+            "observe": "remote",
+            "side": "output",
+            "handle": "agent",
+            "actor": "self.agent_type"
+          },
+          "param": "gen__remote_agent_type_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        }
+      ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Cell",
+          "actor": "Cell",
+          "state": "CellState",
+          "fingerprint_hex": "595bb3cfbda2a4c824258c57b70ca313f1bacd31362b8c747613316df64cb074"
+        }
+      ],
+      "imports": []
+    },
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "tick",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "Cell",
+        "state": "CellState",
+        "abi": {
+          "actor": "Cell"
+        },
+        "entries": [
+          {
+            "name": "advance",
+            "kind": "leader",
+            "abi": {
+              "actor": "Cell",
+              "entry": "advance"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": "cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "cell",
+                      "auth_index": 0,
+                      "actor": "Cell",
+                      "template_id": "template/cell",
+                      "state_expr": "next_cell",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": []
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "witness/observed/remote/output/agent_type/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "name": "gen__remote_agent_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.agent_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+                "name": "gen__remote_agent_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.agent_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "template_selectors": [],
+            "observes": [
+              {
+                "name": "remote",
+                "covenant_expr": "self.agent_covid",
+                "inputs": [
+                  {
+                    "name": "agent",
+                    "actor": "self.agent_type",
+                    "open_state": "AgentState"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "agent",
+                    "actor": "self.agent_type",
+                    "open_state": "AgentState"
+                  }
+                ]
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+                "param": "gen__remote_agent_type_prefix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.agent_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+                "param": "gen__remote_agent_type_suffix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.agent_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "cell",
+                "actor": "Cell",
+                "template_id": "template/cell",
+                "state_expr": "next_cell"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "cell",
+                    "actor": "Cell",
+                    "template_id": "template/cell",
+                    "state_expr": "next_cell"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "AgentState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "tick",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "Cell",
+        "source_path": "sil/Cell.sil",
+        "runtime_state": {
+          "source": "CellState",
+          "fields": [
+            {
+              "name": "agent_covid",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "agent_type",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "tick",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "advance",
+            "selector": null,
+            "params": [
+              {
+                "name": "gen__remote_agent_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__remote_agent_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+            "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 75
+          }
+        }
+      }
+    ]
+  }
+}

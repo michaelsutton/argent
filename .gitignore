@@ -1,12 +1,2 @@
 /target/
-/build/*
-!/build/stones/
-!/build/stones/**
-!/build/tickets/
-!/build/tickets/**
-!/build/toy_chess/
-!/build/toy_chess/**
-!/build/icc_kcc20_asset/
-!/build/icc_kcc20_asset/**
-!/build/icc_minter/
-!/build/icc_minter/**
+/build/

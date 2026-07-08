@@ -39,18 +39,18 @@ StonesSettle + Player + Player
 Build:
 
 ```sh
-cargo run -- build examples/stones/app.ag --out build/stones
+cargo run -- build examples/stones/app.ag --out examples/build/stones
 ```
 
 Generated artifacts:
 
 ```text
-build/stones/artifact.json
-build/stones/manifest.json
-build/stones/sil/League.sil
-build/stones/sil/Player.sil
-build/stones/sil/StonesGame.sil
-build/stones/sil/StonesSettle.sil
+examples/build/stones/artifact.json
+examples/build/stones/manifest.json
+examples/build/stones/sil/League.sil
+examples/build/stones/sil/Player.sil
+examples/build/stones/sil/StonesGame.sil
+examples/build/stones/sil/StonesSettle.sil
 ```
 
 Compiler features exercised today:

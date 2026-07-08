@@ -393,8 +393,45 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, observe.name
                 )));
             }
+            self.validate_observed_open_bindings(actor, entry, observe)?;
             self.validate_observed_actor_handles(actor, entry, observe, "input", &observe.inputs)?;
             self.validate_observed_actor_handles(actor, entry, observe, "output", &observe.outputs)?;
+        }
+        Ok(())
+    }
+
+    fn validate_observed_open_bindings(&self, actor: &ActorDecl, entry: &EntryDecl, observe: &ObserveDecl) -> Result<()> {
+        let mut bindings = BTreeMap::new();
+        let mut source_names = self.state(&actor.state)?.fields.iter().map(|field| field.name.as_str()).collect::<BTreeSet<_>>();
+        source_names.extend(entry.params.iter().map(|param| param.name.as_str()));
+        source_names.extend(entry.consumes.iter().map(|consume| consume.name.as_str()));
+        for input in &observe.inputs {
+            let Some(state) = input.open_state.as_deref() else {
+                continue;
+            };
+            reject_reserved_identifier(
+                &format!("entry `{}::{}` observe `{}` open actor binding", actor.name, entry.name, observe.name),
+                &input.actor,
+            )?;
+            if source_names.contains(input.actor.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` open observed actor binding `{}` collides with a source value",
+                    actor.name, entry.name, observe.name, input.actor
+                )));
+            }
+            self.state(state)?;
+            if let Some(previous_state) = bindings.insert(input.actor.as_str(), state) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` declares open observed actor binding `{}` for both `{previous_state}` and `{state}`",
+                    actor.name, entry.name, observe.name, input.actor
+                )));
+            }
+            if !observe.outputs.iter().any(|output| output.actor == input.actor) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` open observed actor binding `{}` must be used by an output",
+                    actor.name, entry.name, observe.name, input.actor
+                )));
+            }
         }
         Ok(())
     }
@@ -415,6 +452,15 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, observe.name, observed.name
                 )));
             }
+            if let Some(state) = observed_open_state_for_decl(actor, entry, observe, observed, self)? {
+                self.state(&state).map_err(|_| {
+                    ArgentError::new(format!(
+                        "entry `{}::{}` observe `{}` {section} `{}` references unknown state `{state}`",
+                        actor.name, entry.name, observe.name, observed.name
+                    ))
+                })?;
+                continue;
+            }
             self.actor_state(&observed.actor).map_err(|_| {
                 ArgentError::new(format!(
                     "entry `{}::{}` observe `{}` {section} `{}` references unknown actor `{}`",
@@ -430,7 +476,7 @@ impl<'a> Model<'a> {
         for actor in &self.actors {
             for entry in &actor.entries {
                 for observe in &entry.observes {
-                    for spec in observed_actor_template_specs(observe) {
+                    for spec in observed_actor_template_specs(actor, entry, observe, self)? {
                         let field = hidden_observed_actor_template_name(&spec);
                         let key = (actor.state.as_str(), field.clone());
                         if let Some(previous) = seen.insert(key, (actor.name.as_str(), entry.name.as_str(), spec.clone()))
@@ -1371,7 +1417,11 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
     for entry in &current_actor.entries {
         for observe in &entry.observes {
             for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
-                state_names.push(model.actor(&observed.actor)?.state.clone());
+                if let Some(state) = observed_open_state_for_decl(current_actor, entry, observe, observed, model)? {
+                    state_names.push(state.to_string());
+                } else {
+                    state_names.push(model.actor(&observed.actor)?.state.clone());
+                }
             }
         }
     }
@@ -1541,12 +1591,22 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
         out.push_str(&format!("        byte[32] {cov_id} = {cov_expr}; // observe {}\n", observe.name));
         out.push_str(&format!("        require(OpCovInputCount({cov_id}) == {});\n", observe.inputs.len()));
         out.push_str(&format!("        require(OpCovOutputCount({cov_id}) == {});\n", observe.outputs.len()));
+        let mut materialized_open_bindings = BTreeSet::new();
+        for output in &observe.outputs {
+            if !observed_is_dynamic_binding(observe, output) || !materialized_open_bindings.insert(output.actor.as_str()) {
+                continue;
+            }
+            let spec = observed_output_spec(observe, output);
+            let prefix = hidden_observed_actor_prefix_name(&spec);
+            let suffix = hidden_observed_actor_suffix_name(&spec);
+            push_generated_call(out, 8, &format!("byte[32] {} = ", output.actor), "blake2b", &[format!("{prefix} + {suffix}")]);
+        }
         for (idx, input) in observe.inputs.iter().enumerate() {
             let lens_spec = observed_input_lens_source_for_input(observe, input);
             let template_spec = observed_template_spec_for_input(observe, input);
             let input_idx = hidden_observed_input_idx_name(&observe.name, &input.name);
             let state_name = hidden_observed_input_state_name(&observe.name, &input.name);
-            let state_struct = contract_state_type_for_actor(&input.actor, actor, model)?;
+            let state_struct = contract_state_type_for_observed_actor(actor, entry, observe, input, model)?;
             push_generated_statement_with_comment(
                 out,
                 8,
@@ -1574,7 +1634,7 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
                     input_idx,
                     hidden_observed_actor_prefix_len_name(&observed_input_spec(observe, input)),
                     hidden_observed_actor_suffix_len_name(&observed_input_spec(observe, input)),
-                    hidden_observed_actor_template_name(&template_spec),
+                    observed_actor_template_expr_for_entry(actor, entry, model, observe, input, &template_spec)?,
                 ],
             );
         }
@@ -1667,6 +1727,12 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for param in &entry.params {
             types.insert(param.name.clone(), lower_entry_param_type(actor, &param.ty, model));
             source_types.insert(param.name.clone(), source_type_ref(&param.ty));
+        }
+        for observe in &entry.observes {
+            for (binding, state) in observed_open_bindings(observe) {
+                types.insert(binding.to_string(), "byte[32]".to_string());
+                source_types.insert(binding.to_string(), format!("actor<{state}>"));
+            }
         }
 
         let mut input_names = BTreeSet::new();
@@ -1796,6 +1862,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             return Ok(());
         }
 
+        if let Some(require_expr) = parse_require_statement(&statement) {
+            for covenant_id in authorized_covenant_ids(require_expr, &self.source_types)? {
+                push_indent(out, indent);
+                out.push_str(&format!("// :: authorized by {} (via co-spend)\n", covenant_id.trim()));
+            }
+        }
+
         push_indent(out, indent);
         out.push_str(&self.lower_expr(&statement, None, indent)?);
         out.push_str(";\n");
@@ -1904,11 +1977,47 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn parse_become_route(&mut self) -> Result<RouteCall> {
+        let start = self.current().span.start;
         let first = self.expect_any_ident()?;
-        let (output, actor) = if self.consume_left_arrow() { (Some(first), self.expect_any_ident()?) } else { (None, first) };
+        let (output, actor) = if self.consume_left_arrow() {
+            (Some(first), self.take_route_actor_expr()?)
+        } else {
+            (None, self.take_route_actor_expr_from(start)?)
+        };
         self.expect_symbol('(')?;
         let state = self.take_balanced_expr('(', ')')?;
         Ok(RouteCall { output, actor, state })
+    }
+
+    fn take_route_actor_expr(&mut self) -> Result<String> {
+        let start = self.current().span.start;
+        self.take_route_actor_expr_from(start)
+    }
+
+    fn take_route_actor_expr_from(&mut self, start: usize) -> Result<String> {
+        let mut depth = 0usize;
+        while !self.is_eof() {
+            let token = self.current().clone();
+            match token.kind {
+                TokenKind::Symbol('(') if depth == 0 => {
+                    let expr = self.body[start..token.span.start].trim().to_string();
+                    if expr.is_empty() {
+                        return Err(self.error("become target is empty"));
+                    }
+                    return Ok(expr);
+                }
+                TokenKind::Symbol('{') | TokenKind::Symbol('[') | TokenKind::Symbol('<') => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::Symbol('}') | TokenKind::Symbol(']') | TokenKind::Symbol('>') => {
+                    depth = depth.saturating_sub(1);
+                    self.advance();
+                }
+                _ => self.advance(),
+            }
+        }
+        Err(self.error("unterminated become target"))
     }
 
     fn lower_observed_outputs_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
@@ -1963,7 +2072,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         observed_output: &ObservedActorDecl,
         route: RouteCall,
     ) -> Result<()> {
-        let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
+        let observe = self.entry.observes.iter().find(|observe| observe.name == observe_name).expect("observe checked by caller");
+        let state_ty = contract_state_type_for_observed_actor(self.actor, self.entry, observe, observed_output, self.model)?;
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
@@ -1975,7 +2085,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             name
         };
 
-        let observe = self.entry.observes.iter().find(|observe| observe.name == observe_name).expect("observe checked by caller");
         let spec = observed_output_spec(observe, observed_output);
         let output_idx = hidden_observed_output_idx_name(observe_name, &observed_output.name);
 
@@ -1991,10 +2100,26 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 state_arg,
                 hidden_observed_actor_prefix_name(&spec),
                 hidden_observed_actor_suffix_name(&spec),
-                hidden_observed_actor_template_name(&spec),
+                self.observed_actor_template_expr(observe, observed_output, &spec, indent)?,
             ],
         );
         Ok(())
+    }
+
+    fn observed_actor_template_expr(
+        &self,
+        observe: &ObserveDecl,
+        observed: &ObservedActorDecl,
+        spec: &ObservedActorWitnessSpec,
+        indent: usize,
+    ) -> Result<String> {
+        if observed_is_dynamic_binding(observe, observed) {
+            return Ok(observed.actor.clone());
+        }
+        if observed_is_source_actor_handle(self.actor, self.entry, observed, self.model)? {
+            return self.lower_expr(&observed.actor, Some("byte[32]"), indent);
+        }
+        Ok(hidden_observed_actor_template_name(spec))
     }
 
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
@@ -2797,12 +2922,12 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
         .collect::<BTreeSet<_>>();
     let mut specs = template_witness_specs_for_actor(actor, model, read_actors, byte_actors);
     specs.selectors = selector_specs;
-    specs.observed_actors = observed_actor_witness_specs(entry);
+    specs.observed_actors = observed_actor_witness_specs(actor, entry, model);
     specs
 }
 
-fn observed_actor_witness_specs(entry: &EntryDecl) -> Vec<ObservedActorWitnessSpec> {
-    entry.observes.iter().flat_map(observed_actor_witness_specs_for_observe).collect()
+fn observed_actor_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<ObservedActorWitnessSpec> {
+    entry.observes.iter().flat_map(|observe| observed_actor_witness_specs_for_observe(actor, entry, observe, model)).collect()
 }
 
 fn template_witness_specs_for_actor(
@@ -2883,7 +3008,9 @@ fn observed_template_specs_for_state(state: &str, model: &Model<'_>) -> Vec<Obse
         }
         for entry in &actor.entries {
             for observe in &entry.observes {
-                for spec in observed_actor_template_specs(observe) {
+                for spec in observed_actor_template_specs(actor, entry, observe, model)
+                    .expect("observed actor template specs are valid after model validation")
+                {
                     if seen.insert(spec.clone()) {
                         specs.push(spec);
                     }
@@ -2894,21 +3021,46 @@ fn observed_template_specs_for_state(state: &str, model: &Model<'_>) -> Vec<Obse
     specs
 }
 
-fn observed_actor_template_specs(observe: &ObserveDecl) -> Vec<ObservedActorWitnessSpec> {
-    observed_actor_specs_for_observe(observe)
+fn observed_actor_template_specs(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    model: &Model<'_>,
+) -> Result<Vec<ObservedActorWitnessSpec>> {
+    observed_actor_specs_for_observe(actor, entry, observe, model)?
+        .into_iter()
+        .filter_map(|spec| {
+            let observed = observed_decl_for_spec(observe, &spec)?;
+            match observed_open_state_for_decl(actor, entry, observe, observed, model) {
+                Ok(Some(_)) => None,
+                Ok(None) => Some(Ok(spec)),
+                Err(err) => Some(Err(err)),
+            }
+        })
+        .collect()
 }
 
-fn observed_actor_witness_specs_for_observe(observe: &ObserveDecl) -> Vec<ObservedActorWitnessSpec> {
-    observed_actor_specs_for_observe(observe)
+fn observed_actor_witness_specs_for_observe(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    model: &Model<'_>,
+) -> Vec<ObservedActorWitnessSpec> {
+    observed_actor_specs_for_observe(actor, entry, observe, model).expect("observed actor specs are valid after model validation")
 }
 
-fn observed_actor_specs_for_observe(observe: &ObserveDecl) -> Vec<ObservedActorWitnessSpec> {
+fn observed_actor_specs_for_observe(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    model: &Model<'_>,
+) -> Result<Vec<ObservedActorWitnessSpec>> {
     let mut seen = BTreeSet::new();
     let mut specs = Vec::new();
 
     for output in &observe.outputs {
         let spec = observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
-        if seen.insert((spec.side, spec.actor.clone())) {
+        if seen.insert((spec.side, observed_witness_key(actor, entry, observe, output, model)?)) {
             specs.push(spec);
         }
     }
@@ -2917,11 +3069,108 @@ fn observed_actor_specs_for_observe(observe: &ObserveDecl) -> Vec<ObservedActorW
             continue;
         }
         let spec = observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor);
-        if seen.insert((spec.side, spec.actor.clone())) {
+        if seen.insert((spec.side, observed_witness_key(actor, entry, observe, input, model)?)) {
             specs.push(spec);
         }
     }
-    specs
+    Ok(specs)
+}
+
+fn observed_decl_for_spec<'a>(observe: &'a ObserveDecl, spec: &ObservedActorWitnessSpec) -> Option<&'a ObservedActorDecl> {
+    match spec.side {
+        ObservedActorSideArtifact::Input => observe.inputs.iter().find(|input| input.name == spec.handle),
+        ObservedActorSideArtifact::Output => observe.outputs.iter().find(|output| output.name == spec.handle),
+    }
+}
+
+fn observed_witness_key(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    observed: &ObservedActorDecl,
+    model: &Model<'_>,
+) -> Result<String> {
+    if observed_is_dynamic_binding(observe, observed) {
+        return Ok(format!("binding:{}", observed.actor));
+    }
+    if observed_is_source_actor_handle(actor, entry, observed, model)? {
+        return Ok(format!("expr:{}", compact_expr(&observed.actor)));
+    }
+    Ok(format!("actor:{}", observed.actor))
+}
+
+fn observed_open_bindings(observe: &ObserveDecl) -> BTreeMap<&str, &str> {
+    observe.inputs.iter().filter_map(|input| input.open_state.as_deref().map(|state| (input.actor.as_str(), state))).collect()
+}
+
+fn observed_dynamic_binding_state<'a>(observe: &'a ObserveDecl, observed: &'a ObservedActorDecl) -> Option<&'a str> {
+    observed.open_state.as_deref().or_else(|| observed_open_bindings(observe).get(observed.actor.as_str()).copied())
+}
+
+fn observed_open_state_for_decl(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    observed: &ObservedActorDecl,
+    model: &Model<'_>,
+) -> Result<Option<String>> {
+    if let Some(state) = observed_dynamic_binding_state(observe, observed) {
+        model.state(state)?;
+        return Ok(Some(state.to_string()));
+    }
+    source_actor_handle_state_for_expr(&observed.actor, actor, entry, model)
+}
+
+fn observed_is_dynamic_binding(observe: &ObserveDecl, observed: &ObservedActorDecl) -> bool {
+    observed_dynamic_binding_state(observe, observed).is_some()
+}
+
+fn observed_is_source_actor_handle(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observed: &ObservedActorDecl,
+    model: &Model<'_>,
+) -> Result<bool> {
+    Ok(source_actor_handle_state_for_expr(&observed.actor, actor, entry, model)?.is_some())
+}
+
+fn source_actor_handle_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
+    let expr = expr.trim();
+    let current_state = model.state(&actor.state)?;
+    let source_ty = if let Some(field_name) = expr.strip_prefix("self.") {
+        current_state.fields.iter().find(|field| field.name == field_name).map(|field| &field.ty)
+    } else if is_identifier(expr) {
+        entry
+            .params
+            .iter()
+            .find(|param| param.name == expr)
+            .map(|param| &param.ty)
+            .or_else(|| current_state.fields.iter().find(|field| field.name == expr).map(|field| &field.ty))
+    } else {
+        None
+    };
+    let Some(state) = source_ty.and_then(|ty| ty.actor_state.as_ref()) else {
+        return Ok(None);
+    };
+    model.state(state)?;
+    Ok(Some(state.clone()))
+}
+
+fn observed_actor_template_expr_for_entry(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    observe: &ObserveDecl,
+    observed: &ObservedActorDecl,
+    spec: &ObservedActorWitnessSpec,
+) -> Result<String> {
+    if observed_is_dynamic_binding(observe, observed) {
+        return Ok(observed.actor.clone());
+    }
+    if observed_is_source_actor_handle(actor, entry, observed, model)? {
+        return lower_entry_expr(actor, entry, model, &observed.actor, Some("byte[32]"));
+    }
+    Ok(hidden_observed_actor_template_name(spec))
 }
 
 fn observed_template_spec_for_input(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
@@ -3120,6 +3369,9 @@ fn interface_set_artifact(model: &Model<'_>) -> Result<InterfaceSetArtifact> {
         for entry in &actor.entries {
             for observe in &entry.observes {
                 for observed in observe.inputs.iter().chain(observe.outputs.iter()) {
+                    if observed_open_state_for_decl(actor, entry, observe, observed, model)?.is_some() {
+                        continue;
+                    }
                     if !template_actor_set.contains(observed.actor.as_str()) {
                         imported_actors.insert(observed.actor.clone());
                     }
@@ -3392,6 +3644,9 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
 }
 
 fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
+    if ty.is_actor_handle() {
+        return Ok(zero_byte_array_expr(32));
+    }
     match (&ty.name[..], ty.array) {
         ("byte", Some(len)) => Ok(zero_byte_array_expr(len)),
         (_, Some(len)) => {
@@ -3671,7 +3926,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
                 fixed_actor: selector.fixed_actor,
             })
             .collect(),
-        observes: entry.observes.iter().map(observe_artifact).collect(),
+        observes: entry.observes.iter().map(|observe| observe_artifact(actor, entry, model, observe)).collect::<Result<Vec<_>>>()?,
         witnesses,
         consumes: entry
             .consumes
@@ -3688,17 +3943,35 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
     })
 }
 
-fn observe_artifact(observe: &ObserveDecl) -> ObserveArtifact {
-    ObserveArtifact {
+fn observe_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, observe: &ObserveDecl) -> Result<ObserveArtifact> {
+    Ok(ObserveArtifact {
         name: observe.name.clone(),
         covenant_expr: compact_expr(&observe.covenant_expr),
-        inputs: observe.inputs.iter().map(observed_actor_artifact).collect(),
-        outputs: observe.outputs.iter().map(observed_actor_artifact).collect(),
-    }
+        inputs: observe
+            .inputs
+            .iter()
+            .map(|observed| observed_actor_artifact(actor, entry, model, observe, observed))
+            .collect::<Result<Vec<_>>>()?,
+        outputs: observe
+            .outputs
+            .iter()
+            .map(|observed| observed_actor_artifact(actor, entry, model, observe, observed))
+            .collect::<Result<Vec<_>>>()?,
+    })
 }
 
-fn observed_actor_artifact(observed: &ObservedActorDecl) -> ObservedActorArtifact {
-    ObservedActorArtifact { name: observed.name.clone(), actor: observed.actor.clone() }
+fn observed_actor_artifact(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    observe: &ObserveDecl,
+    observed: &ObservedActorDecl,
+) -> Result<ObservedActorArtifact> {
+    Ok(ObservedActorArtifact {
+        name: observed.name.clone(),
+        actor: observed.actor.clone(),
+        open_state: observed_open_state_for_decl(actor, entry, observe, observed, model)?,
+    })
 }
 
 fn entry_route_plan_artifact(
@@ -3953,11 +4226,17 @@ fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) ->
 }
 
 fn source_type_ref(ty: &TypeRef) -> String {
-    ty.to_sil()
+    if let Some(state) = &ty.actor_state { format!("actor<{state}>") } else { ty.to_sil() }
 }
 
 fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
-    if model.is_actor_enum_type(ty) { TypeArtifact::Int } else { TypeArtifact::from_parts(&ty.name, ty.array) }
+    if ty.is_actor_handle() {
+        TypeArtifact::FixedBytes { len: 32 }
+    } else if model.is_actor_enum_type(ty) {
+        TypeArtifact::Int
+    } else {
+        TypeArtifact::from_parts(&ty.name, ty.array)
+    }
 }
 
 fn entry_param_type_artifact(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
@@ -4005,6 +4284,36 @@ fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -
         return Err(ArgentError::new("`.authorized()` is only available on `covid` values or explicit `covid(expr)` casts"));
     }
     Ok(out)
+}
+
+fn authorized_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
+    if !expr.contains(".authorized") {
+        return Ok(Vec::new());
+    }
+    let tokens =
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+    let mut ids = Vec::new();
+    let mut pos = 0usize;
+    while pos < tokens.len() {
+        if let Some((_replacement_start, _replacement_end, next_pos, covenant_id)) =
+            parse_authorized_call(expr, &tokens, pos, source_types)?
+        {
+            ids.push(covenant_id.trim().to_string());
+            pos = next_pos;
+            continue;
+        }
+        if matches!(tokens[pos].kind, TokenKind::Eof) {
+            break;
+        }
+        pos += 1;
+    }
+    Ok(ids)
+}
+
+fn parse_require_statement(statement: &str) -> Option<&str> {
+    let statement = statement.trim();
+    let inner = statement.strip_prefix("require(")?.strip_suffix(')')?;
+    Some(inner)
 }
 
 fn parse_authorized_call(
@@ -4488,7 +4797,7 @@ fn observed_actor_witness_recipe_id(spec: &ObservedActorWitnessSpec, purpose: Hi
         "witness/observed/{}/{}/{}/{}",
         spec.observe,
         observed_actor_side_label(spec.side),
-        hidden_actor_suffix(&spec.actor),
+        observed_actor_spec_suffix(spec),
         hidden_param_purpose_id(purpose)
     )
 }
@@ -4546,28 +4855,40 @@ fn hidden_template_selector_template_name(selector: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{selector}_template")
 }
 
+fn observed_actor_spec_suffix(spec: &ObservedActorWitnessSpec) -> String {
+    if let Some(field) = spec.actor.strip_prefix("self.")
+        && is_identifier(field)
+    {
+        return to_snake(field);
+    }
+    if is_identifier(&spec.actor) {
+        return hidden_actor_suffix(&spec.actor);
+    }
+    to_snake(&compact_expr(&spec.actor).replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_', "_"))
+}
+
 fn hidden_observed_actor_prefix_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observed_actor_suffix_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observed_actor_prefix_len_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix_len", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix_len", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observed_actor_suffix_len_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix_len", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix_len", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observed_actor_template_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_template", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_template", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observed_actor_template_init_name(spec: &ObservedActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}init_{}_{}_template", spec.observe, hidden_actor_suffix(&spec.actor))
+    format!("{RESERVED_GENERATED_PREFIX}init_{}_{}_template", spec.observe, observed_actor_spec_suffix(spec))
 }
 
 fn hidden_observe_cov_id_name(observe: &str) -> String {
@@ -4616,6 +4937,20 @@ fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String>
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let target_state = model.actor(actor)?.state.as_str();
     if target_state == current_actor.state { Ok("State".to_string()) } else { state_struct_name_for_actor(actor, model) }
+}
+
+fn contract_state_type_for_observed_actor(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    observed: &ObservedActorDecl,
+    model: &Model<'_>,
+) -> Result<String> {
+    if let Some(target_state) = observed_open_state_for_decl(actor, entry, observe, observed, model)? {
+        if target_state == actor.state { Ok("State".to_string()) } else { Ok(target_state.to_string()) }
+    } else {
+        contract_state_type_for_actor(&observed.actor, actor, model)
+    }
 }
 
 fn compact_expr(input: &str) -> String {
@@ -5359,12 +5694,14 @@ mod tests {
         let kcc20_sil = fs::read_to_string(out_dir.join("sil/KCC20.sil")).expect("KCC20.sil exists");
         assert!(kcc20_sil.contains("} else if (identifier_type == IDENTIFIER_COVENANT_ID) {"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(checkSig(owner_sig, owner_identifier));"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("// :: authorized by owner_identifier (via co-spend)"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(OpCovInputCount(owner_identifier) > 0);"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("State next_state = {"), "{kcc20_sil}");
 
         let proxy_sil = fs::read_to_string(out_dir.join("sil/MinterProxy.sil")).expect("MinterProxy.sil exists");
         assert!(proxy_sil.contains("byte[32] controller_id = init_controller_id;"), "{proxy_sil}");
         assert!(proxy_sil.contains("entrypoint function mint(\n        State next_proxy,"), "{proxy_sil}");
+        assert!(proxy_sil.contains("// :: authorized by controller_id (via co-spend)"), "{proxy_sil}");
         assert!(proxy_sil.contains("require(OpCovInputCount(controller_id) > 0);"), "{proxy_sil}");
 
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
@@ -5582,6 +5919,231 @@ mod tests {
                 "witness/observed/asset/output/foreign/template_prefix_bytes",
                 "witness/observed/asset/output/foreign/template_suffix_bytes",
             ]
+        );
+    }
+
+    #[test]
+    fn open_observed_actor_binding_lowers_to_runtime_template_handle() {
+        let source = r#"
+            state AgentState {
+                byte[32] controller_id;
+                byte[32] caps_digest;
+                int energy;
+            }
+
+            state CellState {
+                covid agent_covid;
+                actor<AgentState> agent_type;
+                int tick;
+            }
+
+            actor Cell owns CellState {
+                entry advance()
+                observes remote by self.agent_covid {
+                    inputs {
+                        agent: actor<AgentState> as observed_agent;
+                    }
+
+                    outputs {
+                        agent: observed_agent;
+                    }
+                }
+                emits {
+                    cell: Cell;
+                } {
+                    AgentState prev_state = remote.inputs.agent.state;
+
+                    require(agent_type == observed_agent);
+                    require(prev_state.controller_id == self.covenant_id);
+
+                    AgentState next_state = {
+                        controller_id: prev_state.controller_id,
+                        caps_digest: prev_state.caps_digest,
+                        energy: prev_state.energy - 1,
+                    };
+
+                    require remote.outputs become {
+                        agent <- observed_agent(next_state);
+                    };
+
+                    CellState next_cell = {
+                        agent_covid: agent_covid,
+                        agent_type: agent_type,
+                        tick: tick + 1,
+                    };
+
+                    become cell <- Cell(next_cell);
+                }
+            }
+
+            app Test {
+                actor Cell;
+            }
+            "#;
+
+        let path = PathBuf::from("test.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let cell = model.actor("Cell").expect("Cell actor exists");
+        let sil = emit_actor(cell, &model).expect("Cell emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        assert!(sil.contains("byte[32] init_agent_type"), "{sil}");
+        assert!(sil.contains("byte[32] agent_type = init_agent_type;"), "{sil}");
+        assert!(sil.contains("byte[32] observed_agent = blake2b("), "{sil}");
+        assert!(sil.contains("gen__remote_observed_agent_prefix + gen__remote_observed_agent_suffix"), "{sil}");
+        assert!(sil.contains("AgentState gen__remote_agent_state = readInputStateWithTemplate("), "{sil}");
+        assert!(sil.contains("gen__remote_agent_input_idx,"), "{sil}");
+        assert!(sil.contains("observed_agent\n        );"), "{sil}");
+        assert!(sil.contains("require(agent_type == observed_agent);"), "{sil}");
+        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__remote_agent_output_idx,"), "{sil}");
+        assert!(sil.contains("observed_agent\n        );"), "{sil}");
+        assert!(!sil.contains("gen__remote_observed_agent_template"), "{sil}");
+        assert!(!sil.contains("gen__init_remote_observed_agent_template"), "{sil}");
+
+        assert!(runtime_state_plan(&artifact, "Cell").is_none(), "{:#?}", artifact.argent.template_plan.runtime_states);
+
+        let cell_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Cell").expect("Cell artifact actor exists");
+        let advance = cell_actor.entries.iter().find(|entry| entry.name == "advance").expect("advance entry exists");
+        let observe = advance.observes.first().expect("advance observes remote");
+        assert_eq!(observe.inputs[0].open_state.as_deref(), Some("AgentState"));
+        assert_eq!(observe.outputs[0].open_state.as_deref(), Some("AgentState"));
+        assert_eq!(
+            advance.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            vec!["gen__remote_observed_agent_prefix", "gen__remote_observed_agent_suffix"]
+        );
+    }
+
+    #[test]
+    fn open_observed_state_handle_lowers_to_source_actor_handle() {
+        let source = r#"
+            state AgentState {
+                byte[32] controller_id;
+                byte[32] caps_digest;
+                int energy;
+            }
+
+            state CellState {
+                covid agent_covid;
+                actor<AgentState> agent_type;
+                int tick;
+            }
+
+            actor Cell owns CellState {
+                entry advance()
+                observes remote by self.agent_covid {
+                    inputs {
+                        agent: self.agent_type;
+                    }
+
+                    outputs {
+                        agent: self.agent_type;
+                    }
+                }
+                emits {
+                    cell: Cell;
+                } {
+                    AgentState prev_state = remote.inputs.agent.state;
+                    require(prev_state.controller_id == self.covenant_id);
+
+                    AgentState next_state = {
+                        controller_id: prev_state.controller_id,
+                        caps_digest: prev_state.caps_digest,
+                        energy: prev_state.energy - 1,
+                    };
+
+                    require remote.outputs become {
+                        agent <- self.agent_type(next_state);
+                    };
+
+                    CellState next_cell = {
+                        agent_covid: agent_covid,
+                        agent_type: agent_type,
+                        tick: tick + 1,
+                    };
+
+                    become cell <- Cell(next_cell);
+                }
+            }
+
+            app Test {
+                actor Cell;
+            }
+            "#;
+
+        let path = PathBuf::from("test.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let cell = model.actor("Cell").expect("Cell actor exists");
+        let sil = emit_actor(cell, &model).expect("Cell emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+
+        assert!(sil.contains("byte[32] init_agent_type"), "{sil}");
+        assert!(sil.contains("byte[32] agent_type = init_agent_type;"), "{sil}");
+        assert!(!sil.contains("byte[32] observed_agent = blake2b("), "{sil}");
+        assert!(sil.contains("AgentState gen__remote_agent_state = readInputStateWithTemplate("), "{sil}");
+        assert!(sil.contains("gen__remote_agent_type_prefix.length"), "{sil}");
+        assert!(sil.contains("gen__remote_agent_type_suffix.length"), "{sil}");
+        assert!(sil.contains("agent_type\n        );"), "{sil}");
+        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__remote_agent_output_idx,"), "{sil}");
+        assert!(sil.contains("agent_type\n        );"), "{sil}");
+        assert!(!sil.contains("gen__remote_agent_type_template"), "{sil}");
+        assert!(!sil.contains("gen__init_remote_agent_type_template"), "{sil}");
+
+        assert!(runtime_state_plan(&artifact, "Cell").is_none(), "{:#?}", artifact.argent.template_plan.runtime_states);
+
+        let cell_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Cell").expect("Cell artifact actor exists");
+        let advance = cell_actor.entries.iter().find(|entry| entry.name == "advance").expect("advance entry exists");
+        let observe = advance.observes.first().expect("advance observes remote");
+        assert_eq!(observe.inputs[0].actor, "self.agent_type");
+        assert_eq!(observe.outputs[0].actor, "self.agent_type");
+        assert_eq!(observe.inputs[0].open_state.as_deref(), Some("AgentState"));
+        assert_eq!(observe.outputs[0].open_state.as_deref(), Some("AgentState"));
+        assert_eq!(
+            advance.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            vec!["gen__remote_agent_type_prefix", "gen__remote_agent_type_suffix"]
+        );
+    }
+
+    #[test]
+    fn rejects_input_only_open_observed_actor_binding() {
+        let err = parse_and_validate(
+            r#"
+            state AgentState {
+                int energy;
+            }
+
+            state CellState {
+                covid agent_covid;
+            }
+
+            actor Cell owns CellState {
+                entry inspect()
+                observes remote by self.agent_covid {
+                    inputs {
+                        agent: actor<AgentState> as observed_agent;
+                    }
+                }
+                emits none {
+                    AgentState prev_state = remote.inputs.agent.state;
+                    require(prev_state.energy >= 0);
+                }
+            }
+
+            app Test {
+                actor Cell;
+            }
+            "#,
+        )
+        .expect_err("input-only open observed binding must be rejected");
+
+        assert!(
+            err.to_string().contains("open observed actor binding `observed_agent` must be used by an output"),
+            "unexpected error: {err}"
         );
     }
 
@@ -6201,6 +6763,61 @@ mod tests {
 
         let err = Model::from_program(&program).expect_err("conflicting actor enum orders must be rejected");
         assert!(err.to_string().contains("different selector order"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn actor_enum_selectors_must_cover_the_inferred_route_family() {
+        let source = r#"
+            state BoardState {
+                int selector;
+                int ply;
+            }
+
+            actor enum FirstMove {
+                Pawn;
+                Knight;
+            }
+
+            actor enum SecondMove {
+                Pawn;
+                Bishop;
+            }
+
+            actor Mux owns BoardState {
+                entry choose_first(target: FirstMove) emits one FirstMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+
+                entry choose_second(target: SecondMove) emits one SecondMove {
+                    BoardState next_board = {
+                        selector: selector,
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+            }
+
+            actor Pawn owns BoardState {}
+            actor Knight owns BoardState {}
+            actor Bishop owns BoardState {}
+
+            app IncompleteSelectorSet {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+                actor Bishop;
+            }
+        "#;
+        let path = PathBuf::from("incomplete-selector-set.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let err = Model::from_program(&program).expect_err("incomplete route-family selector sets must be rejected");
+        assert!(err.to_string().contains("variants must exactly match the route table actors"), "unexpected error: {err}");
     }
 
     #[test]

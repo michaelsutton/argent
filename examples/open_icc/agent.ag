@@ -1,0 +1,27 @@
+// Open ICC baseline agent app.
+//
+// The agent owns its capability header and only allows a controller covenant to
+// move it when that controller is co-spent. The controller app supplies the
+// actual physics through `observes`.
+
+state AgentState {
+    covid controller_id;
+    byte[32] caps_digest;
+    int energy;
+}
+
+actor Agent owns AgentState {
+    entry step(next_agent: AgentState) emits {
+        agent: Agent;
+    } {
+        require(controller_id.authorized());
+        require(next_agent.controller_id == controller_id);
+        require(next_agent.caps_digest == caps_digest);
+
+        become agent <- Agent(next_agent);
+    }
+}
+
+app OpenAgent {
+    actor Agent;
+}

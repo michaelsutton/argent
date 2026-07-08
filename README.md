@@ -57,23 +57,23 @@ What is still early or missing:
 Build the Stones example:
 
 ```sh
-cargo run -- build examples/stones/app.ag --out build/stones
+cargo run -- build examples/stones/app.ag --out examples/build/stones
 ```
 
 Build the tiny Tickets example:
 
 ```sh
-cargo run -- build examples/tickets.ag --out build/tickets
+cargo run -- build examples/tickets.ag --out examples/build/tickets
 ```
 
-The generated artifacts are written under `build/stones`:
+The generated artifacts are written under `examples/build/stones`:
 
-- `build/stones/artifact.json`
-- `build/stones/manifest.json`
-- `build/stones/sil/League.sil`
-- `build/stones/sil/Player.sil`
-- `build/stones/sil/StonesGame.sil`
-- `build/stones/sil/StonesSettle.sil`
+- `examples/build/stones/artifact.json`
+- `examples/build/stones/manifest.json`
+- `examples/build/stones/sil/League.sil`
+- `examples/build/stones/sil/Player.sil`
+- `examples/build/stones/sil/StonesGame.sil`
+- `examples/build/stones/sil/StonesSettle.sil`
 
 The generated Silverscript is intended to compile as ordinary Silverscript. No
 Silverscript covenant macros are used.

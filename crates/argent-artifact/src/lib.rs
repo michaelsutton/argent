@@ -302,6 +302,8 @@ pub struct ObserveArtifact {
 pub struct ObservedActorArtifact {
     pub name: String,
     pub actor: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_state: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

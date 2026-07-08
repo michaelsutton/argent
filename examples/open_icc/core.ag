@@ -1,0 +1,55 @@
+// Open ICC baseline core app.
+//
+// The cell observes an open agent covenant and applies one tiny physics step to
+// the agent's state. The agent app remains a separate covenant app.
+
+import "./agent.ag";
+
+state CellState {
+    covid agent_covid;
+    actor<AgentState> agent_type;
+    int tick;
+}
+
+actor Cell owns CellState {
+    entry advance()
+    observes remote by self.agent_covid {
+        inputs {
+            agent: self.agent_type;
+        }
+
+        outputs {
+            agent: self.agent_type;
+        }
+    }
+    emits {
+        cell: Cell;
+    } {
+        AgentState prev_state = remote.inputs.agent.state;
+
+        require(prev_state.controller_id == self.covenant_id);
+        require(prev_state.energy > 0);
+
+        AgentState next_state = {
+            controller_id: prev_state.controller_id,
+            caps_digest: prev_state.caps_digest,
+            energy: prev_state.energy - 1,
+        };
+
+        require remote.outputs become {
+            agent <- self.agent_type(next_state);
+        };
+
+        CellState next_cell = {
+            agent_covid: agent_covid,
+            agent_type: agent_type,
+            tick: tick + 1,
+        };
+
+        become cell <- Cell(next_cell);
+    }
+}
+
+app OpenCore {
+    actor Cell;
+}

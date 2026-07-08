@@ -5,7 +5,7 @@ mod tests {
     use super::*;
     use crate::{
         artifact::{
-            HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, TemplatePlanError, route_template_proof_receipt_id,
+            HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, TemplatePlanError, TypeArtifact, route_template_proof_receipt_id,
             route_template_table_receipt_id,
         },
         codec::{CodecError, decode_hex, encode_entry_sig_script},
@@ -841,7 +841,7 @@ mod tests {
         let asset_artifact = icc_asset_artifact();
         let bundle = ArtifactBundle::new(&controller_artifact)
             .expect("bundle accepts controller artifact")
-            .with_app("asset", &asset_artifact)
+            .with_app("kcc20_asset", &asset_artifact)
             .expect("bundle accepts observed asset artifact");
         let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts artifact bundle");
         let owner = keypair_from_byte(9);
@@ -876,7 +876,15 @@ mod tests {
             "MinterProxy",
             proxy_state.clone(),
             builder
-                .covenant_utxo_in_app("asset", "MinterProxy", proxy_state.clone(), proxy_value, 0, false, Some(asset_covenant_id))
+                .covenant_utxo_in_app(
+                    "kcc20_asset",
+                    "MinterProxy",
+                    proxy_state.clone(),
+                    proxy_value,
+                    0,
+                    false,
+                    Some(asset_covenant_id),
+                )
                 .expect("proxy utxo builds"),
             "KCC20",
             recipient_state.clone(),
@@ -898,7 +906,7 @@ mod tests {
         let entries = vec![minter_utxo.clone(), proxy_utxo.clone()];
         let proxy_sigscript = builder
             .p2sh_signature_script_in_app(
-                "asset",
+                "kcc20_asset",
                 "MinterProxy",
                 "mint",
                 proxy_state.clone(),
@@ -937,8 +945,9 @@ mod tests {
 
         let minter_contract = builder.contract("Minter").expect("Minter contract exists");
         let minter_entry = minter_contract.entry("mint").expect("mint entry exists");
-        let mut bad_proxy_suffix = decode_hex(&builder.contract_in_app("asset", "MinterProxy").unwrap().compiled.template.suffix_hex)
-            .expect("proxy suffix decodes");
+        let mut bad_proxy_suffix =
+            decode_hex(&builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template.suffix_hex)
+                .expect("proxy suffix decodes");
         bad_proxy_suffix.push(0);
         let corrupt_hidden_sigscript = encode_entry_sig_script(
             &controller_artifact.sil_abi,
@@ -949,16 +958,16 @@ mod tests {
                 ArtifactValue::Bytes(recipient_owner.clone()),
                 ArtifactValue::Int(minted_amount),
                 ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("asset", "MinterProxy").unwrap().compiled.template.prefix_hex)
+                    decode_hex(&builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template.prefix_hex)
                         .expect("proxy prefix decodes"),
                 ),
                 ArtifactValue::Bytes(bad_proxy_suffix),
                 ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("asset", "KCC20").unwrap().compiled.template.prefix_hex)
+                    decode_hex(&builder.contract_in_app("kcc20_asset", "KCC20").unwrap().compiled.template.prefix_hex)
                         .expect("KCC20 prefix decodes"),
                 ),
                 ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("asset", "KCC20").unwrap().compiled.template.suffix_hex)
+                    decode_hex(&builder.contract_in_app("kcc20_asset", "KCC20").unwrap().compiled.template.suffix_hex)
                         .expect("KCC20 suffix decodes"),
                 ),
             ],
@@ -981,7 +990,11 @@ mod tests {
 
         let missing_proxy = BTreeMap::from([(
             "asset".to_string(),
-            ObservedCovenantContext { inputs: BTreeMap::new(), outputs: observed.get("asset").unwrap().outputs.clone() },
+            ObservedCovenantContext {
+                app: "kcc20_asset".to_string(),
+                inputs: BTreeMap::new(),
+                outputs: observed.get("asset").unwrap().outputs.clone(),
+            },
         )]);
         let missing_proxy_err = builder
             .p2sh_signature_script_with_observed_covenants(
@@ -1116,29 +1129,33 @@ mod tests {
         asset_artifact.verify_id().expect("asset artifact id is stable");
         let bundle = ArtifactBundle::new(&controller_artifact)
             .expect("bundle accepts controller artifact")
-            .with_app("asset", &asset_artifact)
+            .with_app("kcc20_asset", &asset_artifact)
             .expect("matching observed artifact attaches");
         TxBuilder::from_bundle(&bundle).expect("builder accepts valid bundle");
         TxBuilder::new(&controller_artifact)
             .expect("builder accepts controller artifact")
             .with_observed_artifact(&asset_artifact)
-            .expect("legacy observed artifact attach infers the observed alias")
-            .contract_in_app("asset", "MinterProxy")
-            .expect("inferred alias exposes the observed asset app");
+            .expect("observed artifact attaches under its app alias")
+            .contract_in_app("kcc20_asset", "MinterProxy")
+            .expect("app alias exposes the observed asset app");
 
         let wrong_alias_err = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact remains valid")
             .with_app("wrong", &asset_artifact)
-            .expect_err("unknown observed app alias is rejected");
-        assert!(matches!(wrong_alias_err, BuilderError::UnknownObservedAppAlias(alias) if alias == "wrong"));
+            .expect_err("wrong app alias is rejected");
+        assert!(matches!(
+            wrong_alias_err,
+            BuilderError::AppAliasMismatch { app, expected, found }
+                if app == "KCC20Asset" && expected == "kcc20_asset" && found == "wrong"
+        ));
 
         let mut bad_id_asset = asset_artifact.clone();
         bad_id_asset.id = "00".repeat(32);
         let bad_id_err = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact remains valid")
-            .with_app("asset", &bad_id_asset)
+            .with_app("kcc20_asset", &bad_id_asset)
             .expect_err("bad observed artifact id is rejected");
-        assert!(matches!(bad_id_err, BuilderError::ArtifactIdentity { app, .. } if app == "asset"));
+        assert!(matches!(bad_id_err, BuilderError::ArtifactIdentity { app, .. } if app == "kcc20_asset"));
 
         let mut bad_interface_asset = asset_artifact.clone();
         let proxy_export = bad_interface_asset
@@ -1150,14 +1167,183 @@ mod tests {
             .expect("asset exports MinterProxy");
         proxy_export.fingerprint_hex = "11".repeat(32);
         bad_interface_asset.id = bad_interface_asset.computed_id_hex().expect("mutated artifact id computes");
-        let mismatch_err = ArtifactBundle::new(&controller_artifact)
+        let bad_interface_bundle = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact remains valid")
-            .with_app("asset", &bad_interface_asset)
-            .expect_err("interface fingerprint mismatch is rejected");
+            .with_app("kcc20_asset", &bad_interface_asset)
+            .expect("interface mismatch is checked when the app is used");
+        let bad_interface_builder = TxBuilder::from_bundle(&bad_interface_bundle).expect("builder accepts bundle shape");
+        let mismatch_err = bad_interface_builder
+            .covenant_output(
+                "Minter",
+                minter_state(vec![0x22; 32], Hash::from_bytes([0xa5; 32]), 1, true),
+                1_000,
+                0,
+                Hash::from_bytes([0xc0; 32]),
+            )
+            .expect_err("interface fingerprint mismatch is rejected when filling observed template fields");
         assert!(
-            matches!(&mismatch_err, BuilderError::InterfaceMismatch { app, actor, .. } if app == "asset" && actor == "MinterProxy"),
+            matches!(&mismatch_err, BuilderError::InterfaceMismatch { app, actor, .. } if app == "kcc20_asset" && actor == "MinterProxy"),
             "unexpected error: {mismatch_err}"
         );
+    }
+
+    #[test]
+    fn open_icc_baseline_spends_core_and_agent_covenants() {
+        let core_artifact = open_icc_core_artifact();
+        let agent_artifact = open_icc_agent_artifact();
+        let bundle = ArtifactBundle::new(&core_artifact)
+            .expect("bundle accepts open ICC core")
+            .with_app("open_agent", &agent_artifact)
+            .expect("bundle accepts open ICC agent app");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts open ICC bundle");
+
+        let controller_covenant_id = Hash::from_bytes([0x31; 32]);
+        let agent_covenant_id = Hash::from_bytes([0x41; 32]);
+        let cell_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x51; 32]), index: 0 };
+        let agent_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x52; 32]), index: 0 };
+        let cell_value = 4_000;
+        let agent_value = 2_000;
+        let caps_digest = vec![0x77; 32];
+        let agent_type = decode_hex(&agent_artifact.sil_abi.contract("Agent").expect("Agent ABI exists").compiled.template.hash_hex)
+            .expect("agent template hash decodes");
+
+        let cell_initial = open_cell_state(agent_covenant_id, agent_type.clone(), 7);
+        let cell_next = open_cell_state(agent_covenant_id, agent_type.clone(), 8);
+        let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
+        let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
+
+        let agent_utxo = builder
+            .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("agent utxo builds");
+        let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
+        let mut observed_keyed_by_app = BTreeMap::new();
+        observed_keyed_by_app
+            .insert("open_agent".to_string(), observed.get("remote").expect("remote observed context exists").clone());
+        let wrong_observe_key_err = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed_keyed_by_app)
+            .expect_err("observed context map is keyed by observe name, not app alias");
+        assert!(
+            matches!(
+                &wrong_observe_key_err,
+                BuilderError::UnknownObserve { actor, entry, observe }
+                    if actor == "Cell" && entry == "advance" && observe == "open_agent"
+            ),
+            "unexpected error: {wrong_observe_key_err}"
+        );
+        let wrong_app_context = ObservedCovenantContext::from_app("remote")
+            .input("agent", "Agent", agent_utxo.clone(), agent_initial.clone())
+            .output("agent", "Agent", agent_next.clone());
+        let wrong_app_alias_err = builder
+            .observed_outputs(
+                "Cell",
+                "advance",
+                "remote",
+                &wrong_app_context,
+                BTreeMap::from([("agent".to_string(), agent_value)]),
+                1,
+                agent_covenant_id,
+            )
+            .expect_err("observed context app is the attached artifact alias, not the observe name");
+        assert!(
+            matches!(&wrong_app_alias_err, BuilderError::UnknownAppAlias(alias) if alias == "remote"),
+            "unexpected error: {wrong_app_alias_err}"
+        );
+        let mut bad_layout_agent_artifact = agent_artifact.clone();
+        let bad_energy_field = bad_layout_agent_artifact
+            .argent
+            .states
+            .iter_mut()
+            .find(|state| state.name == "AgentState")
+            .and_then(|state| state.fields.iter_mut().find(|field| field.name == "energy"))
+            .expect("AgentState.energy exists");
+        bad_energy_field.ty = TypeArtifact::Bool;
+        bad_layout_agent_artifact.id = bad_layout_agent_artifact.computed_id_hex().expect("mutated agent artifact id computes");
+        let bad_layout_bundle = ArtifactBundle::new(&core_artifact)
+            .expect("core artifact is valid")
+            .with_app("open_agent", &bad_layout_agent_artifact)
+            .expect("layout mismatch is checked when open observed actor is used");
+        let bad_layout_builder = TxBuilder::from_bundle(&bad_layout_bundle).expect("builder accepts bundle shape");
+        let bad_layout_err = bad_layout_builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect_err("open observed actor state layout mismatch is rejected");
+        assert!(
+            matches!(
+                &bad_layout_err,
+                BuilderError::ObservedStateLayoutMismatch { observe, side, handle, state, actor }
+                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentState" && actor == "Agent"
+            ),
+            "unexpected error: {bad_layout_err}"
+        );
+        let outputs = open_icc_advance_outputs(
+            &builder,
+            cell_next,
+            &observed,
+            cell_value,
+            agent_value,
+            controller_covenant_id,
+            agent_covenant_id,
+        );
+        let cell_utxo = builder
+            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("cell utxo builds");
+        let entries = vec![cell_utxo, agent_utxo];
+        let agent_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Agent",
+                "step",
+                agent_initial.clone(),
+                vec![ArtifactValue::Object(agent_next.clone())],
+            )
+            .expect("agent step sigscript builds");
+        let cell_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect("cell advance sigscript builds");
+        let tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(cell_outpoint, cell_sigscript),
+                TxBuilder::transaction_input(agent_outpoint, agent_sigscript),
+            ],
+            outputs,
+        );
+        execute_input_with_covenants(&tx, entries.clone(), 0).expect("core cell input passes");
+        execute_input_with_covenants(&tx, entries.clone(), 1).expect("agent input passes");
+
+        let wrong_agent_next = open_agent_state(controller_covenant_id, vec![0x77; 32], 5);
+        let wrong_observed = open_agent_context("Agent", agent_initial.clone(), entries[1].clone(), wrong_agent_next.clone());
+        let wrong_outputs = open_icc_advance_outputs(
+            &builder,
+            open_cell_state(agent_covenant_id, agent_type, 8),
+            &wrong_observed,
+            cell_value,
+            agent_value,
+            controller_covenant_id,
+            agent_covenant_id,
+        );
+        let wrong_agent_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Agent",
+                "step",
+                agent_initial.clone(),
+                vec![ArtifactValue::Object(wrong_agent_next)],
+            )
+            .expect("agent accepts controller-authorized non-physics state");
+        let wrong_cell_sigscript = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .expect("cell sigscript builds for wrong-output tx");
+        let wrong_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(cell_outpoint, wrong_cell_sigscript),
+                TxBuilder::transaction_input(agent_outpoint, wrong_agent_sigscript),
+            ],
+            wrong_outputs,
+        );
+        assert!(
+            execute_input_with_covenants(&wrong_tx, entries.clone(), 0).is_err(),
+            "core physics rejects an agent output that does not spend one energy"
+        );
+        execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts authorized header-preserving output");
     }
 
     fn tickets_artifact() -> Artifact {
@@ -1170,6 +1356,14 @@ mod tests {
 
     fn icc_asset_artifact() -> Artifact {
         example_artifact("examples/icc/kcc20_asset.ag", "icc-asset")
+    }
+
+    fn open_icc_core_artifact() -> Artifact {
+        example_artifact("examples/open_icc/core.ag", "open-icc-core")
+    }
+
+    fn open_icc_agent_artifact() -> Artifact {
+        example_artifact("examples/open_icc/agent.ag", "open-icc-agent")
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -1296,6 +1490,22 @@ mod tests {
         ])
     }
 
+    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, tick: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
+            ("agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
+            ("tick".to_string(), ArtifactValue::Int(tick)),
+        ])
+    }
+
+    fn open_agent_state(controller_id: Hash, caps_digest: Vec<u8>, energy: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
+            ("caps_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("energy".to_string(), ArtifactValue::Int(energy)),
+        ])
+    }
+
     fn observed_asset_context(
         proxy_actor: &str,
         proxy_state: BTreeMap<String, ArtifactValue>,
@@ -1305,7 +1515,7 @@ mod tests {
     ) -> BTreeMap<String, ObservedCovenantContext> {
         BTreeMap::from([(
             "asset".to_string(),
-            ObservedCovenantContext::new()
+            ObservedCovenantContext::from_app("kcc20_asset")
                 .input("proxy", proxy_actor, proxy_utxo, proxy_state.clone())
                 .output("proxy", proxy_actor, proxy_state)
                 .output("recipient", recipient_actor, recipient_state),
@@ -1340,6 +1550,49 @@ mod tests {
                     asset_covenant_id,
                 )
                 .expect("observed asset outputs build"),
+        );
+        outputs
+    }
+
+    fn open_agent_context(
+        agent_actor: &str,
+        agent_state: BTreeMap<String, ArtifactValue>,
+        agent_utxo: UtxoEntry,
+        next_agent_state: BTreeMap<String, ArtifactValue>,
+    ) -> BTreeMap<String, ObservedCovenantContext> {
+        BTreeMap::from([(
+            "remote".to_string(),
+            ObservedCovenantContext::from_app("open_agent").input("agent", agent_actor, agent_utxo, agent_state).output(
+                "agent",
+                agent_actor,
+                next_agent_state,
+            ),
+        )])
+    }
+
+    fn open_icc_advance_outputs(
+        builder: &TxBuilder<'_>,
+        cell_next: BTreeMap<String, ArtifactValue>,
+        observed: &BTreeMap<String, ObservedCovenantContext>,
+        cell_value: u64,
+        agent_value: u64,
+        controller_covenant_id: Hash,
+        agent_covenant_id: Hash,
+    ) -> Vec<kaspa_consensus_core::tx::TransactionOutput> {
+        let mut outputs =
+            vec![builder.covenant_output("Cell", cell_next, cell_value, 0, controller_covenant_id).expect("cell output builds")];
+        outputs.extend(
+            builder
+                .observed_outputs(
+                    "Cell",
+                    "advance",
+                    "remote",
+                    observed.get("remote").expect("remote observed context exists"),
+                    BTreeMap::from([("agent".to_string(), agent_value)]),
+                    1,
+                    agent_covenant_id,
+                )
+                .expect("agent output builds"),
         );
         outputs
     }
