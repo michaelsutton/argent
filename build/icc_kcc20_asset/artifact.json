@@ -1,0 +1,299 @@
+{
+  "schema_version": 1,
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "KCC20Asset",
+  "root": "examples/icc/kcc20_asset_real.ag",
+  "modules": [
+    "examples/icc/kcc20_asset_real.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/kcc20",
+        "actor": "KCC20",
+        "symbol": "gen__kcc20_template"
+      },
+      {
+        "id": "template/minter_proxy",
+        "actor": "MinterProxy",
+        "symbol": "gen__minter_proxy_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/kcc20",
+          "actor": "KCC20",
+          "contract": "KCC20",
+          "symbol": "gen__kcc20_template",
+          "hash_hex": "1e8fcbd36faf7e43085ac361272e8a4c6e1279071bcb37dc52fc6df7e6c4bd8c"
+        },
+        {
+          "id": "template/minter_proxy",
+          "actor": "MinterProxy",
+          "contract": "MinterProxy",
+          "symbol": "gen__minter_proxy_template",
+          "hash_hex": "c64ae4240984657025c437d033ce393219f62dc943732e17119f496df0535d1a"
+        }
+      ],
+      "runtime_states": [],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": []
+    },
+    "states": [
+      {
+        "name": "KCC20State",
+        "fields": [
+          {
+            "name": "owner_identifier",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "identifier_type",
+            "type": {
+              "kind": "byte"
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterProxyState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "KCC20",
+        "state": "KCC20State",
+        "abi": {
+          "actor": "KCC20"
+        },
+        "entries": [
+          {
+            "name": "hold",
+            "kind": "leader",
+            "abi": {
+              "actor": "KCC20",
+              "entry": "hold"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "KCC20",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "KCC20",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [],
+              "terminal_paths": [],
+              "witness_recipe_ids": []
+            },
+            "hidden_params": [],
+            "template_selectors": [],
+            "witnesses": [],
+            "consumes": [],
+            "emits": {
+              "kind": "none"
+            },
+            "routes": [],
+            "terminal_paths": []
+          }
+        ]
+      },
+      {
+        "name": "MinterProxy",
+        "state": "MinterProxyState",
+        "abi": {
+          "actor": "MinterProxy"
+        },
+        "entries": [
+          {
+            "name": "hold",
+            "kind": "leader",
+            "abi": {
+              "actor": "MinterProxy",
+              "entry": "hold"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "MinterProxy",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "MinterProxy",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [],
+              "terminal_paths": [],
+              "witness_recipe_ids": []
+            },
+            "hidden_params": [],
+            "template_selectors": [],
+            "witnesses": [],
+            "consumes": [],
+            "emits": {
+              "kind": "none"
+            },
+            "routes": [],
+            "terminal_paths": []
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "KCC20State",
+        "fields": [
+          {
+            "name": "owner_identifier",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "identifier_type",
+            "type": {
+              "kind": "byte"
+            }
+          },
+          {
+            "name": "amount",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "MinterProxyState",
+        "fields": [
+          {
+            "name": "controller_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "KCC20",
+        "source_path": "sil/KCC20.sil",
+        "runtime_state": {
+          "source": "KCC20State",
+          "fields": [
+            {
+              "name": "owner_identifier",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "identifier_type",
+              "type": {
+                "kind": "byte"
+              }
+            },
+            {
+              "name": "amount",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "hold",
+            "selector": null,
+            "params": []
+          }
+        ],
+        "compiled": {
+          "script_hex": "2000000000000000000000000000000000000000000000000000000000000000000100080000000000000000b9cb009c697600a26975757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb009c697600a26975757551",
+            "hash_hex": "1e8fcbd36faf7e43085ac361272e8a4c6e1279071bcb37dc52fc6df7e6c4bd8c"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 44
+          }
+        }
+      },
+      {
+        "name": "MinterProxy",
+        "source_path": "sil/MinterProxy.sil",
+        "runtime_state": {
+          "source": "MinterProxyState",
+          "fields": [
+            {
+              "name": "controller_id",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "hold",
+            "selector": null,
+            "params": []
+          }
+        ],
+        "compiled": {
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000b9cb009c69767887697551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb009c69767887697551",
+            "hash_hex": "c64ae4240984657025c437d033ce393219f62dc943732e17119f496df0535d1a"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 33
+          }
+        }
+      }
+    ]
+  }
+}

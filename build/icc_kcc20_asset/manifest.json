@@ -1,0 +1,41 @@
+{
+  "app": "KCC20Asset",
+  "root": "examples/icc/kcc20_asset_real.ag",
+  "modules": [
+    "examples/icc/kcc20_asset_real.ag"
+  ],
+  "templates": [
+    { "actor": "KCC20", "symbol": "gen__kcc20_template", "hash": null },
+    { "actor": "MinterProxy", "symbol": "gen__minter_proxy_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "KCC20",
+      "state": "KCC20State",
+      "sil": "sil/KCC20.sil",
+      "entries": [
+        {
+          "name": "hold",
+          "kind": "leader",
+          "emits": { "kind": "none" },
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    },
+    {
+      "name": "MinterProxy",
+      "state": "MinterProxyState",
+      "sil": "sil/MinterProxy.sil",
+      "entries": [
+        {
+          "name": "hold",
+          "kind": "leader",
+          "emits": { "kind": "none" },
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    }
+  ]
+}

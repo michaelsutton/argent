@@ -1,0 +1,30 @@
+// Concrete asset covenant app used by ICC runtime tests.
+
+const byte IDENTIFIER_PUBKEY = 0x00;
+
+state KCC20State {
+    byte[32] owner_identifier;
+    byte identifier_type;
+    int amount;
+}
+
+state MinterProxyState {
+    byte[32] controller_id;
+}
+
+actor KCC20 owns KCC20State {
+    entry hold() emits none {
+        require(amount >= 0);
+    }
+}
+
+actor MinterProxy owns MinterProxyState {
+    entry hold() emits none {
+        require(controller_id == controller_id);
+    }
+}
+
+app KCC20Asset {
+    actor KCC20;
+    actor MinterProxy;
+}
