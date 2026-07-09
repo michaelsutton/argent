@@ -3,20 +3,7 @@
 // Agents own their capability header and authorize controller-led transitions
 // by requiring the controller covenant to be co-spent.
 
-state AgentState {
-    byte[32] world_id;
-    byte[32] agent_id;
-    byte[32] species_id;
-
-    covid controller_id;
-    byte[32] capabilities_digest;
-    byte[32] custom_data_digest;
-
-    int x;
-    int y;
-    int energy;
-    int generation;
-}
+import "./core.ag";
 
 state ForagerMemory {
     int hunger;

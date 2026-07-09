@@ -2,7 +2,8 @@
   "app": "OpenAgent",
   "root": "examples/open_icc/agent.ag",
   "modules": [
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/agent.ag",
+    "examples/open_icc/core.ag"
   ],
   "templates": [
     { "actor": "Agent", "symbol": "gen__agent_template", "hash": null },

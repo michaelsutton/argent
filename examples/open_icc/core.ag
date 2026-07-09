@@ -3,7 +3,20 @@
 // The core app owns cells. It observes an independently deployed agent app
 // through a stored covenant id plus an actor<AgentState> handle.
 
-import "./agent.ag";
+state AgentState {
+    byte[32] world_id;
+    byte[32] agent_id;
+    byte[32] species_id;
+
+    covid controller_id;
+    byte[32] capabilities_digest;
+    byte[32] custom_data_digest;
+
+    int x;
+    int y;
+    int energy;
+    int generation;
+}
 
 state CellState {
     byte[32] world_id;

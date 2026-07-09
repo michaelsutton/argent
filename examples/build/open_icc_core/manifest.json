@@ -2,8 +2,7 @@
   "app": "OpenCore",
   "root": "examples/open_icc/core.ag",
   "modules": [
-    "examples/open_icc/core.ag",
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/core.ag"
   ],
   "templates": [
     { "actor": "Cell", "symbol": "gen__cell_template", "hash": null }

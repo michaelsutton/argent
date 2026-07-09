@@ -29,6 +29,15 @@ contract Agent(
         int generation;
     }
 
+    // :: shared helper functions
+    function abs1(int value) : int {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return result;
+    }
+
     // :: route templates
     // No foreign route templates required.
 

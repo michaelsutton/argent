@@ -2,8 +2,10 @@
 
 This example is a small cooperative-game fixture built out of two covenant apps:
 
-- `agent.ag` defines independently deployed agent actors.
-- `core.ag` defines cells that observe an agent by covenant id and apply local physics.
+- `core.ag` defines the shared `AgentState` capsule and cells that observe an
+  agent by covenant id and apply local physics.
+- `agent.ag` imports `core.ag` and defines independently deployed agent actors
+  that satisfy or expand the shared state view.
 
 The core idea is:
 
@@ -32,7 +34,8 @@ actor whose stored state satisfies the shared `AgentState` capsule layout.
 
 ## State Shape
 
-`AgentState` is the fixed capability header the cell can reason about:
+`AgentState` lives in the core app. It is the fixed capability header the cell
+can reason about, and concrete agent apps import it:
 
 ```rust
 state AgentState {

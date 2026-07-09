@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "7634225c6be8d5a83ae93d5d79f60c9a7f83c171011389424844d60ff90a877f",
+  "id": "2b4c61d4646725fffbd212b10fb6badb3835efbb5fcd252048bc9e08f706ec88",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -8,7 +8,8 @@
   "app": "OpenAgent",
   "root": "examples/open_icc/agent.ag",
   "modules": [
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/agent.ag",
+    "examples/open_icc/core.ag"
   ],
   "argent": {
     "templates": [
@@ -145,6 +146,57 @@
             "name": "generation",
             "type": {
               "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "food",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "occupant_agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
             }
           }
         ]
@@ -547,6 +599,57 @@
             "name": "generation",
             "type": {
               "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "CellState",
+        "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "food",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "occupant_agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
             }
           }
         ]

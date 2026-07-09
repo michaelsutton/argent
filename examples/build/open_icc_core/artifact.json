@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "f344169363a0c948074ca1f41e7ea030cf74cbdba806f3c9cc86ceb6058e8d96",
+  "id": "a515bff8e85ed2117d64495f06e77966f589676c274672b5fa664b42bb2e4163",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -8,8 +8,7 @@
   "app": "OpenCore",
   "root": "examples/open_icc/core.ag",
   "modules": [
-    "examples/open_icc/core.ag",
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/core.ag"
   ],
   "argent": {
     "templates": [
@@ -233,113 +232,6 @@
               "kind": "fixed_bytes",
               "len": 32
             }
-          }
-        ]
-      },
-      {
-        "name": "ForagerMemory",
-        "fields": [
-          {
-            "name": "hunger",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "mood",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "target_agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          }
-        ]
-      },
-      {
-        "name": "ForagerState",
-        "fields": [
-          {
-            "name": "world_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "species_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "controller_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "capabilities_digest",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "custom_data_digest",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "x",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "y",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "energy",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "generation",
-            "type": {
-              "kind": "int"
-            }
-          }
-        ]
-      }
-    ],
-    "state_expansions": [
-      {
-        "state": "ForagerState",
-        "base": "AgentState",
-        "digests": [
-          {
-            "field": "custom_data_digest",
-            "state": "ForagerMemory"
           }
         ]
       }
@@ -916,101 +808,6 @@
             "type": {
               "kind": "fixed_bytes",
               "len": 32
-            }
-          }
-        ]
-      },
-      {
-        "name": "ForagerMemory",
-        "fields": [
-          {
-            "name": "hunger",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "mood",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "target_agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          }
-        ]
-      },
-      {
-        "name": "ForagerState",
-        "fields": [
-          {
-            "name": "world_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "species_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "controller_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "capabilities_digest",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "custom_data_digest",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "x",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "y",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "energy",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "generation",
-            "type": {
-              "kind": "int"
             }
           }
         ]
