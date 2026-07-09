@@ -1313,6 +1313,48 @@ mod tests {
             )
             .expect("expanded agent sigscript is built from flattened source fields");
 
+        let forager_type =
+            decode_hex(&agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
+                .expect("Forager template hash decodes");
+        let forager_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x53; 32]), index: 0 };
+        let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x54; 32]), index: 0 };
+        let forager_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        let forager_next = expanded_open_agent_state_at(controller_covenant_id, 3, 4, 1, 0);
+        let controller_utxo = builder
+            .covenant_utxo(
+                "Cell",
+                open_cell_state(agent_covenant_id, forager_type, 7),
+                cell_value,
+                0,
+                false,
+                Some(controller_covenant_id),
+            )
+            .expect("controller cell utxo builds");
+        let forager_utxo = builder
+            .covenant_utxo_in_app("open_agent", "Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("Forager utxo builds");
+        let forager_output = builder
+            .covenant_output_in_app("open_agent", "Forager", forager_next, agent_value, 1, agent_covenant_id)
+            .expect("Forager output builds with packed expanded memory digest");
+        let forager_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Forager",
+                "step",
+                forager_initial,
+                vec![ArtifactValue::Int(1), ArtifactValue::Int(0), ArtifactValue::Int(4)],
+            )
+            .expect("Forager step sigscript fills hidden expanded-memory preimage");
+        let forager_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(controller_outpoint, Vec::new()),
+                TxBuilder::transaction_input(forager_outpoint, forager_sigscript),
+            ],
+            vec![forager_output],
+        );
+        execute_input_with_covenants(&forager_tx, vec![controller_utxo, forager_utxo], 1)
+            .expect("Forager step executes with digest-backed memory repacking");
+
         let outputs = open_icc_advance_outputs(
             &builder,
             cell_next,
@@ -1618,6 +1660,10 @@ mod tests {
     }
 
     fn expanded_open_agent_state(controller_id: Hash, hunger: i64, energy: i64) -> BTreeMap<String, ArtifactValue> {
+        expanded_open_agent_state_at(controller_id, hunger, energy, 0, 0)
+    }
+
+    fn expanded_open_agent_state_at(controller_id: Hash, hunger: i64, energy: i64, x: i64, y: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
             ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
             ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
@@ -1627,8 +1673,8 @@ mod tests {
             ("hunger".to_string(), ArtifactValue::Int(hunger)),
             ("mood".to_string(), ArtifactValue::Int(1)),
             ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
-            ("x".to_string(), ArtifactValue::Int(0)),
-            ("y".to_string(), ArtifactValue::Int(0)),
+            ("x".to_string(), ArtifactValue::Int(x)),
+            ("y".to_string(), ArtifactValue::Int(y)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
             ("generation".to_string(), ArtifactValue::Int(0)),
         ])
