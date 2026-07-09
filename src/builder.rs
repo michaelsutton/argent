@@ -65,12 +65,7 @@ mod tests {
         let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], vec![output.clone()]);
         let signature = sign_input(&unsigned_tx, vec![input_utxo.clone()], 0, &owner);
         let sigscript = builder
-            .p2sh_signature_script(
-                "Ticket",
-                "redeem",
-                initial_state.clone(),
-                vec![ArtifactValue::Bytes(signature), ArtifactValue::Bytes(owner_pk.clone())],
-            )
+            .p2sh_signature_script("Ticket", "redeem", initial_state.clone(), args![signature, owner_pk.clone()])
             .expect("sigscript builds");
         let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript)], vec![output]);
 
@@ -82,10 +77,7 @@ mod tests {
                 "Ticket",
                 "redeem",
                 initial_state.clone(),
-                vec![
-                    ArtifactValue::Bytes(sign_input(&unsigned_tx, vec![input_utxo.clone()], 0, &owner)),
-                    ArtifactValue::Bytes(wrong_pk),
-                ],
+                args![sign_input(&unsigned_tx, vec![input_utxo.clone()], 0, &owner), wrong_pk],
             )
             .expect("bad-arg sigscript still encodes");
         let bad_arg_tx =
@@ -101,10 +93,7 @@ mod tests {
                 "Ticket",
                 "redeem",
                 initial_state,
-                vec![
-                    ArtifactValue::Bytes(sign_input(&stale_unsigned_tx, vec![input_utxo.clone()], 0, &owner)),
-                    ArtifactValue::Bytes(owner_pk),
-                ],
+                args![sign_input(&stale_unsigned_tx, vec![input_utxo.clone()], 0, &owner), owner_pk],
             )
             .expect("stale-output sigscript builds");
         let stale_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, stale_sigscript)], vec![stale_output]);
@@ -150,17 +139,7 @@ mod tests {
         let source_state = ticket_state(blake2b32(&owner_pk), 7, 0);
 
         let err = builder
-            .p2sh_signature_script(
-                "Ticket",
-                "redeem",
-                source_state,
-                vec![
-                    ArtifactValue::Bytes(vec![1; 65]),
-                    ArtifactValue::Bytes(owner_pk),
-                    ArtifactValue::Bytes(vec![2; 32]),
-                    ArtifactValue::Bytes(vec![3; 32]),
-                ],
-            )
+            .p2sh_signature_script("Ticket", "redeem", source_state, args![vec![1; 65], owner_pk, vec![2; 32], vec![3; 32]])
             .expect_err("user must not provide hidden prefix/suffix witnesses");
 
         assert!(matches!(err, BuilderError::Codec(CodecError::WrongArgumentCount { .. })));
@@ -354,18 +333,7 @@ mod tests {
         );
         let leader_sig = sign_input(&wrong_peer_unsigned_tx, wrong_entries.clone(), 0, &owner_a);
         let leader_sigscript = builder
-            .p2sh_signature_script(
-                "Player",
-                "start_game",
-                initial_a,
-                vec![
-                    ArtifactValue::Bytes(leader_sig),
-                    ArtifactValue::Bytes(owner_a_pk),
-                    ArtifactValue::Int(0),
-                    ArtifactValue::Int(7),
-                    ArtifactValue::Int(3),
-                ],
-            )
+            .p2sh_signature_script("Player", "start_game", initial_a, args![leader_sig, owner_a_pk, 0, 7, 3])
             .expect("leader sigscript builds");
         let wrong_peer_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(outpoint_a, leader_sigscript), TxBuilder::transaction_input(outpoint_b, Vec::new())],
@@ -389,7 +357,7 @@ mod tests {
             .expect("Player utxo builds");
         let mux_output = builder.covenant_output("Mux", mux_initial.clone(), input_value, 0, covenant_id).expect("Mux output builds");
         let enter_mux_sigscript = builder
-            .p2sh_signature_script("Player", "enter_mux", player_initial.clone(), Vec::new())
+            .p2sh_signature_script("Player", "enter_mux", player_initial.clone(), args![])
             .expect("enter_mux sigscript fills the family route table");
         let enter_mux_tx =
             TxBuilder::transaction(vec![TxBuilder::transaction_input(player_outpoint, enter_mux_sigscript)], vec![mux_output.clone()]);
@@ -430,7 +398,7 @@ mod tests {
             builder.covenant_utxo("Mux", mux_initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
         let pawn_output = builder.covenant_output("Pawn", pawn_next.clone(), input_value, 0, covenant_id).expect("Pawn output builds");
         let choose_pawn_sigscript = builder
-            .p2sh_signature_script("Mux", "choose_pawn", mux_initial.clone(), Vec::new())
+            .p2sh_signature_script("Mux", "choose_pawn", mux_initial.clone(), args![])
             .expect("choose_pawn sigscript fills Pawn template lens");
         let choose_pawn_tx =
             TxBuilder::transaction(vec![TxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript.clone())], vec![pawn_output]);
@@ -441,14 +409,7 @@ mod tests {
             .covenant_output("Pawn", dynamic_pawn_next.clone(), input_value, 0, covenant_id)
             .expect("dynamic Pawn output builds");
         let dynamic_pawn_sigscript = builder
-            .p2sh_signature_script_with_template_selector(
-                "Mux",
-                "choose",
-                mux_initial.clone(),
-                vec![ArtifactValue::Int(0)],
-                "target",
-                "Pawn",
-            )
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Pawn")])
             .expect("selector sigscript fills Pawn template lens");
         let dynamic_pawn_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(mux_outpoint, dynamic_pawn_sigscript.clone())],
@@ -460,14 +421,7 @@ mod tests {
         let dynamic_knight_output =
             builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("dynamic Knight output builds");
         let dynamic_knight_sigscript = builder
-            .p2sh_signature_script_with_template_selector(
-                "Mux",
-                "choose",
-                mux_initial.clone(),
-                vec![ArtifactValue::Int(1)],
-                "target",
-                "Knight",
-            )
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Knight")])
             .expect("selector sigscript fills Knight template lens");
         let dynamic_knight_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(mux_outpoint, dynamic_knight_sigscript)],
@@ -477,7 +431,7 @@ mod tests {
             .expect("Mux selector can choose the second table entry");
 
         let missing_selector = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), vec![ArtifactValue::Int(0)])
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![0])
             .expect_err("selector entries require an explicit template choice");
         assert!(
             matches!(missing_selector, BuilderError::MissingTemplateSelectorChoice { ref selector } if selector == "target"),
@@ -485,14 +439,7 @@ mod tests {
         );
 
         let invalid_selector = builder
-            .p2sh_signature_script_with_template_selector(
-                "Mux",
-                "choose",
-                mux_initial.clone(),
-                vec![ArtifactValue::Int(0)],
-                "target",
-                "League",
-            )
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("League")])
             .expect_err("selector must choose one of the actor enum variants");
         assert!(
             matches!(
@@ -503,38 +450,8 @@ mod tests {
             "unexpected error: {invalid_selector}"
         );
 
-        let out_of_range_selector = builder
-            .p2sh_signature_script_with_template_selector(
-                "Mux",
-                "choose",
-                mux_initial.clone(),
-                vec![ArtifactValue::Int(2)],
-                "target",
-                "Pawn",
-            )
-            .expect("selector sigscript can encode an out-of-range selector value");
-        let out_of_range_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, out_of_range_selector)],
-            vec![
-                builder
-                    .covenant_output("Pawn", board_state(7, 1), input_value, 0, covenant_id)
-                    .expect("out-of-range Pawn output builds"),
-            ],
-        );
-        assert!(
-            execute_input_with_covenants(&out_of_range_tx, vec![mux_utxo.clone()], 0).is_err(),
-            "selector index must be bounded by the actor enum variant count"
-        );
-
         let wrong_selector_witness = builder
-            .p2sh_signature_script_with_template_selector(
-                "Mux",
-                "choose",
-                mux_initial.clone(),
-                vec![ArtifactValue::Int(0)],
-                "target",
-                "Knight",
-            )
+            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Knight")])
             .expect("selector sigscript can encode mismatched witness material");
         let wrong_selector_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(mux_outpoint, wrong_selector_witness)],
@@ -550,7 +467,7 @@ mod tests {
         );
 
         let const_knight_sigscript = builder
-            .p2sh_signature_script("Mux", "choose_knight_const", mux_initial.clone(), Vec::new())
+            .p2sh_signature_script("Mux", "choose_knight_const", mux_initial.clone(), args![])
             .expect("fixed actor enum selector fills Knight template lens");
         let const_knight_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(mux_outpoint, const_knight_sigscript.clone())],
@@ -711,8 +628,7 @@ mod tests {
         let input_utxo =
             builder.covenant_utxo("Foo", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("foo utxo builds");
         let output = builder.covenant_output("Foo", next.clone(), input_value, 0, covenant_id).expect("foo output builds");
-        let sigscript =
-            builder.p2sh_signature_script("Foo", "bump", initial.clone(), vec![ArtifactValue::Int(5)]).expect("bump sigscript builds");
+        let sigscript = builder.p2sh_signature_script("Foo", "bump", initial.clone(), args![5]).expect("bump sigscript builds");
         let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript.clone())], vec![output]);
 
         execute_input_with_covenants(&tx, vec![input_utxo.clone()], 0).expect("same-template transition passes");
@@ -770,12 +686,7 @@ mod tests {
         let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], outputs.clone());
         let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
         let sigscript = builder
-            .p2sh_signature_script(
-                "League",
-                "register_player",
-                league_initial.clone(),
-                vec![ArtifactValue::Bytes(signature.clone()), ArtifactValue::Bytes(owner_pk.clone())],
-            )
+            .p2sh_signature_script("League", "register_player", league_initial.clone(), args![signature.clone(), owner_pk.clone()])
             .expect("register sigscript builds");
         let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript)], outputs.clone());
 
@@ -826,12 +737,7 @@ mod tests {
         let bad_unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], bad_outputs.clone());
         let bad_signature = sign_input(&bad_unsigned_tx, entries.clone(), 0, &owner);
         let bad_sigscript = builder
-            .p2sh_signature_script(
-                "League",
-                "register_player",
-                league_initial,
-                vec![ArtifactValue::Bytes(bad_signature), ArtifactValue::Bytes(owner_pk)],
-            )
+            .p2sh_signature_script("League", "register_player", league_initial, args![bad_signature, owner_pk])
             .expect("bad register sigscript builds");
         let bad_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, bad_sigscript)], bad_outputs);
         assert!(execute_input_with_covenants(&bad_tx, entries, 0).is_err(), "exact continuation must reject a changed League state");
@@ -912,7 +818,7 @@ mod tests {
                 "MinterProxy",
                 "mint",
                 proxy_state.clone(),
-                vec![ArtifactValue::Object(proxy_state.clone()), ArtifactValue::Object(recipient_state.clone())],
+                args![proxy_state.clone(), recipient_state.clone()],
             )
             .expect("proxy mint sigscript builds");
         let unsigned_tx = TxBuilder::transaction(
@@ -928,11 +834,7 @@ mod tests {
                 "Minter",
                 "mint",
                 minter_initial.clone(),
-                vec![
-                    ArtifactValue::Bytes(signature),
-                    ArtifactValue::Bytes(recipient_owner.clone()),
-                    ArtifactValue::Int(minted_amount),
-                ],
+                args![signature, recipient_owner.clone(), minted_amount],
                 &observed,
             )
             .expect("observed mint sigscript builds");
@@ -1003,11 +905,7 @@ mod tests {
                 "Minter",
                 "mint",
                 minter_initial.clone(),
-                vec![
-                    ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
-                    ArtifactValue::Bytes(recipient_owner.clone()),
-                    ArtifactValue::Int(minted_amount),
-                ],
+                args![sign_input(&unsigned_tx, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
                 &missing_proxy,
             )
             .expect_err("missing observed input is rejected by the runtime");
@@ -1021,11 +919,7 @@ mod tests {
                 "Minter",
                 "mint",
                 minter_initial.clone(),
-                vec![
-                    ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
-                    ArtifactValue::Bytes(recipient_owner.clone()),
-                    ArtifactValue::Int(minted_amount),
-                ],
+                args![sign_input(&unsigned_tx, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
                 &wrong_observed,
             )
             .expect_err("observed input state must match its UTXO script");
@@ -1059,11 +953,7 @@ mod tests {
                 "Minter",
                 "mint",
                 minter_initial.clone(),
-                vec![
-                    ArtifactValue::Bytes(sign_input(&wrong_recipient_unsigned, entries.clone(), 0, &owner)),
-                    ArtifactValue::Bytes(recipient_owner.clone()),
-                    ArtifactValue::Int(minted_amount),
-                ],
+                args![sign_input(&wrong_recipient_unsigned, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
                 &observed,
             )
             .expect("wrong-recipient sigscript still builds");
@@ -1104,11 +994,7 @@ mod tests {
                 "Minter",
                 "mint",
                 wrong_asset_minter_initial,
-                vec![
-                    ArtifactValue::Bytes(sign_input(&wrong_asset_unsigned, wrong_asset_entries.clone(), 0, &owner)),
-                    ArtifactValue::Bytes(recipient_owner),
-                    ArtifactValue::Int(minted_amount),
-                ],
+                args![sign_input(&wrong_asset_unsigned, wrong_asset_entries.clone(), 0, &owner), recipient_owner, minted_amount],
                 &observed,
             )
             .expect("wrong-asset sigscript still builds");
@@ -1244,7 +1130,7 @@ mod tests {
         observed_keyed_by_app
             .insert("open_agent".to_string(), observed.get("remote").expect("remote observed context exists").clone());
         let wrong_observe_key_err = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed_keyed_by_app)
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed_keyed_by_app)
             .expect_err("observed context map is keyed by observe name, not app alias");
         assert!(
             matches!(
@@ -1288,7 +1174,7 @@ mod tests {
             .expect("layout mismatch is checked when open observed actor is used");
         let bad_layout_builder = TxBuilder::from_bundle(&bad_layout_bundle).expect("builder accepts bundle shape");
         let bad_layout_err = bad_layout_builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
             .expect_err("open observed actor state layout mismatch is rejected");
         assert!(
             matches!(
@@ -1324,7 +1210,7 @@ mod tests {
             .expect("expanded agent utxo builds");
         let expanded_observed = open_agent_context("Forager", expanded_agent_initial, expanded_agent_utxo, expanded_agent_next);
         expanded_builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, vec![], &expanded_observed)
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, args![], &expanded_observed)
             .expect("open observed actor accepts a state that expands the expected base state");
         expanded_builder
             .p2sh_signature_script_in_app(
@@ -1332,7 +1218,7 @@ mod tests {
                 "Forager",
                 "step",
                 expanded_open_agent_state(controller_covenant_id, 2, 5),
-                vec![],
+                args![],
             )
             .expect("expanded agent sigscript is built from slot-qualified source fields");
         let mut flattened_forager_state = expanded_open_agent_state(controller_covenant_id, 2, 5);
@@ -1341,7 +1227,7 @@ mod tests {
         flattened_forager_state.insert("mood".to_string(), ArtifactValue::Int(1));
         flattened_forager_state.insert("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32]));
         let flattened_err = expanded_builder
-            .p2sh_signature_script_in_app("open_agent", "Forager", "step", flattened_forager_state, vec![])
+            .p2sh_signature_script_in_app("open_agent", "Forager", "step", flattened_forager_state, args![])
             .expect_err("expanded agent state must provide slot-qualified source fields");
         assert!(
             matches!(&flattened_err, BuilderError::MissingStateExpansionPreimage { contract, field, memory_state }
@@ -1373,13 +1259,7 @@ mod tests {
             .covenant_output_in_app("open_agent", "Forager", forager_next, agent_value, 1, agent_covenant_id)
             .expect("Forager output builds with packed expanded memory digest");
         let forager_sigscript = builder
-            .p2sh_signature_script_in_app(
-                "open_agent",
-                "Forager",
-                "step",
-                forager_initial,
-                vec![ArtifactValue::Int(1), ArtifactValue::Int(0), ArtifactValue::Int(4)],
-            )
+            .p2sh_signature_script_in_app("open_agent", "Forager", "step", forager_initial, args![1, 0, 4])
             .expect("Forager step sigscript fills hidden expanded-memory preimage");
         let forager_tx = TxBuilder::transaction(
             vec![
@@ -1405,16 +1285,10 @@ mod tests {
             .expect("cell utxo builds");
         let entries = vec![cell_utxo, agent_utxo];
         let agent_sigscript = builder
-            .p2sh_signature_script_in_app(
-                "open_agent",
-                "Agent",
-                "step",
-                agent_initial.clone(),
-                vec![ArtifactValue::Object(agent_next.clone())],
-            )
+            .p2sh_signature_script_in_app("open_agent", "Agent", "step", agent_initial.clone(), args![agent_next.clone()])
             .expect("agent step sigscript builds");
         let cell_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
             .expect("cell advance sigscript builds");
         let tx = TxBuilder::transaction(
             vec![
@@ -1438,16 +1312,10 @@ mod tests {
             agent_covenant_id,
         );
         let wrong_agent_sigscript = builder
-            .p2sh_signature_script_in_app(
-                "open_agent",
-                "Agent",
-                "step",
-                agent_initial.clone(),
-                vec![ArtifactValue::Object(wrong_agent_next)],
-            )
+            .p2sh_signature_script_in_app("open_agent", "Agent", "step", agent_initial.clone(), args![wrong_agent_next])
             .expect("agent accepts controller-authorized non-physics state");
         let wrong_cell_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), vec![], &observed)
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
             .expect("cell sigscript builds for wrong-output tx");
         let wrong_tx = TxBuilder::transaction(
             vec![
@@ -1577,11 +1445,11 @@ mod tests {
     }
 
     fn ticket_state(owner: Vec<u8>, serial: i64, redeemed: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("owner".to_string(), ArtifactValue::Bytes(owner)),
-            ("serial".to_string(), ArtifactValue::Int(serial)),
-            ("redeemed".to_string(), ArtifactValue::Int(redeemed)),
-        ])
+        state! {
+            owner: owner,
+            serial: serial,
+            redeemed: redeemed,
+        }
     }
 
     fn keypair_from_byte(byte: u8) -> Keypair {
@@ -1609,92 +1477,95 @@ mod tests {
         wins: i64,
         losses: i64,
     ) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("owner".to_string(), ArtifactValue::Bytes(owner)),
-            ("player_id".to_string(), ArtifactValue::Bytes(player_id)),
-            ("open_games".to_string(), ArtifactValue::Int(open_games)),
-            ("games".to_string(), ArtifactValue::Int(games)),
-            ("wins".to_string(), ArtifactValue::Int(wins)),
-            ("losses".to_string(), ArtifactValue::Int(losses)),
-        ])
+        state! {
+            owner: owner,
+            player_id: player_id,
+            open_games: open_games,
+            games: games,
+            wins: wins,
+            losses: losses,
+        }
     }
 
     fn game_state(player_a: Vec<u8>, player_b: Vec<u8>, pile: i64, max_take: i64, turn: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("player_a".to_string(), ArtifactValue::Bytes(player_a)),
-            ("player_b".to_string(), ArtifactValue::Bytes(player_b)),
-            ("pile".to_string(), ArtifactValue::Int(pile)),
-            ("max_take".to_string(), ArtifactValue::Int(max_take)),
-            ("turn".to_string(), ArtifactValue::Int(turn)),
-        ])
+        state! {
+            player_a: player_a,
+            player_b: player_b,
+            pile: pile,
+            max_take: max_take,
+            turn: turn,
+        }
     }
 
     fn league_state(admin: Vec<u8>, default_pile: i64, default_max_take: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("admin".to_string(), ArtifactValue::Bytes(admin)),
-            ("default_pile".to_string(), ArtifactValue::Int(default_pile)),
-            ("default_max_take".to_string(), ArtifactValue::Int(default_max_take)),
-        ])
+        state! {
+            admin: admin,
+            default_pile: default_pile,
+            default_max_take: default_max_take,
+        }
     }
 
     fn count_state(count: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([("count".to_string(), ArtifactValue::Int(count))])
+        state! { count: count }
     }
 
     fn toy_player_state(nonce: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([("nonce".to_string(), ArtifactValue::Int(nonce))])
+        state! { nonce: nonce }
     }
 
     fn board_state(selector: i64, ply: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([("selector".to_string(), ArtifactValue::Int(selector)), ("ply".to_string(), ArtifactValue::Int(ply))])
+        state! {
+            selector: selector,
+            ply: ply,
+        }
     }
 
     fn minter_state(owner: Vec<u8>, kcc20_covid: Hash, amount: i64, initialized: bool) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("owner".to_string(), ArtifactValue::Bytes(owner)),
-            ("kcc20_covid".to_string(), ArtifactValue::Bytes(kcc20_covid.as_bytes().to_vec())),
-            ("amount".to_string(), ArtifactValue::Int(amount)),
-            ("initialized".to_string(), ArtifactValue::Bool(initialized)),
-        ])
+        state! {
+            owner: owner,
+            kcc20_covid: kcc20_covid,
+            amount: amount,
+            initialized: initialized,
+        }
     }
 
     fn minter_proxy_state(controller_id: Hash) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec()))])
+        state! { controller_id: controller_id }
     }
 
     fn kcc20_state(owner_identifier: Vec<u8>, amount: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("owner_identifier".to_string(), ArtifactValue::Bytes(owner_identifier)),
-            ("identifier_type".to_string(), ArtifactValue::Byte(0)),
-            ("amount".to_string(), ArtifactValue::Int(amount)),
-        ])
+        state! {
+            owner_identifier: owner_identifier,
+            identifier_type: 0_u8,
+            amount: amount,
+        }
     }
 
     fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, _tick: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
-            ("x".to_string(), ArtifactValue::Int(0)),
-            ("y".to_string(), ArtifactValue::Int(0)),
-            ("food".to_string(), ArtifactValue::Int(0)),
-            ("occupant_agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
-            ("occupant_agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
-            ("occupant_caps_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
-        ])
+        state! {
+            world_id: vec![0x11; 32],
+            x: 0,
+            y: 0,
+            food: 0,
+            occupant_agent_covid: agent_covid,
+            occupant_agent_type: agent_type,
+            occupant_caps_digest: vec![0x77; 32],
+        }
     }
 
     fn open_agent_state(controller_id: Hash, caps_digest: Vec<u8>, energy: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
-            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
-            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
-            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
-            ("capabilities_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
-            ("strategy".to_string(), ArtifactValue::Bytes(vec![0x44; 32])),
-            ("x".to_string(), ArtifactValue::Int(0)),
-            ("y".to_string(), ArtifactValue::Int(0)),
-            ("energy".to_string(), ArtifactValue::Int(energy)),
-            ("generation".to_string(), ArtifactValue::Int(0)),
-        ])
+        state! {
+            world_id: vec![0x11; 32],
+            agent_id: vec![0x22; 32],
+            species_id: vec![0x33; 32],
+            controller_id: controller_id,
+            capabilities_digest: caps_digest,
+            strategy: vec![0x44; 32],
+            x: 0,
+            y: 0,
+            energy: energy,
+            generation: 0,
+        }
     }
 
     fn expanded_open_agent_state(controller_id: Hash, hunger: i64, energy: i64) -> BTreeMap<String, ArtifactValue> {
@@ -1702,25 +1573,22 @@ mod tests {
     }
 
     fn expanded_open_agent_state_at(controller_id: Hash, hunger: i64, energy: i64, x: i64, y: i64) -> BTreeMap<String, ArtifactValue> {
-        BTreeMap::from([
-            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
-            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
-            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
-            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
-            ("capabilities_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
-            (
-                "strategy".to_string(),
-                ArtifactValue::Object(BTreeMap::from([
-                    ("hunger".to_string(), ArtifactValue::Int(hunger)),
-                    ("mood".to_string(), ArtifactValue::Int(1)),
-                    ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
-                ])),
-            ),
-            ("x".to_string(), ArtifactValue::Int(x)),
-            ("y".to_string(), ArtifactValue::Int(y)),
-            ("energy".to_string(), ArtifactValue::Int(energy)),
-            ("generation".to_string(), ArtifactValue::Int(0)),
-        ])
+        state! {
+            world_id: vec![0x11; 32],
+            agent_id: vec![0x22; 32],
+            species_id: vec![0x33; 32],
+            controller_id: controller_id,
+            capabilities_digest: vec![0x77; 32],
+            strategy: state! {
+                hunger: hunger,
+                mood: 1,
+                target_agent_id: vec![0x55; 32],
+            },
+            x: x,
+            y: y,
+            energy: energy,
+            generation: 0,
+        }
     }
 
     fn observed_asset_context(
@@ -1839,26 +1707,10 @@ mod tests {
         let leader_sig = sign_input(&unsigned_tx, entries.clone(), 0, owner_a);
         let delegate_sig = sign_input(&unsigned_tx, entries, 1, owner_b);
         let leader_sigscript = builder
-            .p2sh_signature_script(
-                "Player",
-                "start_game",
-                initial_a.clone(),
-                vec![
-                    ArtifactValue::Bytes(leader_sig),
-                    ArtifactValue::Bytes(owner_a_pk.to_vec()),
-                    ArtifactValue::Int(0),
-                    ArtifactValue::Int(7),
-                    ArtifactValue::Int(3),
-                ],
-            )
+            .p2sh_signature_script("Player", "start_game", initial_a.clone(), args![leader_sig, owner_a_pk.to_vec(), 0, 7, 3])
             .expect("leader sigscript builds");
         let delegate_sigscript = builder
-            .p2sh_signature_script(
-                "Player",
-                "accept_start",
-                initial_b.clone(),
-                vec![ArtifactValue::Bytes(delegate_sig), ArtifactValue::Bytes(owner_b_pk.to_vec())],
-            )
+            .p2sh_signature_script("Player", "accept_start", initial_b.clone(), args![delegate_sig, owner_b_pk.to_vec()])
             .expect("delegate sigscript builds");
 
         TxBuilder::transaction(

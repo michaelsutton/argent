@@ -42,6 +42,38 @@ use thiserror::Error;
 
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
 
+/// Source-level entrypoint argument accepted by `TxBuilder`.
+///
+/// Plain values lower directly to Silverscript ABI values. Actor values name an
+/// Argent actor and are lowered through the artifact to the matching actor-enum
+/// selector index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ArgValue {
+    Value(ArtifactValue),
+    /// An Argent-only user-facing argument.
+    ///
+    /// Actor handles are the only entrypoint args that do not map directly to
+    /// the Silverscript ABI. The runtime resolves the actor name through the
+    /// artifact and passes the matching selector index to the contract.
+    Actor(String),
+}
+
+/// Build an actor-valued argument for `args!`.
+///
+/// Use this when an Argent entrypoint takes an `actor enum` parameter.
+pub fn actor(actor: impl Into<String>) -> ArgValue {
+    ArgValue::Actor(actor.into())
+}
+
+impl<T> From<T> for ArgValue
+where
+    T: IntoArtifactValue,
+{
+    fn from(value: T) -> Self {
+        Self::Value(value.into_artifact_value())
+    }
+}
+
 pub trait IntoArtifactValue {
     fn into_artifact_value(self) -> ArtifactValue;
 }
@@ -162,22 +194,23 @@ macro_rules! state {
 
 /// Build Argent entrypoint argument values for `TxBuilder` calls.
 ///
-/// Returns a `Vec<ArtifactValue>` in entrypoint parameter order. Each value is
-/// converted through `IntoArtifactValue`.
+/// Returns a `Vec<ArgValue>` in the provided order. Most values convert
+/// directly into ABI values; actor handles stay as actor names until the runtime
+/// lowers them through the artifact.
 ///
 /// ```
-/// use argent_runtime::args;
+/// use argent_runtime::{args, actor};
 ///
 /// // Builds:
-/// // vec![ArtifactValue::Int(3), ArtifactValue::Bool(true)]
-/// let args = args![3, true];
+/// // vec![ArgValue::Value(ArtifactValue::Int(3)), ArgValue::Actor("Alpha".to_string())]
+/// let args = args![3, actor("Alpha")];
 /// ```
 #[macro_export]
 macro_rules! args {
     ($($value:expr),* $(,)?) => {{
         vec![
             $(
-                $crate::IntoArtifactValue::into_artifact_value($value),
+                ::std::convert::Into::<$crate::ArgValue>::into($value),
             )*
         ]
     }};
@@ -243,6 +276,8 @@ pub enum BuilderError {
     MissingTemplateSelectorChoice { selector: String },
     #[error("template selector `{selector}` cannot select actor `{actor}`")]
     InvalidTemplateSelectorChoice { selector: String, actor: String },
+    #[error("argument `{param}` for `{actor}::{entry}` is actor `{selected_actor}`, but `{param}` is not an actor selector")]
+    ActorArgumentWithoutSelector { actor: String, entry: String, param: String, selected_actor: String },
     #[error("entry `{actor}::{entry}` does not define observe `{observe}`")]
     UnknownObserve { actor: String, entry: String, observe: String },
     #[error("missing observed covenant context `{observe}`")]
@@ -607,9 +642,25 @@ impl<'a> TxBuilder<'a> {
         actor_name: &str,
         entry_name: &str,
         input_source_state: BTreeMap<String, ArtifactValue>,
-        user_args: Vec<ArtifactValue>,
+        user_args: Vec<ArgValue>,
     ) -> BuilderResult<Vec<u8>> {
-        self.p2sh_signature_script_with_context(actor_name, entry_name, input_source_state, user_args, &BTreeMap::new(), None)
+        let contract_ref = self.contract_ref(actor_name)?;
+        let contract = contract_ref.contract;
+        let sil_entry = contract
+            .entry(entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
+        let entry_ref = self.entry_ref_in_artifact(contract_ref.artifact, actor_name, entry_name)?;
+        let argent_entry = entry_ref.entry;
+        let (artifact_args, template_selectors) = self.lower_arg_values(actor_name, entry_name, sil_entry, argent_entry, user_args)?;
+        self.p2sh_signature_script_with_context_in_artifact(
+            contract_ref.artifact,
+            actor_name,
+            entry_name,
+            input_source_state,
+            artifact_args,
+            &template_selectors,
+            None,
+        )
     }
 
     pub fn p2sh_signature_script_in_app(
@@ -618,31 +669,26 @@ impl<'a> TxBuilder<'a> {
         actor_name: &str,
         entry_name: &str,
         input_source_state: BTreeMap<String, ArtifactValue>,
-        user_args: Vec<ArtifactValue>,
+        user_args: Vec<ArgValue>,
     ) -> BuilderResult<Vec<u8>> {
+        let artifact = self.bundle.app(app)?;
+        let contract_ref = self.contract_ref_in_artifact(artifact, actor_name)?;
+        let contract = contract_ref.contract;
+        let sil_entry = contract
+            .entry(entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
+        let entry_ref = self.entry_ref_in_artifact(artifact, actor_name, entry_name)?;
+        let argent_entry = entry_ref.entry;
+        let (artifact_args, template_selectors) = self.lower_arg_values(actor_name, entry_name, sil_entry, argent_entry, user_args)?;
         self.p2sh_signature_script_with_context_in_artifact(
-            self.bundle.app(app)?,
+            artifact,
             actor_name,
             entry_name,
             input_source_state,
-            user_args,
-            &BTreeMap::new(),
+            artifact_args,
+            &template_selectors,
             None,
         )
-    }
-
-    pub fn p2sh_signature_script_with_template_selector(
-        &self,
-        actor_name: &str,
-        entry_name: &str,
-        input_source_state: BTreeMap<String, ArtifactValue>,
-        user_args: Vec<ArtifactValue>,
-        selector: &str,
-        selected_actor: &str,
-    ) -> BuilderResult<Vec<u8>> {
-        let mut template_selectors = BTreeMap::new();
-        template_selectors.insert(selector.to_string(), selected_actor.to_string());
-        self.p2sh_signature_script_with_context(actor_name, entry_name, input_source_state, user_args, &template_selectors, None)
     }
 
     /// Build a P2SH sigscript while deriving observed-covenant hidden witnesses.
@@ -656,37 +702,25 @@ impl<'a> TxBuilder<'a> {
         actor_name: &str,
         entry_name: &str,
         input_source_state: BTreeMap<String, ArtifactValue>,
-        user_args: Vec<ArtifactValue>,
+        user_args: Vec<ArgValue>,
         observed: &BTreeMap<String, ObservedCovenantContext>,
     ) -> BuilderResult<Vec<u8>> {
-        self.p2sh_signature_script_with_context(
-            actor_name,
-            entry_name,
-            input_source_state,
-            user_args,
-            &BTreeMap::new(),
-            Some(observed),
-        )
-    }
-
-    fn p2sh_signature_script_with_context(
-        &self,
-        actor_name: &str,
-        entry_name: &str,
-        input_source_state: BTreeMap<String, ArtifactValue>,
-        user_args: Vec<ArtifactValue>,
-        template_selectors: &BTreeMap<String, String>,
-        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
-    ) -> BuilderResult<Vec<u8>> {
         let contract_ref = self.contract_ref(actor_name)?;
+        let contract = contract_ref.contract;
+        let sil_entry = contract
+            .entry(entry_name)
+            .ok_or_else(|| BuilderError::UnknownEntry { actor: actor_name.to_string(), entry: entry_name.to_string() })?;
+        let entry_ref = self.entry_ref_in_artifact(contract_ref.artifact, actor_name, entry_name)?;
+        let argent_entry = entry_ref.entry;
+        let (artifact_args, template_selectors) = self.lower_arg_values(actor_name, entry_name, sil_entry, argent_entry, user_args)?;
         self.p2sh_signature_script_with_context_in_artifact(
             contract_ref.artifact,
             actor_name,
             entry_name,
             input_source_state,
-            user_args,
-            template_selectors,
-            observed,
+            artifact_args,
+            &template_selectors,
+            Some(observed),
         )
     }
 
@@ -789,6 +823,50 @@ impl<'a> TxBuilder<'a> {
             sigscript,
             covenant_engine_flags(),
         )?)
+    }
+
+    fn lower_arg_values(
+        &self,
+        actor_name: &str,
+        entry_name: &str,
+        sil_entry: &SilEntryArtifact,
+        argent_entry: &EntryArtifact,
+        user_args: Vec<ArgValue>,
+    ) -> BuilderResult<(Vec<ArtifactValue>, BTreeMap<String, String>)> {
+        let mut artifact_args = Vec::with_capacity(user_args.len());
+        let mut template_selectors = BTreeMap::new();
+
+        for (idx, arg) in user_args.into_iter().enumerate() {
+            match arg {
+                ArgValue::Value(value) => artifact_args.push(value),
+                ArgValue::Actor(selected_actor) => {
+                    let Some(param) = sil_entry.params.get(idx) else {
+                        return Err(BuilderError::ActorArgumentWithoutSelector {
+                            actor: actor_name.to_string(),
+                            entry: entry_name.to_string(),
+                            param: format!("#{idx}"),
+                            selected_actor,
+                        });
+                    };
+                    let selector =
+                        argent_entry.template_selectors.iter().find(|selector| selector.name == param.name).ok_or_else(|| {
+                            BuilderError::ActorArgumentWithoutSelector {
+                                actor: actor_name.to_string(),
+                                entry: entry_name.to_string(),
+                                param: param.name.clone(),
+                                selected_actor: selected_actor.clone(),
+                            }
+                        })?;
+                    let variant_index = selector.variants.iter().position(|variant| variant == &selected_actor).ok_or_else(|| {
+                        BuilderError::InvalidTemplateSelectorChoice { selector: selector.name.clone(), actor: selected_actor.clone() }
+                    })?;
+                    template_selectors.insert(selector.name.clone(), selected_actor);
+                    artifact_args.push(ArtifactValue::Int(variant_index as i64));
+                }
+            }
+        }
+
+        Ok((artifact_args, template_selectors))
     }
 
     fn runtime_entry_args(
@@ -1752,8 +1830,13 @@ mod tests {
     #[test]
     fn args_macro_builds_artifact_value_list() {
         assert_eq!(
-            args![3, true, [0xaa_u8; 2]],
-            vec![ArtifactValue::Int(3), ArtifactValue::Bool(true), ArtifactValue::Bytes(vec![0xaa; 2])]
+            args![3, true, [0xaa_u8; 2], actor("Alpha")],
+            vec![
+                ArgValue::Value(ArtifactValue::Int(3)),
+                ArgValue::Value(ArtifactValue::Bool(true)),
+                ArgValue::Value(ArtifactValue::Bytes(vec![0xaa; 2])),
+                ArgValue::Actor("Alpha".to_string()),
+            ]
         );
     }
 

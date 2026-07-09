@@ -125,7 +125,7 @@ let sigscript = builder.p2sh_signature_script(
     "Ticket",
     "transfer",
     input_state,
-    vec![ArtifactValue::Bytes(next_owner)],
+    args![next_owner],
 )?;
 
 // ... compose tx
