@@ -43,6 +43,16 @@ pub fn build_inline(
     read_artifact(out_dir.as_ref())
 }
 
+/// Build a file-backed Argent app into `out_dir` and return its artifact.
+///
+/// This is the library equivalent of `argentc build <app.ag> --out <dir>`.
+/// Imports are resolved relative to the input file.
+pub fn build_file(input: impl AsRef<Path>, out_dir: impl AsRef<Path>) -> Result<artifact::Artifact> {
+    let program = loader::load_program(input.as_ref())?;
+    emit::emit_build(&program, out_dir.as_ref())?;
+    read_artifact(out_dir.as_ref())
+}
+
 fn inline_program(source_label: PathBuf, source: String) -> Result<ast::Program> {
     let module = parser::parse_module(source_label.clone(), source)?;
     Ok(ast::Program { root: source_label, modules: vec![module] })
@@ -97,5 +107,24 @@ app CounterApp {
         assert!(out_dir.join("sil").join("Counter.sil").exists());
 
         let _ = std::fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn build_file_writes_outputs_and_returns_artifact() {
+        let temp = std::env::temp_dir().join(format!("argent-build-file-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("temp dir created");
+
+        let input = temp.join("counter.ag");
+        let out_dir = temp.join("build");
+        std::fs::write(&input, COUNTER_APP).expect("source written");
+
+        let artifact = build_file(&input, &out_dir).expect("file app builds");
+
+        assert_eq!(artifact.app, "CounterApp");
+        assert!(out_dir.join("artifact.json").exists());
+        assert!(out_dir.join("sil").join("Counter.sil").exists());
+
+        let _ = std::fs::remove_dir_all(temp);
     }
 }
