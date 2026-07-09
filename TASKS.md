@@ -527,12 +527,12 @@ Conceptually:
 
 ```text
 core artifact
-  exports Cell, AgentCapsule, physics entries
+  exports Cell, AgentState, physics entries
 
 forager artifact
   depends on core artifact id
   exports Forager
-  declares Forager implements core::actor<AgentCapsule>
+  declares Forager implements core::actor<AgentState>
 
 artifact bundle
   core artifact + forager artifact + resolver metadata
@@ -577,13 +577,13 @@ Later source-language dependency work:
 
 End-to-end test:
 
-- Compile a core game artifact exposing `Cell` and `AgentCapsule`.
+- Compile a core game artifact exposing `Cell` and `AgentState`.
 - Compile a separate `Forager` artifact that imports the core definitions and
-  declares an `AgentCapsule` view.
+  declares an `AgentState` view.
 - Build one transaction with core `Cell` inputs/outputs and a `Forager`
   input/output using only the artifact bundle.
 - Reject a `Forager` artifact compiled against a different core artifact id or
-  incompatible `AgentCapsule` layout.
+  incompatible `AgentState` layout.
 
 Obstacle to handle:
 
@@ -676,7 +676,7 @@ byte[32] occupant_template_hash;
 ```
 
 The stored state may remain a fixed `byte[32]`, but the compiler should treat
-it as a persisted `TemplateHandle<AgentCapsule>` commitment when it is used for
+it as a persisted `TemplateHandle<AgentState>` commitment when it is used for
 observed/open actor transitions.
 
 End-to-end test:
@@ -710,9 +710,9 @@ Done:
 
 Still remaining:
 
-- Keep polishing the source surface around scoped runtime handles and final
-  Open Lattice examples.
-- Add the multi-agent rejection fixture once `state extends` header views exist.
+- Keep polishing the source surface around scoped runtime handles and Open ICC
+  lattice examples.
+- Add the multi-agent rejection fixture once state expansion header views exist.
 
 Add source syntax for preserving an unknown concrete actor template behind a
 known state header:
@@ -720,7 +720,7 @@ known state header:
 ```text
 observes agent_cov by self.occupant_agent_covid {
     inputs {
-        agent: actor<AgentCapsule> as T;
+        agent: actor<AgentState> as T;
     }
 
     outputs {
@@ -735,9 +735,9 @@ checks.
 
 End-to-end test:
 
-- Create two concrete agents with the same `AgentCapsule` header and different
+- Create two concrete agents with the same `AgentState` header and different
   templates.
-- A cell action can read either agent through `actor<AgentCapsule> as T`.
+- A cell action can read either agent through `actor<AgentState> as T`.
 - The output must preserve the same concrete `T`.
 - Swapping the output to the other concrete agent template fails.
 
@@ -805,7 +805,8 @@ It may mutate fields such as:
 
 - position;
 - energy;
-- `custom_data_digest`.
+- virtual strategy/inventory slots when the observed agent output provides a new
+  digest.
 
 End-to-end test:
 
@@ -820,94 +821,59 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 20. Implement `state extends` For Header Views
+### 20. Support Virtual-Slot Expanded Agent State
 
-Allow concrete agent states to extend a shared header state:
+Allow concrete agent states to expand a shared header state by binding virtual
+slots into richer source-level state views:
 
-```text
-state ForagerState extends AgentCapsule {
-    ...
+```rust
+state AgentCapsule {
+    virtual strategy;
+}
+
+state ForagerStrategy {
+    int hunger;
+}
+
+state ForagerState expands AgentCapsule {
+    strategy: ForagerStrategy;
 }
 ```
 
-The generated concrete actor owns the full concrete state. Interface reads
-through `actor<AgentCapsule>` expose only the header view.
+`ForagerState` has the exact stored covenant layout of `AgentCapsule`. The
+`expands` body may only bind virtual slots; it does not add raw tail fields to
+the stored state. Interface reads through `actor<AgentCapsule>` expose the
+shared header, while concrete agent code accesses structured strategy state as
+`strategy.hunger`.
 
-End-to-end test:
+Done:
 
-- A `Forager` actor with `ForagerState extends AgentCapsule` compiles.
-- A `Cell` observes it as `actor<AgentCapsule>`.
-- Header fields decode correctly from the concrete state.
+- Parse and validate `virtual <slot>;` declarations and
+  `state X expands Base { slot: Memory; }` bindings.
+- Reject ordinary fields in expanded-state bodies, require each bound slot to
+  exist on `Base` as virtual digest storage, reject empty/non-packable memory
+  states, and reject expansion cycles.
+- Record expansion metadata in the artifact: expanded state, base state,
+  virtual slot, memory state, and hidden preimage witness recipe.
+- Teach type checking and observed actor matching that an actor owning `X` may
+  satisfy `actor<Base>`, while preserving the concrete runtime template handle.
+- Lower expanded memory access by hashing packed hidden preimages, exposing
+  memory fields through the slot namespace, and writing updated digests into the
+  base stored state.
+- Let `argent-runtime` callers provide slot-qualified source values; the runtime
+  packs and hashes memory fields into storage and fills hidden preimage args.
+- Replace the `examples/open_lattice` sketches with a compiling
+  `examples/open_icc` lattice fixture: a core `Cell` app observes an open-agent
+  app, and the agent app includes `ForagerState expands AgentCapsule`.
 
-Obstacle to handle:
+Still useful follow-up tests:
 
-- Header offsets must be stable and artifact-visible. Do not rely on source
-  field names alone; record byte/push positions and type descriptors.
+- Execute the full `Cell::move` + `Forager::step` transaction path.
+- Add an explicit rejection that tampers with the hidden memory preimage.
+- Add capability/header mutation rejection around the lattice move once the game
+  policy is firm.
 
-### 21. Implement `expand <digest_field> as <State>`
-
-Support fixed digest-backed substate:
-
-```text
-state ForagerState extends AgentCapsule {
-    expand custom_data_digest as ForagerMemory;
-}
-```
-
-The stored covenant state still contains only `custom_data_digest`. The builder
-supplies a hidden preimage for `ForagerMemory`; the compiler verifies the hash
-and exposes memory fields as a flattened source-level view.
-
-End-to-end test:
-
-- Valid memory preimage opens and can be read by contract code.
-- Bad preimage fails.
-- Mutating a memory field reserializes memory and updates
-  `custom_data_digest`.
-- The entrypoint ABI does not expose the memory preimage as a user arg.
-
-Obstacle to handle:
-
-- The digest preimage serialization must use the same artifact codec as state
-  encoding. Otherwise expanded memory and stored state will drift.
-
-### 22. Make `closed_strategy.ag` A Fully Compiling Cell-Led Fixture
-
-Keep a closed-world fixture that does not require open actor generics. It should
-exercise the cell-led action pattern with concrete `Cell` and `Agent` actors.
-
-End-to-end test:
-
-- Compile `examples/open_lattice/closed_strategy.ag`.
-- Build a valid move.
-- Verify source cell, target cell, and agent outputs.
-- Fail on occupied target, wrong source occupant, or invalid agent authorization.
-
-Obstacle to handle:
-
-- Current closed sketch uses placeholders where real covenant id/template data
-  should be. Replace placeholders only when the artifact/builder can support the
-  actual observed actor identity cleanly.
-
-### 23. Make `binding_sketch.ag` A Compiling Open-Agent Fixture
-
-After `observes` blocks, generic actors, header views, and digest expansion exist,
-turn the sketch into a real compiler fixture.
-
-End-to-end test:
-
-- Compile a cell plus at least one concrete `Forager` agent.
-- Move the agent through the cell as `actor<AgentCapsule> as T`.
-- Preserve `T`, mutate allowed header fields, and update digest-backed memory.
-- Fail on swapped template, bad capability digest, bad memory preimage, and
-  illegal physics.
-
-Obstacle to handle:
-
-- This fixture combines most hard features. Do not start here. It should be the
-  integration proof that the smaller features were designed correctly.
-
-### 24. Add Chunk Or Cell-Birth Board Authority
+### 21. Add Chunk Or Cell-Birth Board Authority
 
 Once the open-agent hot path is stable, add the scalable board creation model.
 Prefer either:
@@ -926,7 +892,7 @@ Obstacle to handle:
 - Absence is not locally provable. Expansion needs a positive object that
   records which coordinates have been born.
 
-### 25. Add Optional Intent UTXO Layer
+### 24. Add Optional Intent UTXO Layer
 
 Add a strategy-intent layer only after direct cell-led actions work.
 
@@ -955,7 +921,7 @@ Obstacle to handle:
 - Intent binding commits to one chosen action. It still does not prove the
   strategy contract could not have chosen another legal action.
 
-### 26. Prune Generated State Layouts
+### 25. Prune Generated State Layouts
 
 Stop emitting every other actor state struct into every generated Silverscript
 contract. A contract should only contain foreign state layouts it can actually
@@ -982,8 +948,8 @@ End-to-end test:
 Obstacle to handle:
 
 - Entry-local state construction is still allowed and compiler-controlled; only
-  shared top-level helper signatures/bodies need the restriction. Later,
-  `state extends` / public header views can reopen this in a deliberate way.
+  shared top-level helper signatures/bodies need the restriction. Later, state
+  expansion / public header views can reopen this in a deliberate way.
 
 ## Suggested Implementation Boundaries
 

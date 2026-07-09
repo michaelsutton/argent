@@ -41,6 +41,8 @@ pub struct ArgentArtifact {
     #[serde(default)]
     pub interfaces: InterfaceSetArtifact,
     pub states: Vec<StateArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub state_expansions: Vec<StateExpansionArtifact>,
     #[serde(default)]
     pub actor_enums: Vec<ActorEnumArtifact>,
     pub actors: Vec<ActorArtifact>,
@@ -114,6 +116,19 @@ pub struct ActorInterfaceArtifact {
     pub actor: String,
     pub state: String,
     pub fingerprint_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateExpansionArtifact {
+    pub state: String,
+    pub base: String,
+    pub digests: Vec<StateDigestExpansionArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StateDigestExpansionArtifact {
+    pub field: String,
+    pub state: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,8 +354,10 @@ pub struct HiddenParamArtifact {
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
     ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
+    ObservedOutputField { observe: String, handle: String, state: String, field: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
+    StateExpansion { state: String, field: String, memory_state: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -361,6 +378,8 @@ pub enum HiddenParamPurposeArtifact {
     RouteTemplateProof,
     RouteFamilyTable,
     RouteFamilyProof,
+    StateExpansionPreimage,
+    ObservedOutputFieldValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -954,6 +973,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::ObservedActor { .. } => {}
+                HiddenParamSubjectArtifact::ObservedOutputField { .. } => {}
                 HiddenParamSubjectArtifact::RouteFamily { family_id } => {
                     if !route_families_by_id.contains_key(family_id.as_str()) {
                         return Err(TemplatePlanError::MissingWitnessRouteFamily {
@@ -963,6 +983,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::TemplateSelector { .. } => {}
+                HiddenParamSubjectArtifact::StateExpansion { .. } => {}
             }
             if let Some(route_proof_id) = &recipe.route_proof_id
                 && !route_proof_ids.contains(route_proof_id.as_str())
@@ -1488,6 +1509,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1513,6 +1535,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1538,6 +1561,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact::default(),
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: Vec::new(),
             },
@@ -1730,6 +1754,7 @@ mod tests {
                     witness_recipes: Vec::new(),
                 },
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: ["Mux", "Pawn", "Knight", "Bishop"]
                     .into_iter()
@@ -1790,6 +1815,7 @@ mod tests {
                 template_plan: TemplatePlanArtifact { route_families, ..TemplatePlanArtifact::default() },
                 interfaces: InterfaceSetArtifact::default(),
                 states: Vec::new(),
+                state_expansions: Vec::new(),
                 actor_enums: Vec::new(),
                 actors: vec![
                     ActorArtifact {

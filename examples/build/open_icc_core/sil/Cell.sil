@@ -4,74 +4,223 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Cell(
-    byte[32] init_agent_covid,
-    byte[32] init_agent_type,
-    int init_tick
+    byte[32] gen__init_cell_template,
+    byte[32] init_world_id,
+    int init_x,
+    int init_y,
+    int init_food,
+    byte[32] init_occupant_agent_covid,
+    byte[32] init_occupant_agent_type,
+    byte[32] init_occupant_caps_digest
 ) {
     // :: state layouts
-    struct AgentState {
+    struct AgentCapsule {
+        byte[32] world_id;
+        byte[32] agent_id;
+        byte[32] species_id;
         byte[32] controller_id;
-        byte[32] caps_digest;
+        byte[32] capabilities_digest;
+        byte[32] strategy;
+        int x;
+        int y;
         int energy;
+        int generation;
+    }
+
+    // :: shared helper functions
+    function abs1(int value) : int {
+        int result = value;
+        if (value < 0) {
+            result = 0 - value;
+        }
+        return result;
     }
 
     // :: route templates
-    // No foreign route templates required.
+    byte[32] gen__cell_template = gen__init_cell_template;
 
     // :: state fields: Cell
-    byte[32] agent_covid = init_agent_covid;
-    byte[32] agent_type = init_agent_type;
-    int tick = init_tick;
+    byte[32] world_id = init_world_id;
+    int x = init_x;
+    int y = init_y;
+    int food = init_food;
+    byte[32] occupant_agent_covid = init_occupant_agent_covid;
+    byte[32] occupant_agent_type = init_occupant_agent_type;
+    byte[32] occupant_caps_digest = init_occupant_caps_digest;
 
     // :: entrypoints
     entrypoint function advance(
-        byte[] gen__remote_agent_type_prefix,
-        byte[] gen__remote_agent_type_suffix
+        byte[] gen__remote_occupant_agent_type_prefix,
+        byte[] gen__remote_occupant_agent_type_suffix,
+        byte[32] gen__remote_agent_next_strategy
     ) {
         // :: observed covenants
-        byte[32] gen__remote_cov_id = agent_covid; // observe remote
+        byte[32] gen__remote_cov_id = occupant_agent_covid; // observe remote
         require(OpCovInputCount(gen__remote_cov_id) == 1);
         require(OpCovOutputCount(gen__remote_cov_id) == 1);
-        // :: observed input remote.agent: self.agent_type
+        // :: observed input remote.agent: self.occupant_agent_type
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
-        int gen__remote_agent_type_prefix_len = gen__remote_agent_type_prefix.length;
-        int gen__remote_agent_type_suffix_len = gen__remote_agent_type_suffix.length;
-        AgentState gen__remote_agent_state = readInputStateWithTemplate(
+        int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
+        int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
+        AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
-            gen__remote_agent_type_prefix_len,
-            gen__remote_agent_type_suffix_len,
-            agent_type
+            gen__remote_occupant_agent_type_prefix_len,
+            gen__remote_occupant_agent_type_suffix_len,
+            occupant_agent_type
         );
-        // :: observed output remote.agent: self.agent_type
+        // :: observed output remote.agent: self.occupant_agent_type
         int gen__remote_agent_output_idx = OpCovOutputIdx(gen__remote_cov_id, 0);
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output cell: Cell
 
-        AgentState prev_state = gen__remote_agent_state;
-        require(prev_state.controller_id == OpInputCovenantId(this.activeInputIndex));
-        require(prev_state.energy > 0);
-        AgentState next_state = {
+        AgentCapsule prev_state = gen__remote_agent_state;
+        require(prev_state.world_id == world_id);
+        require(prev_state.capabilities_digest == occupant_caps_digest);
+        AgentCapsule next_state = {
+            world_id: prev_state.world_id,
+            agent_id: prev_state.agent_id,
+            species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
-            caps_digest: prev_state.caps_digest,
+            capabilities_digest: prev_state.capabilities_digest,
+            strategy: gen__remote_agent_next_strategy,
+            x: prev_state.x,
+            y: prev_state.y,
             energy: prev_state.energy - 1,
+            generation: prev_state.generation,
         };
-        // :: observed become remote.agent -> self.agent_type
+        // :: observed become remote.agent -> self.occupant_agent_type
         validateOutputStateWithTemplate(
             gen__remote_agent_output_idx,
             next_state,
-            gen__remote_agent_type_prefix,
-            gen__remote_agent_type_suffix,
-            agent_type
+            gen__remote_occupant_agent_type_prefix,
+            gen__remote_occupant_agent_type_suffix,
+            occupant_agent_type
         );
         State next_cell = {
-            agent_covid: agent_covid,
-            agent_type: agent_type,
-            tick: tick + 1,
+            gen__cell_template: gen__cell_template,
+            // :: gen__ ^ | src:
+            world_id: world_id,
+            x: x,
+            y: y,
+            food: food,
+            occupant_agent_covid: occupant_agent_covid,
+            occupant_agent_type: occupant_agent_type,
+            occupant_caps_digest: occupant_caps_digest,
         };
         // :: become Cell
         validateOutputState(gen__cell_output_idx, next_cell);
+    }
+
+    entrypoint function move(
+        int dx,
+        int dy,
+        byte[32] empty_agent_covid,
+        byte[32] empty_agent_type,
+        byte[32] empty_caps_digest,
+        int gen__cell_prefix_len,
+        int gen__cell_suffix_len,
+        byte[] gen__remote_occupant_agent_type_prefix,
+        byte[] gen__remote_occupant_agent_type_suffix,
+        byte[32] gen__remote_agent_next_strategy
+    ) {
+        // :: cov inputs
+        byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(gen__cov_id) == 2);
+        require(OpCovInputIdx(gen__cov_id, 0) == this.activeInputIndex);
+        int gen__target_cell_input_idx = OpCovInputIdx(gen__cov_id, 1); // input Cell at cov[1]
+        State target_cell = readInputStateWithTemplate(
+            gen__target_cell_input_idx,
+            gen__cell_prefix_len,
+            gen__cell_suffix_len,
+            gen__cell_template
+        );
+
+        // :: observed covenants
+        byte[32] gen__remote_cov_id = occupant_agent_covid; // observe remote
+        require(OpCovInputCount(gen__remote_cov_id) == 1);
+        require(OpCovOutputCount(gen__remote_cov_id) == 1);
+        // :: observed input remote.agent: self.occupant_agent_type
+        int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
+        int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
+        int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
+        AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
+            gen__remote_agent_input_idx,
+            gen__remote_occupant_agent_type_prefix_len,
+            gen__remote_occupant_agent_type_suffix_len,
+            occupant_agent_type
+        );
+        // :: observed output remote.agent: self.occupant_agent_type
+        int gen__remote_agent_output_idx = OpCovOutputIdx(gen__remote_cov_id, 0);
+
+        // :: auth outputs
+        require(OpAuthOutputCount(this.activeInputIndex) == 2);
+        // :: output source_cell: Cell
+        int gen__source_cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+        // :: output target_cell: Cell
+        int gen__target_cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
+
+        AgentCapsule prev_state = gen__remote_agent_state;
+        int distance = abs1(dx) + abs1(dy);
+        require(distance == 1);
+        require(prev_state.world_id == world_id);
+        require(prev_state.x == x);
+        require(prev_state.y == y);
+        require(prev_state.energy > 0);
+        require(prev_state.capabilities_digest == occupant_caps_digest);
+        require(target_cell.world_id == world_id);
+        require(target_cell.x == x + dx);
+        require(target_cell.y == y + dy);
+        require(target_cell.occupant_agent_covid == empty_agent_covid);
+        require(target_cell.occupant_agent_type == empty_agent_type);
+        require(target_cell.occupant_caps_digest == empty_caps_digest);
+        AgentCapsule next_agent = {
+            world_id: prev_state.world_id,
+            agent_id: prev_state.agent_id,
+            species_id: prev_state.species_id,
+            controller_id: prev_state.controller_id,
+            capabilities_digest: prev_state.capabilities_digest,
+            strategy: gen__remote_agent_next_strategy,
+            x: target_cell.x,
+            y: target_cell.y,
+            energy: prev_state.energy - 1,
+            generation: prev_state.generation,
+        };
+        State next_source = {
+            gen__cell_template: gen__cell_template,
+            // :: gen__ ^ | src:
+            world_id: world_id,
+            x: x,
+            y: y,
+            food: food,
+            occupant_agent_covid: empty_agent_covid,
+            occupant_agent_type: empty_agent_type,
+            occupant_caps_digest: empty_caps_digest,
+        };
+        State next_target = {
+            gen__cell_template: gen__cell_template,
+            // :: gen__ ^ | src:
+            world_id: target_cell.world_id,
+            x: target_cell.x,
+            y: target_cell.y,
+            food: target_cell.food,
+            occupant_agent_covid: occupant_agent_covid,
+            occupant_agent_type: occupant_agent_type,
+            occupant_caps_digest: occupant_caps_digest,
+        };
+        // :: observed become remote.agent -> self.occupant_agent_type
+        validateOutputStateWithTemplate(
+            gen__remote_agent_output_idx,
+            next_agent,
+            gen__remote_occupant_agent_type_prefix,
+            gen__remote_occupant_agent_type_suffix,
+            occupant_agent_type
+        );
+        // :: become Cell
+        validateOutputState(gen__source_cell_output_idx, next_source);
+        // :: become Cell
+        validateOutputState(gen__target_cell_output_idx, next_target);
     }
 
 }

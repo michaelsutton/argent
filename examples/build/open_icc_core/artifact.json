@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "f4cdadc4e8c95db1c566f6088af8b9ed0d45c7e8e851e886e38d2c09d595ea16",
+  "id": "ebd44bdbfd2fc386a5f9f401d5c34089ab72e97c8e0b99e2f10e45a50969aba9",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -8,8 +8,7 @@
   "app": "OpenCore",
   "root": "examples/open_icc/core.ag",
   "modules": [
-    "examples/open_icc/core.ag",
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/core.ag"
   ],
   "argent": {
     "templates": [
@@ -26,40 +25,92 @@
           "actor": "Cell",
           "contract": "Cell",
           "symbol": "gen__cell_template",
-          "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
+          "hash_hex": "7c8e1d3fd094ec2882a769941a98b298a263fd128c3b172d340a5b2d02cf60f5"
         }
       ],
-      "runtime_states": [],
+      "runtime_states": [
+        {
+          "contract": "Cell",
+          "source": "CellState",
+          "field_roles": [
+            {
+              "name": "gen__cell_template",
+              "role": {
+                "kind": "template",
+                "contract": "Cell"
+              }
+            }
+          ]
+        }
+      ],
       "route_tables": [],
       "route_proofs": [],
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
+          "id": "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "remote",
             "side": "output",
             "handle": "agent",
-            "actor": "self.agent_type"
+            "actor": "self.occupant_agent_type"
           },
-          "param": "gen__remote_agent_type_prefix",
+          "param": "gen__remote_occupant_agent_type_prefix",
           "purpose": {
             "kind": "template_prefix_bytes"
           }
         },
         {
-          "id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
+          "id": "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
           "subject": {
             "kind": "observed_actor",
             "observe": "remote",
             "side": "output",
             "handle": "agent",
-            "actor": "self.agent_type"
+            "actor": "self.occupant_agent_type"
           },
-          "param": "gen__remote_agent_type_suffix",
+          "param": "gen__remote_occupant_agent_type_suffix",
           "purpose": {
             "kind": "template_suffix_bytes"
+          }
+        },
+        {
+          "id": "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value",
+          "subject": {
+            "kind": "observed_output_field",
+            "observe": "remote",
+            "handle": "agent",
+            "state": "AgentCapsule",
+            "field": "strategy"
+          },
+          "param": "gen__remote_agent_next_strategy",
+          "purpose": {
+            "kind": "observed_output_field_value"
+          }
+        },
+        {
+          "id": "witness/cell/template_prefix_len",
+          "template_id": "template/cell",
+          "subject": {
+            "kind": "actor",
+            "actor": "Cell"
+          },
+          "param": "gen__cell_prefix_len",
+          "purpose": {
+            "kind": "template_prefix_len"
+          }
+        },
+        {
+          "id": "witness/cell/template_suffix_len",
+          "template_id": "template/cell",
+          "subject": {
+            "kind": "actor",
+            "actor": "Cell"
+          },
+          "param": "gen__cell_suffix_len",
+          "purpose": {
+            "kind": "template_suffix_len"
           }
         }
       ]
@@ -70,15 +121,36 @@
           "id": "interface/actor/Cell",
           "actor": "Cell",
           "state": "CellState",
-          "fingerprint_hex": "595bb3cfbda2a4c824258c57b70ca313f1bacd31362b8c747613316df64cb074"
+          "fingerprint_hex": "8e81096966a95137d0209d7ad485813e157e7d9de5da7da457797e0db2095016"
         }
       ],
       "imports": []
     },
     "states": [
       {
-        "name": "AgentState",
+        "name": "AgentCapsule",
         "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
           {
             "name": "controller_id",
             "type": {
@@ -87,14 +159,39 @@
             }
           },
           {
-            "name": "caps_digest",
+            "name": "capabilities_digest",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
             }
           },
           {
+            "name": "strategy",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
             "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "generation",
             "type": {
               "kind": "int"
             }
@@ -105,23 +202,49 @@
         "name": "CellState",
         "fields": [
           {
-            "name": "agent_covid",
+            "name": "world_id",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
             }
           },
           {
-            "name": "agent_type",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "tick",
+            "name": "x",
             "type": {
               "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "food",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "occupant_agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
             }
           }
         ]
@@ -180,14 +303,15 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/observed/remote/output/agent_type/template_prefix_bytes",
-                "witness/observed/remote/output/agent_type/template_suffix_bytes"
+                "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
-                "name": "gen__remote_agent_type_prefix",
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "name": "gen__remote_occupant_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 },
@@ -196,15 +320,15 @@
                   "observe": "remote",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "self.agent_type"
+                  "actor": "self.occupant_agent_type"
                 },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
-                "name": "gen__remote_agent_type_suffix",
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "name": "gen__remote_occupant_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
                 },
@@ -213,10 +337,28 @@
                   "observe": "remote",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "self.agent_type"
+                  "actor": "self.occupant_agent_type"
                 },
                 "purpose": {
                   "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value",
+                "name": "gen__remote_agent_next_strategy",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                },
+                "subject": {
+                  "kind": "observed_output_field",
+                  "observe": "remote",
+                  "handle": "agent",
+                  "state": "AgentCapsule",
+                  "field": "strategy"
+                },
+                "purpose": {
+                  "kind": "observed_output_field_value"
                 }
               }
             ],
@@ -224,50 +366,64 @@
             "observes": [
               {
                 "name": "remote",
-                "covenant_expr": "self.agent_covid",
+                "covenant_expr": "self.occupant_agent_covid",
                 "inputs": [
                   {
                     "name": "agent",
-                    "actor": "self.agent_type",
-                    "open_state": "AgentState"
+                    "actor": "self.occupant_agent_type",
+                    "open_state": "AgentCapsule"
                   }
                 ],
                 "outputs": [
                   {
                     "name": "agent",
-                    "actor": "self.agent_type",
-                    "open_state": "AgentState"
+                    "actor": "self.occupant_agent_type",
+                    "open_state": "AgentCapsule"
                   }
                 ]
               }
             ],
             "witnesses": [
               {
-                "recipe_id": "witness/observed/remote/output/agent_type/template_prefix_bytes",
-                "param": "gen__remote_agent_type_prefix",
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "param": "gen__remote_occupant_agent_type_prefix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "self.agent_type"
+                  "actor": "self.occupant_agent_type"
                 },
                 "purpose": {
                   "kind": "template_prefix_bytes"
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/output/agent_type/template_suffix_bytes",
-                "param": "gen__remote_agent_type_suffix",
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "param": "gen__remote_occupant_agent_type_suffix",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
                   "side": "output",
                   "handle": "agent",
-                  "actor": "self.agent_type"
+                  "actor": "self.occupant_agent_type"
                 },
                 "purpose": {
                   "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value",
+                "param": "gen__remote_agent_next_strategy",
+                "subject": {
+                  "kind": "observed_output_field",
+                  "observe": "remote",
+                  "handle": "agent",
+                  "state": "AgentCapsule",
+                  "field": "strategy"
+                },
+                "purpose": {
+                  "kind": "observed_output_field_value"
                 }
               }
             ],
@@ -304,6 +460,308 @@
                 ]
               }
             ]
+          },
+          {
+            "name": "move",
+            "kind": "leader",
+            "abi": {
+              "actor": "Cell",
+              "entry": "move"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Cell",
+                "cov_index": 0
+              },
+              "consumes": [
+                {
+                  "name": "target_cell",
+                  "actor": "Cell",
+                  "cov_index": 1
+                }
+              ],
+              "outputs": [
+                {
+                  "name": "source_cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                },
+                {
+                  "name": "target_cell",
+                  "auth_index": 1,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ],
+              "terminal_paths": [
+                {
+                  "routes": [
+                    {
+                      "output": "source_cell",
+                      "auth_index": 0,
+                      "actor": "Cell",
+                      "template_id": "template/cell",
+                      "state_expr": "next_source",
+                      "witness_recipe_ids": []
+                    },
+                    {
+                      "output": "target_cell",
+                      "auth_index": 1,
+                      "actor": "Cell",
+                      "template_id": "template/cell",
+                      "state_expr": "next_target",
+                      "witness_recipe_ids": []
+                    }
+                  ],
+                  "witness_recipe_ids": [
+                    "witness/cell/template_prefix_len",
+                    "witness/cell/template_suffix_len"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/cell/template_prefix_len",
+                "witness/cell/template_suffix_len",
+                "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/cell/template_prefix_len",
+                "name": "gen__cell_prefix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Cell"
+                },
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/cell/template_suffix_len",
+                "name": "gen__cell_suffix_len",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Cell"
+                },
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "name": "gen__remote_occupant_agent_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.occupant_agent_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "name": "gen__remote_occupant_agent_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.occupant_agent_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value",
+                "name": "gen__remote_agent_next_strategy",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                },
+                "subject": {
+                  "kind": "observed_output_field",
+                  "observe": "remote",
+                  "handle": "agent",
+                  "state": "AgentCapsule",
+                  "field": "strategy"
+                },
+                "purpose": {
+                  "kind": "observed_output_field_value"
+                }
+              }
+            ],
+            "template_selectors": [],
+            "observes": [
+              {
+                "name": "remote",
+                "covenant_expr": "self.occupant_agent_covid",
+                "inputs": [
+                  {
+                    "name": "agent",
+                    "actor": "self.occupant_agent_type",
+                    "open_state": "AgentCapsule"
+                  }
+                ],
+                "outputs": [
+                  {
+                    "name": "agent",
+                    "actor": "self.occupant_agent_type",
+                    "open_state": "AgentCapsule"
+                  }
+                ]
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/cell/template_prefix_len",
+                "param": "gen__cell_prefix_len",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Cell"
+                },
+                "purpose": {
+                  "kind": "template_prefix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/cell/template_suffix_len",
+                "param": "gen__cell_suffix_len",
+                "subject": {
+                  "kind": "actor",
+                  "actor": "Cell"
+                },
+                "purpose": {
+                  "kind": "template_suffix_len"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_prefix_bytes",
+                "param": "gen__remote_occupant_agent_type_prefix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.occupant_agent_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/occupant_agent_type/template_suffix_bytes",
+                "param": "gen__remote_occupant_agent_type_suffix",
+                "subject": {
+                  "kind": "observed_actor",
+                  "observe": "remote",
+                  "side": "output",
+                  "handle": "agent",
+                  "actor": "self.occupant_agent_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value",
+                "param": "gen__remote_agent_next_strategy",
+                "subject": {
+                  "kind": "observed_output_field",
+                  "observe": "remote",
+                  "handle": "agent",
+                  "state": "AgentCapsule",
+                  "field": "strategy"
+                },
+                "purpose": {
+                  "kind": "observed_output_field_value"
+                }
+              }
+            ],
+            "consumes": [
+              {
+                "name": "target_cell",
+                "actor": "Cell"
+              }
+            ],
+            "emits": {
+              "kind": "outputs",
+              "outputs": [
+                {
+                  "name": "source_cell",
+                  "auth_index": 0,
+                  "actors": [
+                    "Cell"
+                  ]
+                },
+                {
+                  "name": "target_cell",
+                  "auth_index": 1,
+                  "actors": [
+                    "Cell"
+                  ]
+                }
+              ]
+            },
+            "routes": [
+              {
+                "output": "source_cell",
+                "actor": "Cell",
+                "template_id": "template/cell",
+                "state_expr": "next_source"
+              },
+              {
+                "output": "target_cell",
+                "actor": "Cell",
+                "template_id": "template/cell",
+                "state_expr": "next_target"
+              }
+            ],
+            "terminal_paths": [
+              {
+                "routes": [
+                  {
+                    "output": "source_cell",
+                    "actor": "Cell",
+                    "template_id": "template/cell",
+                    "state_expr": "next_source"
+                  },
+                  {
+                    "output": "target_cell",
+                    "actor": "Cell",
+                    "template_id": "template/cell",
+                    "state_expr": "next_target"
+                  }
+                ]
+              }
+            ]
           }
         ]
       }
@@ -313,8 +771,29 @@
     "schema_version": 1,
     "states": [
       {
-        "name": "AgentState",
+        "name": "AgentCapsule",
         "fields": [
+          {
+            "name": "world_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "species_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
           {
             "name": "controller_id",
             "type": {
@@ -323,14 +802,39 @@
             }
           },
           {
-            "name": "caps_digest",
+            "name": "capabilities_digest",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
             }
           },
           {
+            "name": "strategy",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "x",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
             "name": "energy",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "generation",
             "type": {
               "kind": "int"
             }
@@ -341,23 +845,49 @@
         "name": "CellState",
         "fields": [
           {
-            "name": "agent_covid",
+            "name": "world_id",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
             }
           },
           {
-            "name": "agent_type",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          },
-          {
-            "name": "tick",
+            "name": "x",
             "type": {
               "kind": "int"
+            }
+          },
+          {
+            "name": "y",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "food",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "occupant_agent_covid",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_agent_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "occupant_caps_digest",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
             }
           }
         ]
@@ -371,23 +901,56 @@
           "source": "CellState",
           "fields": [
             {
-              "name": "agent_covid",
+              "name": "gen__cell_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
               }
             },
             {
-              "name": "agent_type",
+              "name": "world_id",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
               }
             },
             {
-              "name": "tick",
+              "name": "x",
               "type": {
                 "kind": "int"
+              }
+            },
+            {
+              "name": "y",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "food",
+              "type": {
+                "kind": "int"
+              }
+            },
+            {
+              "name": "occupant_agent_covid",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "occupant_agent_type",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "occupant_caps_digest",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
               }
             }
           ]
@@ -395,33 +958,110 @@
         "entries": [
           {
             "name": "advance",
-            "selector": null,
+            "selector": 0,
             "params": [
               {
-                "name": "gen__remote_agent_type_prefix",
+                "name": "gen__remote_occupant_agent_type_prefix",
                 "type": {
                   "kind": "bytes"
                 }
               },
               {
-                "name": "gen__remote_agent_type_suffix",
+                "name": "gen__remote_occupant_agent_type_suffix",
                 "type": {
                   "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__remote_agent_next_strategy",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                }
+              }
+            ]
+          },
+          {
+            "name": "move",
+            "selector": 1,
+            "params": [
+              {
+                "name": "dx",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "dy",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "empty_agent_covid",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                }
+              },
+              {
+                "name": "empty_agent_type",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                }
+              },
+              {
+                "name": "empty_caps_digest",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
+                }
+              },
+              {
+                "name": "gen__cell_prefix_len",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__cell_suffix_len",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__remote_occupant_agent_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__remote_occupant_agent_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__remote_agent_next_strategy",
+                "type": {
+                  "kind": "fixed_bytes",
+                  "len": 32
                 }
               }
             ]
           }
         ],
         "compiled": {
-          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
+          "script_hex": "6b2000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000800000000000000000800000000000000000800000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000006c76009c6375527976d0519c6976d2519c697600d1bf7800d1527900d1c95e79827c75519602ea00935e79827c7551969394537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519602ea00935f79827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95d79827c75519602ea00935d79827c7551969394527900d1c95e79827c75519602ea00935e79827c75519693945e79827c75519693bc7800d1527900d1c95e79827c75519602ea00935e79827c75519693945e79827c7551969302ea0093537900d1c95f79827c75519602ea00935f79827c75519693945f79827c7551969302ea00935e79827c75519693bc7e53797caa87697600d17800d1c95d79827c75519602ea00935d79827c75519693945d79827c755196519393527900d1c95e79827c75519602ea00935e79827c75519693945e79827c755196519393012093bc7800d1527900d1c95e79827c75519602ea00935e79827c75519693945e79827c75519601229393537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601229393012093bc527900d1537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601439393547900d1c96079827c75519602ea00936079827c75519693946079827c75519601439393012093bc537900d1547900d1c96079827c75519602ea00936079827c75519693946079827c75519601649393557900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601649393012093bc547900d1557900d1c9011179827c75519602ea0093011179827c7551969394011179827c7551960285009393567900d1c9011279827c75519602ea0093011279827c7551969394011279827c7551960285009393012093bc557900d1567900d1c9011279827c75519602ea0093011279827c7551969394011279827c75519602a6009393577900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602a6009393012093bc567900d1577900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602c7009393587900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602c70093935893bc577900d1587900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602d0009393597900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d00093935893bc587900d1597900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d90093935a7900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d90093935893bc597900d15a7900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602e20093935b7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602e20093935893bcb9cb519c6959795679780114798769765e7987690117790117797e5f797caa87697801207c7e5b7901207c7e5b7901207c7e5b7901207c7e547901207c7e011a7901207c7e5b7958cd01087c7e5b7958cd01087c7e5b79519458cd01087c7e5b7958cd01087c7e7e7e7e7e7e7e7e7e7e0118797c7e0117797eaa02000001aa7e01207e7c7e01877e5d7900d3c3876901147901207c7e01147901207c7e01147958cd01087c7e01147958cd01087c7e01147958cd01087c7e01147901207c7e01147901207c7e01147901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575516776519c6375b9cf76d0529c697600d1b99c697651d1bf7851d1527951d1c9607902c0009360799394537951d1c901117902c00093011179939401117902c000930111799393bcaa02000001aa7e01207e7c7e01877e87697651d17851d1c95f7902c000935f799394527951d1c9607902c0009360799394607993bc7851d1527951d1c9607902c000936079939460799302c00093537951d1c901117902c0009301117993940111799302c00093607993bc7e59797caa87697651d17851d1c95f7902c000935f7993945f79519393527951d1c9607902c00093607993946079519393012093bc7851d1527951d1c9607902c0009360799394607901229393537951d1c901117902c00093011179939401117901229393012093bc527951d1537951d1c901117902c00093011179939401117901439393547951d1c901127902c000930112799394011279014393935893bc537951d1547951d1c901127902c000930112799394011279014c9393557951d1c901137902c000930113799394011379014c93935893bc547951d1557951d1c901137902c00093011379939401137901559393567951d1c901147902c000930114799394011479015593935893bc557951d1567951d1c901147902c000930114799394011479015e9393577951d1c901157902c000930115799394011579015e9393012093bc567951d1577951d1c901157902c000930115799394011579017f9393587951d1c901167902c000930116799394011679017f9393012093bc577951d1587951d1c901167902c00093011679939401167902a0009393597951d1c901177902c00093011779939401177902a0009393012093bc5b7976d0519c6976d2519c697600d1bf7800d1527900d1c9011779827c75519602ea0093011779827c7551969394537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519602ea0093011879827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9011679827c75519602ea0093011679827c7551969394527900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519693bc7800d1527900d1c9011779827c75519602ea0093011779827c7551969394011779827c7551969302ea0093537900d1c9011879827c75519602ea0093011879827c7551969394011879827c7551969302ea0093011779827c75519693bc7e5c797caa87697600d17800d1c9011679827c75519602ea0093011679827c7551969394011679827c755196519393527900d1c9011779827c75519602ea0093011779827c7551969394011779827c755196519393012093bc7800d1527900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519601229393537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519601229393012093bc527900d1537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519601439393547900d1c9011979827c75519602ea0093011979827c7551969394011979827c75519601439393012093bc537900d1547900d1c9011979827c75519602ea0093011979827c7551969394011979827c75519601649393557900d1c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519601649393012093bc547900d1557900d1c9011a79827c75519602ea0093011a79827c7551969394011a79827c7551960285009393567900d1c9011b79827c75519602ea0093011b79827c7551969394011b79827c7551960285009393012093bc557900d1567900d1c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602a6009393577900d1c9011c79827c75519602ea0093011c79827c7551969394011c79827c75519602a6009393012093bc567900d1577900d1c9011c79827c75519602ea0093011c79827c7551969394011c79827c75519602c7009393587900d1c9011d79827c75519602ea0093011d79827c7551969394011d79827c75519602c70093935893bc577900d1587900d1c9011d79827c75519602ea0093011d79827c7551969394011d79827c75519602d0009393597900d1c9011e79827c75519602ea0093011e79827c7551969394011e79827c75519602d00093935893bc587900d1597900d1c9011e79827c75519602ea0093011e79827c7551969394011e79827c75519602d90093935a7900d1c9011f79827c75519602ea0093011f79827c7551969394011f79827c75519602d90093935893bc597900d15a7900d1c9011f79827c75519602ea0093011f79827c7551969394011f79827c75519602e20093935b7900d1c9012079827c75519602ea0093012079827c7551969394012079827c75519602e20093935893bcb9cb529c695979567953790128797678009f6300527994776876012a797678009f630052799477687653797893519c69587901247987695c790123799c695b790122799c69567900a0695779011e798769011a790124798769011979012379013079939c69011879012279012f79939c69011679012d798769011579012c798769011479012b7987690127790127797e011f797caa8769587901207c7e01127901207c7e01127901207c7e01127901207c7e5b7901207c7e012a7901207c7e011f7958cd01087c7e011f7958cd01087c7e5e79519458cd01087c7e01127958cd01087c7e7e7e7e7e7e7e7e7e7e0128797c7e0127797eaa02000001aa7e01207e7c7e01877e01147900d3c3876901247901207c7e01247901207c7e01247958cd01087c7e01247958cd01087c7e01247958cd01087c7e01317901207c7e01317901207c7e01317901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876901247901207c7e011b7901207c7e011b7958cd01087c7e011b7958cd01087c7e011b7958cd01087c7e01247901207c7e01247901207c7e01247901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb951ccc38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757551677500696868",
           "template": {
-            "prefix_hex": "",
-            "suffix_hex": "527976d0519c6976d2519c697600d1bf7800d1527900d1c95879827c755196014b935879827c7551969394537900d1c95979827c755196014b935979827c75519693945979827c755196014b935979827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95779827c755196014b935779827c7551969394527900d1c95879827c755196014b935879827c75519693945879827c75519693bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519693014b93537900d1c95979827c755196014b935979827c75519693945979827c75519693014b935879827c75519693bc7e53797caa87697600d17800d1c95779827c755196014b935779827c75519693945779827c755196519393527900d1c95879827c755196014b935879827c75519693945879827c755196519393012093bc7800d1527900d1c95879827c755196014b935879827c75519693945879827c75519601229393537900d1c95979827c755196014b935979827c75519693945979827c75519601229393012093bc527900d1537900d1c95979827c755196014b935979827c75519693945979827c75519601439393547900d1c95a79827c755196014b935a79827c75519693945a79827c755196014393935893bcb9cb519c6952797878b9cf87697600a0695a795a797e58797caa87697801207c7e547901207c7e5279519458cd01087c7e7e7e5b797c7e5a797eaa02000001aa7e01207e7c7e01877e567900d3c38769587901207c7e587901207c7e5879519358cd01087c7e7e7eb976c97602ce0294014b937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75757575757551",
-            "hash_hex": "9cf00c8d31238354be9c644ab6d8bfa3937d571b16abee922a3dce038941285d"
+            "prefix_hex": "6b",
+            "suffix_hex": "6c76009c6375527976d0519c6976d2519c697600d1bf7800d1527900d1c95e79827c75519602ea00935e79827c7551969394537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519602ea00935f79827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c95d79827c75519602ea00935d79827c7551969394527900d1c95e79827c75519602ea00935e79827c75519693945e79827c75519693bc7800d1527900d1c95e79827c75519602ea00935e79827c75519693945e79827c7551969302ea0093537900d1c95f79827c75519602ea00935f79827c75519693945f79827c7551969302ea00935e79827c75519693bc7e53797caa87697600d17800d1c95d79827c75519602ea00935d79827c75519693945d79827c755196519393527900d1c95e79827c75519602ea00935e79827c75519693945e79827c755196519393012093bc7800d1527900d1c95e79827c75519602ea00935e79827c75519693945e79827c75519601229393537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601229393012093bc527900d1537900d1c95f79827c75519602ea00935f79827c75519693945f79827c75519601439393547900d1c96079827c75519602ea00936079827c75519693946079827c75519601439393012093bc537900d1547900d1c96079827c75519602ea00936079827c75519693946079827c75519601649393557900d1c9011179827c75519602ea0093011179827c7551969394011179827c75519601649393012093bc547900d1557900d1c9011179827c75519602ea0093011179827c7551969394011179827c7551960285009393567900d1c9011279827c75519602ea0093011279827c7551969394011279827c7551960285009393012093bc557900d1567900d1c9011279827c75519602ea0093011279827c7551969394011279827c75519602a6009393577900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602a6009393012093bc567900d1577900d1c9011379827c75519602ea0093011379827c7551969394011379827c75519602c7009393587900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602c70093935893bc577900d1587900d1c9011479827c75519602ea0093011479827c7551969394011479827c75519602d0009393597900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d00093935893bc587900d1597900d1c9011579827c75519602ea0093011579827c7551969394011579827c75519602d90093935a7900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602d90093935893bc597900d15a7900d1c9011679827c75519602ea0093011679827c7551969394011679827c75519602e20093935b7900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519602e20093935893bcb9cb519c6959795679780114798769765e7987690117790117797e5f797caa87697801207c7e5b7901207c7e5b7901207c7e5b7901207c7e547901207c7e011a7901207c7e5b7958cd01087c7e5b7958cd01087c7e5b79519458cd01087c7e5b7958cd01087c7e7e7e7e7e7e7e7e7e7e0118797c7e0117797eaa02000001aa7e01207e7c7e01877e5d7900d3c3876901147901207c7e01147901207c7e01147958cd01087c7e01147958cd01087c7e01147958cd01087c7e01147901207c7e01147901207c7e01147901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a757575757575757575757575516776519c6375b9cf76d0529c697600d1b99c697651d1bf7851d1527951d1c9607902c0009360799394537951d1c901117902c00093011179939401117902c000930111799393bcaa02000001aa7e01207e7c7e01877e87697651d17851d1c95f7902c000935f799394527951d1c9607902c0009360799394607993bc7851d1527951d1c9607902c000936079939460799302c00093537951d1c901117902c0009301117993940111799302c00093607993bc7e59797caa87697651d17851d1c95f7902c000935f7993945f79519393527951d1c9607902c00093607993946079519393012093bc7851d1527951d1c9607902c0009360799394607901229393537951d1c901117902c00093011179939401117901229393012093bc527951d1537951d1c901117902c00093011179939401117901439393547951d1c901127902c000930112799394011279014393935893bc537951d1547951d1c901127902c000930112799394011279014c9393557951d1c901137902c000930113799394011379014c93935893bc547951d1557951d1c901137902c00093011379939401137901559393567951d1c901147902c000930114799394011479015593935893bc557951d1567951d1c901147902c000930114799394011479015e9393577951d1c901157902c000930115799394011579015e9393012093bc567951d1577951d1c901157902c000930115799394011579017f9393587951d1c901167902c000930116799394011679017f9393012093bc577951d1587951d1c901167902c00093011679939401167902a0009393597951d1c901177902c00093011779939401177902a0009393012093bc5b7976d0519c6976d2519c697600d1bf7800d1527900d1c9011779827c75519602ea0093011779827c7551969394537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519602ea0093011879827c7551969393bcaa02000001aa7e01207e7c7e01877e87697600d17800d1c9011679827c75519602ea0093011679827c7551969394527900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519693bc7800d1527900d1c9011779827c75519602ea0093011779827c7551969394011779827c7551969302ea0093537900d1c9011879827c75519602ea0093011879827c7551969394011879827c7551969302ea0093011779827c75519693bc7e5c797caa87697600d17800d1c9011679827c75519602ea0093011679827c7551969394011679827c755196519393527900d1c9011779827c75519602ea0093011779827c7551969394011779827c755196519393012093bc7800d1527900d1c9011779827c75519602ea0093011779827c7551969394011779827c75519601229393537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519601229393012093bc527900d1537900d1c9011879827c75519602ea0093011879827c7551969394011879827c75519601439393547900d1c9011979827c75519602ea0093011979827c7551969394011979827c75519601439393012093bc537900d1547900d1c9011979827c75519602ea0093011979827c7551969394011979827c75519601649393557900d1c9011a79827c75519602ea0093011a79827c7551969394011a79827c75519601649393012093bc547900d1557900d1c9011a79827c75519602ea0093011a79827c7551969394011a79827c7551960285009393567900d1c9011b79827c75519602ea0093011b79827c7551969394011b79827c7551960285009393012093bc557900d1567900d1c9011b79827c75519602ea0093011b79827c7551969394011b79827c75519602a6009393577900d1c9011c79827c75519602ea0093011c79827c7551969394011c79827c75519602a6009393012093bc567900d1577900d1c9011c79827c75519602ea0093011c79827c7551969394011c79827c75519602c7009393587900d1c9011d79827c75519602ea0093011d79827c7551969394011d79827c75519602c70093935893bc577900d1587900d1c9011d79827c75519602ea0093011d79827c7551969394011d79827c75519602d0009393597900d1c9011e79827c75519602ea0093011e79827c7551969394011e79827c75519602d00093935893bc587900d1597900d1c9011e79827c75519602ea0093011e79827c7551969394011e79827c75519602d90093935a7900d1c9011f79827c75519602ea0093011f79827c7551969394011f79827c75519602d90093935893bc597900d15a7900d1c9011f79827c75519602ea0093011f79827c7551969394011f79827c75519602e20093935b7900d1c9012079827c75519602ea0093012079827c7551969394012079827c75519602e20093935893bcb9cb529c695979567953790128797678009f6300527994776876012a797678009f630052799477687653797893519c69587901247987695c790123799c695b790122799c69567900a0695779011e798769011a790124798769011979012379013079939c69011879012279012f79939c69011679012d798769011579012c798769011479012b7987690127790127797e011f797caa8769587901207c7e01127901207c7e01127901207c7e01127901207c7e5b7901207c7e012a7901207c7e011f7958cd01087c7e011f7958cd01087c7e5e79519458cd01087c7e01127958cd01087c7e7e7e7e7e7e7e7e7e7e0128797c7e0127797eaa02000001aa7e01207e7c7e01877e01147900d3c3876901247901207c7e01247901207c7e01247958cd01087c7e01247958cd01087c7e01247958cd01087c7e01317901207c7e01317901207c7e01317901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc3876901247901207c7e011b7901207c7e011b7958cd01087c7e011b7958cd01087c7e011b7958cd01087c7e01247901207c7e01247901207c7e01247901207c7e7e7e7e7e7e7e7eb976c902970f94765193bc7c7eb976c97602970f9402c100937cbc7eaa02000001aa7e01207e7c7e01877eb951ccc38769007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a75007a7575757575757575757575757575757575757551677500696868",
+            "hash_hex": "7c8e1d3fd094ec2882a769941a98b298a263fd128c3b172d340a5b2d02cf60f5"
           },
           "state_span": {
-            "offset": 0,
-            "len": 75
+            "offset": 1,
+            "len": 192
           }
         }
       }

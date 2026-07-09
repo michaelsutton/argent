@@ -1,45 +1,106 @@
-# Open ICC Baseline
+# Open ICC Lattice
 
-This example is the smallest real open-ICC shape:
+This example is a small cooperative-game fixture built out of two covenant apps:
 
-- `agent.ag` is an independently deployed open-agent covenant app.
-- `core.ag` is a controller/cell covenant app that observes the agent app.
+- `core.ag` defines the shared `AgentCapsule` capsule and cells that observe an
+  agent by covenant id and apply local physics.
+- `agent.ag` imports `core.ag` and defines independently deployed agent actors
+  that satisfy the shared capsule view or bind its virtual slots.
 
-The agent preserves its capability header and requires the controller covenant
-to be co-spent. The core app reads the observed agent state and enforces one
-physics step over it:
-
-```text
-energy -> energy - 1
-```
-
-The core cell stores the observed covenant id and an `actor<AgentState>` handle.
-The `observes` clause constrains both the input and output to that stored
-handle:
-
-```rust
-agent: self.agent_type;
-```
-
-and validates the output through the same handle:
-
-```rust
-agent <- self.agent_type(next_state);
-```
-
-This fixture is the baseline that later open-agent header views and
-digest-backed custom data should grow from.
-
-Runtime naming has four distinct layers:
+The core idea is:
 
 ```text
-remote      observe name local to Cell::advance
+Cells apply physical transitions.
+Agents authorize their own strategy state.
+```
+
+The cell does not know which concrete agent template it is controlling. It stores
+an `actor<AgentCapsule>` handle and uses it in the `observes` clause:
+
+```rust
+observes remote by self.occupant_agent_covid {
+    inputs {
+        agent: self.occupant_agent_type;
+    }
+
+    outputs {
+        agent: self.occupant_agent_type;
+    }
+}
+```
+
+At runtime that handle may point to `Agent`, `Forager`, or another app-specific
+actor whose stored state satisfies the shared `AgentCapsule` capsule layout.
+
+## State Model
+
+`AgentCapsule` lives in the core app. It is the fixed capability header the cell
+can reason about, and concrete agent apps import it:
+
+```rust
+state AgentCapsule {
+    byte[32] world_id;
+    byte[32] agent_id;
+    byte[32] species_id;
+
+    covid controller_id;
+    byte[32] capabilities_digest;
+    virtual strategy;
+
+    int x;
+    int y;
+    int energy;
+    int generation;
+}
+```
+
+`Forager` binds the virtual slot to structured strategy state:
+
+```rust
+state ForagerStrategy {
+    int hunger;
+    int mood;
+}
+
+state ForagerState expands AgentCapsule {
+    strategy: ForagerStrategy;
+}
+```
+
+Forager code accesses strategy fields through the slot namespace:
+
+```rust
+ForagerState next_agent = {
+    world_id: world_id,
+    agent_id: agent_id,
+    species_id: species_id,
+    controller_id: controller_id,
+    capabilities_digest: capabilities_digest,
+    strategy: ForagerStrategy {
+        hunger: strategy.hunger + 1,
+        mood: strategy.mood,
+    },
+    x: next_x,
+    y: next_y,
+    energy: next_energy,
+    generation: generation,
+};
+```
+
+The generated Sil stores only the `strategy` digest. The runtime supplies a
+packed hidden preimage for `ForagerStrategy`; the contract verifies the digest
+and the compiler rewrites slot mutations back into a new digest.
+
+## Runtime Naming
+
+The runtime builder keeps four names separate:
+
+```text
+remote      observe name local to Cell entries
 open_agent  attached artifact app alias
 agent       observed input/output handle inside the observes clause
-Agent       concrete actor in the attached app
+Forager     concrete actor in the attached app
 ```
-
-The runtime builder keeps those layers separate:
 
 ```rust
 let bundle = ArtifactBundle::new(&core_artifact)?
@@ -48,20 +109,10 @@ let bundle = ArtifactBundle::new(&core_artifact)?
 let observed = BTreeMap::from([(
     "remote".to_string(),
     ObservedCovenantContext::from_app("open_agent")
-        .input("agent", "Agent", agent_utxo, agent_state)
-        .output("agent", "Agent", next_agent_state),
+        .input("agent", "Forager", agent_utxo, forager_state)
+        .output("agent", "Forager", next_forager_state),
 )]);
-
-let agent_outputs = builder.observed_outputs(
-    "Cell",
-    "advance",
-    "remote",
-    observed.get("remote").unwrap(),
-    values,
-    1,
-    agent_covenant_id,
-)?;
 ```
 
-The observe name is not an app identity. It is only the coordinate used by the
+The observe name is not an app identity. It is the local coordinate used by the
 entry being invoked.

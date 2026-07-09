@@ -36,8 +36,10 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
+            HiddenParamSubjectArtifact::ObservedOutputField { field, .. } => field,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
+            HiddenParamSubjectArtifact::StateExpansion { memory_state, .. } => memory_state,
         }
     }
 
@@ -1196,6 +1198,28 @@ mod tests {
             .with_app("open_agent", &agent_artifact)
             .expect("bundle accepts open ICC agent app");
         let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts open ICC bundle");
+        let advance = core_artifact
+            .argent
+            .actors
+            .iter()
+            .find(|actor| actor.name == "Cell")
+            .and_then(|actor| actor.entries.iter().find(|entry| entry.name == "advance"))
+            .expect("Cell::advance artifact exists");
+        let next_digest = advance
+            .hidden_params
+            .iter()
+            .find(|param| param.name == "gen__remote_agent_next_strategy")
+            .expect("virtual observed output slot is hidden runtime plumbing");
+        assert_eq!(next_digest.purpose, HiddenParamPurposeArtifact::ObservedOutputFieldValue);
+        assert_eq!(
+            next_digest.subject,
+            HiddenParamSubjectArtifact::ObservedOutputField {
+                observe: "remote".to_string(),
+                handle: "agent".to_string(),
+                state: "AgentCapsule".to_string(),
+                field: "strategy".to_string(),
+            }
+        );
 
         let controller_covenant_id = Hash::from_bytes([0x31; 32]);
         let agent_covenant_id = Hash::from_bytes([0x41; 32]);
@@ -1253,9 +1277,9 @@ mod tests {
             .argent
             .states
             .iter_mut()
-            .find(|state| state.name == "AgentState")
+            .find(|state| state.name == "AgentCapsule")
             .and_then(|state| state.fields.iter_mut().find(|field| field.name == "energy"))
-            .expect("AgentState.energy exists");
+            .expect("AgentCapsule.energy exists");
         bad_energy_field.ty = TypeArtifact::Bool;
         bad_layout_agent_artifact.id = bad_layout_agent_artifact.computed_id_hex().expect("mutated agent artifact id computes");
         let bad_layout_bundle = ArtifactBundle::new(&core_artifact)
@@ -1270,10 +1294,103 @@ mod tests {
             matches!(
                 &bad_layout_err,
                 BuilderError::ObservedStateLayoutMismatch { observe, side, handle, state, actor }
-                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentState" && actor == "Agent"
+                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentCapsule" && actor == "Agent"
             ),
             "unexpected error: {bad_layout_err}"
         );
+
+        let expanded_agent_artifact = open_icc_expanded_agent_artifact();
+        let expanded_agent_type =
+            decode_hex(&expanded_agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
+                .expect("Forager template hash decodes");
+        let expanded_bundle = ArtifactBundle::new(&core_artifact)
+            .expect("core artifact is valid")
+            .with_app("open_agent", &expanded_agent_artifact)
+            .expect("expanded agent artifact attaches under the same app alias");
+        let expanded_builder = TxBuilder::from_bundle(&expanded_bundle).expect("builder accepts expanded agent bundle");
+        let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
+        let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        let expanded_agent_next = expanded_open_agent_state(controller_covenant_id, 3, 4);
+        let expanded_agent_utxo = expanded_builder
+            .covenant_utxo_in_app(
+                "open_agent",
+                "Forager",
+                expanded_agent_initial.clone(),
+                agent_value,
+                0,
+                false,
+                Some(agent_covenant_id),
+            )
+            .expect("expanded agent utxo builds");
+        let expanded_observed = open_agent_context("Forager", expanded_agent_initial, expanded_agent_utxo, expanded_agent_next);
+        expanded_builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, vec![], &expanded_observed)
+            .expect("open observed actor accepts a state that expands the expected base state");
+        expanded_builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Forager",
+                "step",
+                expanded_open_agent_state(controller_covenant_id, 2, 5),
+                vec![],
+            )
+            .expect("expanded agent sigscript is built from slot-qualified source fields");
+        let mut flattened_forager_state = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        flattened_forager_state.remove("strategy");
+        flattened_forager_state.insert("hunger".to_string(), ArtifactValue::Int(2));
+        flattened_forager_state.insert("mood".to_string(), ArtifactValue::Int(1));
+        flattened_forager_state.insert("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32]));
+        let flattened_err = expanded_builder
+            .p2sh_signature_script_in_app("open_agent", "Forager", "step", flattened_forager_state, vec![])
+            .expect_err("expanded agent state must provide slot-qualified source fields");
+        assert!(
+            matches!(&flattened_err, BuilderError::MissingStateExpansionPreimage { contract, field, memory_state }
+                if contract == "Forager" && field == "strategy" && memory_state == "ForagerStrategy"),
+            "unexpected error: {flattened_err}"
+        );
+
+        let forager_type =
+            decode_hex(&agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
+                .expect("Forager template hash decodes");
+        let forager_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x53; 32]), index: 0 };
+        let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x54; 32]), index: 0 };
+        let forager_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        let forager_next = expanded_open_agent_state_at(controller_covenant_id, 3, 4, 1, 0);
+        let controller_utxo = builder
+            .covenant_utxo(
+                "Cell",
+                open_cell_state(agent_covenant_id, forager_type, 7),
+                cell_value,
+                0,
+                false,
+                Some(controller_covenant_id),
+            )
+            .expect("controller cell utxo builds");
+        let forager_utxo = builder
+            .covenant_utxo_in_app("open_agent", "Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("Forager utxo builds");
+        let forager_output = builder
+            .covenant_output_in_app("open_agent", "Forager", forager_next, agent_value, 1, agent_covenant_id)
+            .expect("Forager output builds with packed expanded memory digest");
+        let forager_sigscript = builder
+            .p2sh_signature_script_in_app(
+                "open_agent",
+                "Forager",
+                "step",
+                forager_initial,
+                vec![ArtifactValue::Int(1), ArtifactValue::Int(0), ArtifactValue::Int(4)],
+            )
+            .expect("Forager step sigscript fills hidden expanded-memory preimage");
+        let forager_tx = TxBuilder::transaction(
+            vec![
+                TxBuilder::transaction_input(controller_outpoint, Vec::new()),
+                TxBuilder::transaction_input(forager_outpoint, forager_sigscript),
+            ],
+            vec![forager_output],
+        );
+        execute_input_with_covenants(&forager_tx, vec![controller_utxo, forager_utxo], 1)
+            .expect("Forager step executes with digest-backed memory repacking");
+
         let outputs = open_icc_advance_outputs(
             &builder,
             cell_next,
@@ -1364,6 +1481,69 @@ mod tests {
 
     fn open_icc_agent_artifact() -> Artifact {
         example_artifact("examples/open_icc/agent.ag", "open-icc-agent")
+    }
+
+    fn open_icc_expanded_agent_artifact() -> Artifact {
+        inline_artifact(
+            "open-icc-expanded-agent",
+            r#"
+            state AgentCapsule {
+                byte[32] world_id;
+                byte[32] agent_id;
+                byte[32] species_id;
+
+                covid controller_id;
+                byte[32] capabilities_digest;
+                virtual strategy;
+
+                int x;
+                int y;
+                int energy;
+                int generation;
+            }
+
+            state ForagerStrategy {
+                int hunger;
+                int mood;
+                byte[32] target_agent_id;
+            }
+
+            state ForagerState expands AgentCapsule {
+                strategy: ForagerStrategy;
+            }
+
+            actor Forager owns ForagerState {
+                entry step() emits {
+                    agent: Forager;
+                } {
+                    require(controller_id.authorized());
+
+                    ForagerState next_agent = {
+                        world_id: world_id,
+                        agent_id: agent_id,
+                        species_id: species_id,
+                        controller_id: controller_id,
+                        capabilities_digest: capabilities_digest,
+                        strategy: ForagerStrategy {
+                            hunger: strategy.hunger + 1,
+                            mood: strategy.mood,
+                            target_agent_id: strategy.target_agent_id,
+                        },
+                        x: x,
+                        y: y,
+                        energy: energy - 1,
+                        generation: generation,
+                    };
+
+                    become agent <- Forager(next_agent);
+                }
+            }
+
+            app OpenAgent {
+                actor Forager;
+            }
+            "#,
+        )
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -1490,19 +1670,56 @@ mod tests {
         ])
     }
 
-    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, tick: i64) -> BTreeMap<String, ArtifactValue> {
+    fn open_cell_state(agent_covid: Hash, agent_type: Vec<u8>, _tick: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
-            ("agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
-            ("agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
-            ("tick".to_string(), ArtifactValue::Int(tick)),
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("x".to_string(), ArtifactValue::Int(0)),
+            ("y".to_string(), ArtifactValue::Int(0)),
+            ("food".to_string(), ArtifactValue::Int(0)),
+            ("occupant_agent_covid".to_string(), ArtifactValue::Bytes(agent_covid.as_bytes().to_vec())),
+            ("occupant_agent_type".to_string(), ArtifactValue::Bytes(agent_type)),
+            ("occupant_caps_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
         ])
     }
 
     fn open_agent_state(controller_id: Hash, caps_digest: Vec<u8>, energy: i64) -> BTreeMap<String, ArtifactValue> {
         BTreeMap::from([
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
+            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
-            ("caps_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("capabilities_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
+            ("strategy".to_string(), ArtifactValue::Bytes(vec![0x44; 32])),
+            ("x".to_string(), ArtifactValue::Int(0)),
+            ("y".to_string(), ArtifactValue::Int(0)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
+            ("generation".to_string(), ArtifactValue::Int(0)),
+        ])
+    }
+
+    fn expanded_open_agent_state(controller_id: Hash, hunger: i64, energy: i64) -> BTreeMap<String, ArtifactValue> {
+        expanded_open_agent_state_at(controller_id, hunger, energy, 0, 0)
+    }
+
+    fn expanded_open_agent_state_at(controller_id: Hash, hunger: i64, energy: i64, x: i64, y: i64) -> BTreeMap<String, ArtifactValue> {
+        BTreeMap::from([
+            ("world_id".to_string(), ArtifactValue::Bytes(vec![0x11; 32])),
+            ("agent_id".to_string(), ArtifactValue::Bytes(vec![0x22; 32])),
+            ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
+            ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
+            ("capabilities_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
+            (
+                "strategy".to_string(),
+                ArtifactValue::Object(BTreeMap::from([
+                    ("hunger".to_string(), ArtifactValue::Int(hunger)),
+                    ("mood".to_string(), ArtifactValue::Int(1)),
+                    ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
+                ])),
+            ),
+            ("x".to_string(), ArtifactValue::Int(x)),
+            ("y".to_string(), ArtifactValue::Int(y)),
+            ("energy".to_string(), ArtifactValue::Int(energy)),
+            ("generation".to_string(), ArtifactValue::Int(0)),
         ])
     }
 

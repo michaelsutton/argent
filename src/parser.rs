@@ -87,16 +87,31 @@ impl Parser {
     fn parse_state(&mut self) -> Result<StateDecl> {
         self.expect_ident("state")?;
         let name = self.expect_any_ident()?;
+        let expands = if self.consume_ident("expands") { Some(self.expect_any_ident()?) } else { None };
         self.expect_symbol('{')?;
         let mut fields = Vec::new();
+        let mut digest_expansions = Vec::new();
         while !self.check_symbol('}') {
-            let ty = self.parse_type()?;
-            let name = self.expect_any_ident()?;
-            self.expect_symbol(';')?;
-            fields.push(FieldDecl { ty, name });
+            if expands.is_some() {
+                let field = self.expect_any_ident()?;
+                self.expect_symbol(':')?;
+                let state = self.expect_any_ident()?;
+                self.expect_symbol(';')?;
+                digest_expansions.push(StateDigestExpansionDecl { field, state });
+            } else if self.consume_ident("virtual") {
+                let name = self.expect_any_ident()?;
+                self.expect_symbol(';')?;
+                fields.push(FieldDecl { ty: TypeRef::array("byte", 32), name, virtual_slot: true });
+            } else {
+                let ty = self.parse_type()?;
+                let name = self.expect_any_ident()?;
+                self.expect_symbol(';')?;
+                fields.push(FieldDecl { ty, name, virtual_slot: false });
+            }
         }
         self.expect_symbol('}')?;
-        Ok(StateDecl { name, fields })
+        let expansion = expands.map(|base| StateExpansionDecl { base, digests: digest_expansions });
+        Ok(StateDecl { name, fields, expansion })
     }
 
     fn parse_function(&mut self) -> Result<FunctionDecl> {

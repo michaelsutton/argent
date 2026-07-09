@@ -2,8 +2,7 @@
   "app": "OpenCore",
   "root": "examples/open_icc/core.ag",
   "modules": [
-    "examples/open_icc/core.ag",
-    "examples/open_icc/agent.ag"
+    "examples/open_icc/core.ag"
   ],
   "templates": [
     { "actor": "Cell", "symbol": "gen__cell_template", "hash": null }
@@ -20,6 +19,13 @@
           "emits": { "kind": "outputs", "outputs": [{ "name": "cell", "auth_index": 0, "actors": ["Cell"] }] },
           "consumes": [],
           "routes": [{ "output": "cell", "actor": "Cell", "state": "next_cell" }]
+        },
+        {
+          "name": "move",
+          "kind": "leader",
+          "emits": { "kind": "outputs", "outputs": [{ "name": "source_cell", "auth_index": 0, "actors": ["Cell"] }, { "name": "target_cell", "auth_index": 1, "actors": ["Cell"] }] },
+          "consumes": [{ "name": "target_cell", "actor": "Cell" }],
+          "routes": [{ "output": "source_cell", "actor": "Cell", "state": "next_source" }, { "output": "target_cell", "actor": "Cell", "state": "next_target" }]
         }
       ]
     }
