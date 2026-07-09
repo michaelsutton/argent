@@ -41,6 +41,147 @@ use thiserror::Error;
 
 pub type BuilderResult<T> = std::result::Result<T, BuilderError>;
 
+pub trait IntoArtifactValue {
+    fn into_artifact_value(self) -> ArtifactValue;
+}
+
+impl IntoArtifactValue for ArtifactValue {
+    fn into_artifact_value(self) -> ArtifactValue {
+        self
+    }
+}
+
+macro_rules! impl_int_artifact_value {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl IntoArtifactValue for $ty {
+                fn into_artifact_value(self) -> ArtifactValue {
+                    ArtifactValue::Int(self as i64)
+                }
+            }
+        )*
+    };
+}
+
+impl_int_artifact_value!(i8, i16, i32, i64, isize, u16, u32);
+
+impl IntoArtifactValue for bool {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bool(self)
+    }
+}
+
+impl IntoArtifactValue for u8 {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Byte(self)
+    }
+}
+
+impl IntoArtifactValue for Vec<u8> {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self)
+    }
+}
+
+impl IntoArtifactValue for &[u8] {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self.to_vec())
+    }
+}
+
+impl<const N: usize> IntoArtifactValue for [u8; N] {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self.to_vec())
+    }
+}
+
+impl<const N: usize> IntoArtifactValue for &[u8; N] {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self.to_vec())
+    }
+}
+
+impl IntoArtifactValue for Hash {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self.as_bytes().to_vec())
+    }
+}
+
+impl IntoArtifactValue for &Hash {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Bytes(self.as_bytes().to_vec())
+    }
+}
+
+impl IntoArtifactValue for String {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Text(self)
+    }
+}
+
+impl IntoArtifactValue for &str {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Text(self.to_string())
+    }
+}
+
+impl IntoArtifactValue for BTreeMap<String, ArtifactValue> {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Object(self)
+    }
+}
+
+/// Build an Argent source-state object for `TxBuilder` calls.
+///
+/// Returns a `BTreeMap<String, ArtifactValue>` keyed by Argent source field
+/// name. Each value is converted through `IntoArtifactValue`.
+///
+/// ```
+/// use argent_runtime::state;
+///
+/// // Builds:
+/// // BTreeMap::from([("count".to_string(), ArtifactValue::Int(2))])
+/// let counter = state! {
+///     count: 2,
+/// };
+/// ```
+#[macro_export]
+macro_rules! state {
+    ($($field:ident : $value:expr),* $(,)?) => {{
+        let mut state = ::std::collections::BTreeMap::new();
+        $(
+            state.insert(
+                ::std::string::ToString::to_string(stringify!($field)),
+                $crate::IntoArtifactValue::into_artifact_value($value),
+            );
+        )*
+        state
+    }};
+}
+
+/// Build Argent entrypoint argument values for `TxBuilder` calls.
+///
+/// Returns a `Vec<ArtifactValue>` in entrypoint parameter order. Each value is
+/// converted through `IntoArtifactValue`.
+///
+/// ```
+/// use argent_runtime::args;
+///
+/// // Builds:
+/// // vec![ArtifactValue::Int(3), ArtifactValue::Bool(true)]
+/// let args = args![3, true];
+/// ```
+#[macro_export]
+macro_rules! args {
+    ($($value:expr),* $(,)?) => {{
+        vec![
+            $(
+                $crate::IntoArtifactValue::into_artifact_value($value),
+            )*
+        ]
+    }};
+}
+
 #[derive(Debug, Error)]
 pub enum BuilderError {
     #[error(transparent)]
@@ -1472,4 +1613,41 @@ pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, i
 
 pub fn covenant_engine_flags() -> EngineFlags {
     EngineFlags { covenants_enabled: true, ..Default::default() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_macro_builds_artifact_value_map() {
+        let covenant_id = Hash::from_bytes([0x44; 32]);
+        let nested = state! {
+            hunger: 7,
+        };
+
+        let value = state! {
+            count: 2,
+            ready: true,
+            tag: [0xaa_u8; 2],
+            controller: covenant_id,
+            label: "counter",
+            nested: nested.clone(),
+        };
+
+        assert_eq!(value.get("count"), Some(&ArtifactValue::Int(2)));
+        assert_eq!(value.get("ready"), Some(&ArtifactValue::Bool(true)));
+        assert_eq!(value.get("tag"), Some(&ArtifactValue::Bytes(vec![0xaa; 2])));
+        assert_eq!(value.get("controller"), Some(&ArtifactValue::Bytes(vec![0x44; 32])));
+        assert_eq!(value.get("label"), Some(&ArtifactValue::Text("counter".to_string())));
+        assert_eq!(value.get("nested"), Some(&ArtifactValue::Object(nested)));
+    }
+
+    #[test]
+    fn args_macro_builds_artifact_value_list() {
+        assert_eq!(
+            args![3, true, [0xaa_u8; 2]],
+            vec![ArtifactValue::Int(3), ArtifactValue::Bool(true), ArtifactValue::Bytes(vec![0xaa; 2])]
+        );
+    }
 }
