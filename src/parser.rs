@@ -402,16 +402,8 @@ impl Parser {
             while !self.check_symbol('}') {
                 let name = self.expect_any_ident()?;
                 self.expect_symbol(':')?;
-                let actors = self.parse_actor_union_until_at()?;
-                let auth_index = if self.consume_ident("at") {
-                    self.expect_ident("auth")?;
-                    self.expect_symbol('[')?;
-                    let auth_index = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid auth index"))?;
-                    self.expect_symbol(']')?;
-                    auth_index
-                } else {
-                    outputs.len()
-                };
+                let actors = self.parse_actor_union()?;
+                let auth_index = outputs.len();
                 self.expect_symbol(';')?;
                 outputs.push(EmitOutput { name, actors, auth_index });
             }
@@ -423,15 +415,10 @@ impl Parser {
     }
 
     fn parse_actor_union_until_body(&mut self) -> Result<Vec<String>> {
-        let mut actors = Vec::new();
-        actors.push(self.expect_any_ident()?);
-        while self.consume_symbol('|') {
-            actors.push(self.expect_any_ident()?);
-        }
-        Ok(actors)
+        self.parse_actor_union()
     }
 
-    fn parse_actor_union_until_at(&mut self) -> Result<Vec<String>> {
+    fn parse_actor_union(&mut self) -> Result<Vec<String>> {
         let mut actors = Vec::new();
         actors.push(self.expect_any_ident()?);
         while self.consume_symbol('|') {

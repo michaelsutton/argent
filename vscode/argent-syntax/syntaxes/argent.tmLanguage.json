@@ -24,15 +24,23 @@
       "patterns": [
         {
           "name": "keyword.control.argent",
-          "match": "\\b(become|consumes|emits|observes|validate)\\b"
+          "match": "\\b(become|consumes|emits|observes|return)\\b"
         },
         {
           "name": "keyword.declaration.argent",
-          "match": "\\b(by|else|if|while)\\b"
+          "match": "\\b(as|by|else|from|if|inputs|none|one|outputs)\\b"
         },
         {
           "name": "keyword.declaration.argent",
-          "match": "\\b(actor|app|entry|import|owns|state)\\b"
+          "match": "\\b(actor|app|const|delegate|entry|enum|expands|fn|import|owns|state|virtual)\\b"
+        },
+        {
+          "name": "constant.language.argent",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "variable.language.argent",
+          "match": "\\b(self)\\b"
         }
       ]
     },
@@ -40,11 +48,11 @@
       "patterns": [
         {
           "name": "support.function.argent",
-          "match": "\\b(op_[A-Za-z0-9_]+|sig_verify)\\b"
+          "match": "\\b(Op[A-Za-z0-9_]+|op_[A-Za-z0-9_]+|authorized|blake2b|checkSig|sig_verify|unique)\\b"
         },
         {
           "name": "storage.type.argent",
-          "match": "\\b(pubkey|sig|witness)\\b"
+          "match": "\\b(actor|bool|byte|bytes|covid|datasig|int|pubkey|sig|string)\\b"
         }
       ]
     },
