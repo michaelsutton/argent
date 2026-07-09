@@ -5,7 +5,12 @@ Tiny VS Code syntax extension for `.ag` files.
 It intentionally does only highlighting:
 
 - `.ag` files get the `argent` language id.
-- Argent routing words such as `become`, `emits`, `consumes`, and `observes` use keyword scopes.
+- Argent routing words such as `become`, `emits`, `consumes`, and `observes`
+  use keyword scopes.
+- Current language words such as `delegate`, `actor enum`, `virtual`,
+  `expands`, `const`, `inputs`, `outputs`, and `as` are highlighted.
+- Current primitive/source types such as `int`, `byte`, `bool`, `sig`, `pubkey`,
+  `covid`, `datasig`, and `actor<State>` are highlighted.
 - The rest of the file falls through to Rust TextMate highlighting.
 
 Install locally by symlinking the unpacked extension from the repo root, then reload VS Code:
