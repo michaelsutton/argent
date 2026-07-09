@@ -55,3 +55,43 @@ Things to make explicit in docs/tests:
 Open question: should Argent eventually have source syntax for declaring a
 paired entry relation, or should this remain expressed through `observes`,
 `authorized()`, consumed inputs, and output checks?
+
+## Genesis launch roots
+
+Expose artifact/runtime guidance for actors that look genesis-created: actors
+with no incoming non-self creation route in the app graph.
+
+This should probably feed a future launch-plan API or warning, not the low-level
+`populate_genesis_covenants` helper. The low-level helper should keep doing
+exactly what the caller asked for: bind the provided transaction output groups.
+
+The useful invariant is advisory: if an actor has no way to be created by
+another actor in the same covenant, a launcher likely needs to create at least
+one genesis output for it, unless the app intentionally leaves that actor
+unlaunched.
+
+## Launch proofs
+
+Support producing and verifying a launch proof for one genesis covenant group.
+Each group launches one covenant; a transaction that launches multiple covenants
+can carry multiple launch proofs.
+
+The proof should include:
+
+- the authorizing funding outpoint
+- the covenant id derived from that outpoint and the ordered launch outputs
+- each initial actor state
+- each output's redeem-script preimage: template prefix, encoded state, template
+  suffix
+- each corresponding P2SH script public key
+
+Verification should show:
+
+- the actor state encodes to the claimed redeem script
+- the redeem script hashes to the launch output script public key
+- the ordered outputs and authorizing outpoint recompute the covenant id
+
+The goal is to explain a covenant id already seen in a live UTXO: given the
+funding outpoint and initial actor states, show exactly how that id was
+launched, so auditing the contracts and initial states gives confidence in the
+live covenant.
