@@ -1,15 +1,14 @@
-# Argent Design Notes
+# Argent design notes
 
 Argent is an actor-style frontend for building multi-contract Silverscript apps
-as closed, well-formed covenant state machines. This note is a parking lot for
-design commitments and, more importantly, the parts still under discussion.
+as well-formed covenant state machines. This document captures design choices
+and the parts still under discussion.
 
-The project is experimental and in very early stages. These notes are not a
-specification; they are a working map of the current prototype and the design
-pressure we have noticed while studying chess-style Silverscript apps.
-They are also not a roadmap or commitment that the project will continue.
+The focus is the compiler/runtime boundary: generated Silverscript, portable
+artifacts, ICC flows, route families, and the source features needed to make
+those pieces usable from Argent.
 
-## Settled For Now
+## Settled for now
 
 - Argent emits plain Silverscript, not Silverscript covenant macros.
 - User state is declared once with `state`.
@@ -17,24 +16,24 @@ They are also not a roadmap or commitment that the project will continue.
 - `entry` declares callable transition paths.
 - `emits` declares authorized output shape.
 - `become` is tail-dispatch into successor actor state.
-- Typed covenant inputs should hide `readInputStateWithTemplate` boilerplate.
-- Basic Silverscript data types should stay visible as-is, such as `sig` and
-  `pubkey`; Argent should not invent wrapper primitive types.
+- Typed covenant inputs hide `readInputStateWithTemplate` boilerplate.
+- Basic Silverscript data types stay visible as-is, such as `sig` and `pubkey`;
+  Argent does not invent wrapper primitive types for them.
 - Prefix/suffix witnesses are generated Silverscript ABI, not Argent source
   surface.
 - Every `become` route must be allowed by the entry's `emits` declaration.
-- Covenant input/output shape is a first-class Argent concern, even if syntax is
-  still pending.
+- Covenant input/output shape is a first-class Argent concern, even while the
+  source syntax evolves.
 - The main language/compiler contribution is hiding route logic, template
   propagation, and mechanical safety checks from application code.
-- Named actor flows should use a leader-auth output pattern by default.
+- Named actor flows use a leader-auth output pattern by default.
 - True cov-output N:M transitions are singleton per covenant id per transaction;
-  Argent should not fight that limitation by default.
+  ordinary named actor flows use auth-output coordination instead.
 - Helper function bodies are expected to already be valid Silverscript-shaped
-  code. Argent should not work hard to repair or verify user helper code; that is
-  delegated to Silverscript.
+  code. Silverscript remains responsible for final helper/body validity where
+  Argent has not lowered the expression itself.
 
-## Template Hash Rule
+## Template hash rule
 
 Template hashes must exclude all instance state, including hidden template fields.
 The working rule is the chess rule:
@@ -46,7 +45,7 @@ template_hash = blake2b(template_prefix || template_suffix)
 The state bytes live between prefix and suffix, so template references stored in
 state do not participate in their own template hash.
 
-## Hidden ABI State
+## Hidden ABI state
 
 Template fields are hidden ABI state, not source-level user fields.
 
@@ -73,7 +72,7 @@ Open questions:
 - Should `self.state` include hidden ABI state implicitly, or mean only user
   state with compiler-added ABI fields copied around it?
 
-## Bootstrap And Launch Proofs
+## Bootstrap and launch proofs
 
 The initial hidden ABI fields are correct because bootstrap constructs them
 correctly. Later transitions preserve them.
@@ -91,7 +90,7 @@ Open questions:
   and indexers?
 - What does a minimal proof for the Stones example look like?
 
-## Transaction Builder Context
+## Transaction builder context
 
 Argent source should not expose prefix/suffix witnesses, route proofs, template
 preimages, or other Silverscript machinery. The `argent-runtime` crate provides
@@ -110,7 +109,7 @@ Open questions:
 - What is the boundary between generated Argent builder code and reusable
   Silverscript builder APIs?
 
-## Route Commitments
+## Route commitments
 
 The first implemented model uses deterministic route table/proof receipts plus
 one-level route-family packing. Upper states can store a family digest, while
@@ -127,8 +126,8 @@ generated validation: validateOutputStateWithTemplate(...) or validateOutputStat
 ```
 
 The artifact records the receipts behind this shape: route tables, canonical
-route proofs, route-family metadata, and witness recipes. `argent-runtime` can
-fill the hidden witnesses from those receipts for tests and prototype tooling.
+route proofs, route-family metadata, and witness recipes. `argent-runtime` fills
+hidden witnesses from those receipts for tests and client tooling.
 
 Larger apps may still need deeper Merkle cuts later, but that should replace the
 receipt-planning algorithm behind the same artifact concepts instead of changing
@@ -147,7 +146,7 @@ Open questions:
 - Should the compiler auto-select flat vs Merkle based on app size, or should the
   source choose?
 
-## Same-Template Shortcuts
+## Same-template shortcuts
 
 Same-template outputs should use the cheaper same-script validation path.
 
@@ -194,7 +193,7 @@ Open questions:
 - Can the transaction builder carry reusable proof metadata so same-template peer
   inputs can opt into `readInputState(...)` safely in special cases?
 
-## Input And Output Shape
+## Input and output shape
 
 The source wants to say:
 
@@ -203,10 +202,11 @@ require cov.inputs == [self, opponent];
 ```
 
 The compiler currently emits exact leader covenant input counts and conservative
-delegate minimum counts. That is not the final declared-shape rule.
+delegate minimum counts. The source-level shape model can become more explicit.
 
 Covenant shape should be first-class in Argent. The source spelling is still
-open, but this should not remain ordinary unchecked user body text.
+open, but the shape belongs in declarations rather than unchecked user body
+text.
 
 Default actor-app lowering should use a coordinator shape:
 
@@ -236,15 +236,15 @@ Open questions:
   handles?
 - Do we need any source-level escape hatch for explicit cov-output transitions?
 
-## Body Lowering
+## Body lowering
 
 The current compiler lowers the Stones subset into plain Silverscript. It handles
 terminal `become`, simple locals, `if/else`, state constructors, output-handle
 values, consumed-input values, and generated route validation.
 
-This is intentionally not a full Argent typechecker yet. The compiler performs
-only enough source analysis to lower the prototype. Silverscript remains the
-authority for final helper/body validity where possible.
+Argent does not yet own a full source typechecker. The compiler performs the
+analysis needed for lowering and leaves final helper/body validity to
+Silverscript where possible.
 
 Open questions:
 
@@ -257,7 +257,7 @@ Open questions:
 - How much validation belongs in Argent before handing generated Silverscript to
   `silverc`?
 
-## Exact Continuation Protection
+## Exact continuation protection
 
 Chess-style player and league continuations show that multi-actor apps need
 actor-instance preservation discipline, not just template checks.
@@ -272,7 +272,7 @@ Open questions:
 - How should settlement actors prove they are closing exactly the intended live
   actors?
 
-## Compiler Obligations
+## Compiler obligations
 
 Argent-generated code must eventually enforce:
 

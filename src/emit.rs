@@ -5673,6 +5673,36 @@ mod tests {
     }
 
     #[test]
+    fn rejects_explicit_auth_output_index_syntax() {
+        let err = parse_and_validate(
+            r#"
+            state FooState {
+                int value;
+            }
+
+            actor Foo owns FooState {
+                entry bump() emits {
+                    next: Foo at auth[0];
+                } {
+                    FooState next_state = {
+                        value: value + 1,
+                    };
+
+                    become next <- Foo(next_state);
+                }
+            }
+
+            app Test {
+                actor Foo;
+            }
+            "#,
+        )
+        .expect_err("explicit auth output indexes must not be source syntax");
+
+        assert!(err.to_string().contains("expected `;`"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn rejects_duplicate_named_output_coverage() {
         let mut program = test_program();
         let first = RouteCall { output: Some("next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() };
