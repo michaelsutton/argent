@@ -1,93 +1,199 @@
 # Argent
 
-Argent is an experimental actor-style frontend for Silverscript covenant
-contracts.
+Argent is an actor-style language for writing Kaspa covenant applications that
+compile to plain Silverscript.
 
-This repository is a very early research prototype. It is not production-ready,
-not audited, and the language syntax, generated ABI, and compiler internals are
-unstable, with no guarantee that development will continue or that this becomes
-more than an experiment.
+Argent source describes the application state, actors, entrypoints, coordinated
+inputs and outputs, observed covenants, and successor actors. The compiler emits
+auditable `.sil` files plus a portable artifact consumed by `argent-runtime`.
 
-The goal is to make it easier to build multi-contract covenant systems as
-closed, well-formed state machines. Argent source describes the application
-actors, state, transition shape, and tail-dispatch intent, while the compiler
-generates plain Silverscript for route plumbing, template propagation, typed
-foreign-state reads, and successor-state validation.
+Argent is still evolving, but the main pieces are present: compiler, generated
+Silverscript, portable artifacts, runtime transaction building, route families,
+actor enums, ICC, open observed actors, and virtual-slot state expansion.
 
-For a tiny screenshot-friendly example, see [examples/tickets.ag](examples/tickets.ag),
-a single-file app with `Issuer` and `Ticket` actors. The larger current app is
-[examples/stones](examples/stones), a small two-player game with `League`,
-`Player`, `StonesGame`, and `StonesSettle` actors.
+## Quick start
 
-Design notes and open questions live in
-[docs/argent-design.md](docs/argent-design.md).
-
-## Status
-
-What works today:
-
-- multi-file `.ag` parsing
-- shared `state`, `const`, and helper `fn` declarations
-- `actor` declarations that own one state layout
-- `entry` and `delegate` declarations
-- `consumes` covenant-peer declarations
-- named `emits` output handles
-- terminal `become` routes
-- generated plain Silverscript for the Stones app
-- generated hidden template fields in state objects
-- generated `readInputStateWithTemplate` calls for consumed actors
-- generated `validateOutputStateWithTemplate` calls for successor actors
-- same-template `validateOutputState` shortcuts for exact continuations
-- portable artifact JSON with an inner Sil ABI artifact
-- `argent-runtime` transaction-building helpers for compiled artifacts
-- template table/proof receipts and one-level route-family commitments
-
-What is still early or missing:
-
-- no launch proof tooling yet
-- no generated app-specific transaction builder API yet
-- no optimized template tree-cut algorithms yet
-- no stable ABI
-- no full Argent typechecker
-- minimal diagnostics
-- no security claims
-
-## Prototype compiler
-
-Build the Stones example:
+Run the standard local check loop:
 
 ```sh
-cargo run -- build examples/stones/app.ag --out examples/build/stones
+./check.sh
 ```
 
-Build the tiny Tickets example:
+Regenerate tracked example outputs and run the full check loop:
+
+```sh
+./check.sh --full
+```
+
+Build one app manually:
 
 ```sh
 cargo run -- build examples/tickets.ag --out examples/build/tickets
+cargo run -- build examples/stones/app.ag --out examples/build/stones
+cargo run -- build examples/icc/kcc20_asset.ag --out examples/build/icc_kcc20_asset
+cargo run -- build examples/icc/minter.ag --out examples/build/icc_minter
+cargo run -- build examples/open_icc/agent.ag --out examples/build/open_icc_agent
+cargo run -- build examples/open_icc/core.ag --out examples/build/open_icc_core
 ```
 
-The generated artifacts are written under `examples/build/stones`:
+Generated outputs include:
 
-- `examples/build/stones/artifact.json`
-- `examples/build/stones/manifest.json`
-- `examples/build/stones/sil/League.sil`
-- `examples/build/stones/sil/Player.sil`
-- `examples/build/stones/sil/StonesGame.sil`
-- `examples/build/stones/sil/StonesSettle.sil`
+- `artifact.json`: the portable Argent artifact
+- `manifest.json`: build metadata
+- `sil/*.sil`: generated Silverscript contracts
 
-The generated Silverscript is intended to compile as ordinary Silverscript. No
-Silverscript covenant macros are used.
+Generated `.sil` files compile as ordinary Silverscript. Argent does not use
+Silverscript covenant macros.
 
-## Core Ideas
+## Language at a glance
 
-- `state` defines reusable covenant state layouts.
-- `actor` defines a contract template that owns one state layout.
-- `entry` defines a leader transition path.
-- `delegate` defines a non-leader check in a coordinated transition.
-- `consumes` names other covenant actor inputs in the same transaction group.
-- `emits` declares the authorized output shape for an entrypoint.
-- `become` is a terminal tail-dispatch primitive into successor actor state.
+```rust
+state TicketState {
+    byte[32] owner;
+    int value;
+}
 
-Argent is trying to hide the route logic and mechanical safety checks that make
-multi-contract Silverscript flows hard to write by hand, while still emitting
-inspectable, plain Silverscript.
+actor Ticket owns TicketState {
+    entry transfer(next_owner: byte[32]) emits one Ticket {
+        TicketState next = {
+            owner: next_owner,
+            value: value,
+        };
+
+        become Ticket(next);
+    }
+}
+
+app Tickets {
+    actor Ticket;
+}
+```
+
+Argent actors are not async actors with mailboxes or message queues. They are
+covenant objects that get consumed and recreated by transactions. The shared
+idea with actor models is state ownership: an actor's code is the only
+authority that can consume and mutate that actor's state.
+
+Core terms:
+
+- `state` defines a persistent covenant state layout.
+- `actor` defines one contract template that owns a state layout.
+- `entry` defines a callable transition path.
+- `delegate` defines a non-leading check in a coordinated transition.
+- `consumes` names peer covenant inputs in the same transaction.
+- `emits` declares the authorized output handles for an entrypoint.
+- `become` is the terminal transition into successor actor state.
+- `observes` declares a foreign covenant view for ICC.
+- `actor<State>` is a typed runtime actor handle.
+- `actor enum` defines a closed set of runtime-selected actor targets.
+- `virtual` slots and `state X expands Base` let concrete actors bind private
+  digest-backed memory while preserving a shared base state layout.
+
+## Examples
+
+- [examples/tickets.ag](examples/tickets.ag): tiny single-file issuer/ticket app
+- [examples/stones](examples/stones): small coordinated game with league,
+  player, game, and settle actors
+- [examples/toy_chess](examples/toy_chess/app.ag): actor enums and
+  route-family selector lowering
+- [examples/icc](examples/icc): closed ICC between a minter and asset app
+- [examples/open_icc](examples/open_icc): open observed actors and virtual-slot
+  agent state
+
+## Runtime
+
+`argent-runtime` is the artifact-only consumer surface. It has no compiler
+dependency. It loads compiled artifacts, fills hidden witness material, builds
+covenant UTXOs and outputs, composes artifact bundles, and constructs P2SH
+signature scripts for tests and client tooling.
+
+Classic single-app flow:
+
+```rust
+let builder = TxBuilder::new(&artifact)?;
+
+let input_state = ticket_state(owner, value);
+let output_state = ticket_state(next_owner, value);
+
+// The covenant UTXO being spent.
+let input_utxo = builder.covenant_utxo("Ticket", input_state.clone(), value, 0, false, Some(covenant_id))?;
+
+// The successor covenant output this entry authorizes.
+let output = builder.covenant_output("Ticket", output_state, value, 0, covenant_id)?;
+
+let sigscript = builder.p2sh_signature_script(
+    "Ticket",
+    "transfer",
+    input_state,
+    vec![ArtifactValue::Bytes(next_owner)],
+)?;
+
+// ... compose tx
+```
+
+The runtime API is Argent-specific while the language settles. The lower-level
+Silverscript ABI and artifact boundaries are split into small crates so they can
+be kept portable. Multi-app ICC uses `ArtifactBundle`, while the basic path is
+single-artifact `TxBuilder::new`.
+
+## Why Argent
+
+Kaspa covenants make it possible to build applications out of multiple
+coordinated UTXOs, but hand-written covenant systems quickly accumulate
+mechanical obligations: template hashes, state serialization, prefix/suffix
+witnesses, output ordering, route commitments, observed covenant ids, and
+cross-contract state reads.
+
+Argent makes those relationships source-level. Actors own state. Entries name
+the peer inputs they consume, the outputs they emit, the foreign covenants they
+observe, and the actors those outputs become. The compiler checks that the
+declared state-machine edges are well formed, then emits the Silverscript that
+performs the low-level validation.
+
+Generated contracts stay as plain `.sil` files, and the artifact records the
+runtime recipe needed to build transactions against them.
+
+## How it works
+
+The compiler parses `.ag` source into an actor/state model and lowers each actor
+to one Silverscript contract. Source state fields become the contract state
+layout. Compiler-generated fields and hidden entry arguments carry template
+receipts, route-family tables, observed-covenant witnesses, and expanded-state
+preimages.
+
+`become` routes lower to output validation. Exact continuations can use cheaper
+script-public-key checks. Foreign or runtime-selected actors use template
+prefix/suffix witnesses or route-family tables. `observes` lowers to covenant
+input/output checks against another app. `virtual` slots lower to fixed digest
+fields, with concrete actors providing hidden preimages when they expand those
+slots into structured memory.
+
+The portable artifact records the runtime recipe for all of this: script bytes,
+state layouts, type descriptors, route receipts, observed covenant metadata,
+hidden witness recipes, artifact ids, and interface fingerprints.
+`argent-runtime` consumes that artifact directly; it does not depend on compiler
+AST types.
+
+## Current maturity
+
+Argent is an active language and compiler project. Syntax and JSON schema
+changes are still expected while the system settles. It has not been audited.
+
+What is useful today:
+
+- compiling `.ag` apps to auditable `.sil`
+- building tracked example transactions through `argent-runtime`
+- closed and open ICC examples
+- route-family and actor-enum examples
+- virtual-slot expanded state for open-agent style apps
+
+What is still being built:
+
+- launch and bootstrap tooling
+- app-level dependency syntax and qualified source references
+- stronger diagnostics and typechecking
+- generated app-specific builder APIs
+- broader hardening and negative-test coverage
+
+Design notes can be found in [docs/argent-design.md](docs/argent-design.md).
+ICC semantics can be found in [docs/icc-semantics.md](docs/icc-semantics.md).
