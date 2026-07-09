@@ -23,10 +23,11 @@ use argent_artifact::{
 };
 use kaspa_consensus_core::{
     Hash,
+    errors::tx::PopulateGenesisCovenantsError,
     hashing::sighash::SigHashReusedValuesUnsync,
     tx::{
-        CovenantBinding, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint, TransactionOutput, UtxoEntry,
-        VerifiableTransaction,
+        CovenantBinding, GenesisCovenantGroup, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint,
+        TransactionOutput, UtxoEntry, VerifiableTransaction,
     },
 };
 use kaspa_txscript::{
@@ -194,6 +195,8 @@ pub enum BuilderError {
     ScriptBuilder(#[from] ScriptBuilderError),
     #[error(transparent)]
     TxScript(#[from] TxScriptError),
+    #[error(transparent)]
+    PopulateGenesisCovenants(#[from] PopulateGenesisCovenantsError),
     #[error("unknown actor `{0}`")]
     UnknownActor(String),
     #[error("artifact bundle app alias `{0}` is already attached")]
@@ -268,6 +271,10 @@ pub enum BuilderError {
     DuplicateOutput(String),
     #[error("unsupported route without a named output")]
     UnnamedRouteOutput,
+    #[error("genesis covenant output {0} was not populated")]
+    MissingGenesisCovenantOutput(u32),
+    #[error("genesis covenant output {0} does not exist")]
+    UnknownGenesisOutput(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -278,6 +285,45 @@ pub struct ArtifactBundle<'a> {
 
 pub struct TxBuilder<'a> {
     bundle: ArtifactBundle<'a>,
+}
+
+/// Result of populating genesis covenant bindings on a transaction.
+///
+/// A launch transaction may create several covenant groups, and each group may
+/// bind several outputs to the same covenant id.
+pub struct GenesisCovenants {
+    pub groups: Vec<GenesisCovenant>,
+}
+
+impl GenesisCovenants {
+    /// Return the populated genesis output by transaction output index.
+    pub fn output(&self, index: u32) -> BuilderResult<&GenesisOutput> {
+        self.groups
+            .iter()
+            .flat_map(|group| group.outputs.iter())
+            .find(|output| output.index == index)
+            .ok_or(BuilderError::UnknownGenesisOutput(index))
+    }
+}
+
+/// One populated genesis covenant group.
+///
+/// Mirrors one `GenesisCovenantGroup`: all `outputs` share `covenant_id`, which
+/// is derived from the authorizing input outpoint and the exact output list.
+pub struct GenesisCovenant {
+    pub authorizing_input: u16,
+    pub covenant_id: Hash,
+    pub outputs: Vec<GenesisOutput>,
+}
+
+/// A concrete output created by a genesis covenant transaction.
+///
+/// The `outpoint` and `utxo` are the handles needed by the first covenant spend.
+pub struct GenesisOutput {
+    pub index: u32,
+    pub covenant_id: Hash,
+    pub outpoint: TransactionOutpoint,
+    pub utxo: UtxoEntry,
 }
 
 struct ContractRef<'a> {
@@ -494,6 +540,66 @@ impl<'a> TxBuilder<'a> {
         source_state: BTreeMap<String, ArtifactValue>,
     ) -> BuilderResult<kaspa_consensus_core::tx::ScriptPublicKey> {
         Ok(pay_to_script_hash_script(&self.redeem_script_in_app(app, actor_name, source_state)?))
+    }
+
+    /// Build an actor output before it has a covenant id.
+    ///
+    /// The returned output has the correct P2SH script for `actor_name(state)`
+    /// and `covenant: None`, ready for `Transaction::populate_genesis_covenants`.
+    pub fn genesis_output(
+        &self,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+    ) -> BuilderResult<TransactionOutput> {
+        Ok(TransactionOutput::new(value, self.script_public_key(actor_name, source_state)?))
+    }
+
+    /// Build an actor output in an attached app before it has a covenant id.
+    ///
+    /// This is the multi-app variant of `genesis_output`.
+    pub fn genesis_output_in_app(
+        &self,
+        app: &str,
+        actor_name: &str,
+        source_state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+    ) -> BuilderResult<TransactionOutput> {
+        Ok(TransactionOutput::new(value, self.script_public_key_in_app(app, actor_name, source_state)?))
+    }
+
+    /// Populate genesis covenant bindings and return first-spend handles.
+    ///
+    /// This wraps `Transaction::populate_genesis_covenants`, finalizes the tx
+    /// after mutation, and reports covenant ids, outpoints, and UTXO entries for
+    /// the populated outputs.
+    pub fn populate_genesis_covenants(tx: &mut Transaction, groups: &[GenesisCovenantGroup]) -> BuilderResult<GenesisCovenants> {
+        tx.populate_genesis_covenants(groups)?;
+        tx.finalize();
+
+        let tx_id = tx.id();
+        let is_coinbase = tx.is_coinbase();
+        let mut populated_groups = Vec::with_capacity(groups.len());
+        for group in groups {
+            let first_output_index = group.outputs.first().copied().ok_or(PopulateGenesisCovenantsError::EmptyOutputs)?;
+            let first_output =
+                tx.outputs.get(first_output_index as usize).ok_or(BuilderError::UnknownGenesisOutput(first_output_index))?;
+            let covenant_id = first_output.covenant.ok_or(BuilderError::MissingGenesisCovenantOutput(first_output_index))?.covenant_id;
+            let mut outputs = Vec::with_capacity(group.outputs.len());
+            for &index in &group.outputs {
+                let output = tx.outputs.get(index as usize).ok_or(BuilderError::UnknownGenesisOutput(index))?;
+                let binding = output.covenant.ok_or(BuilderError::MissingGenesisCovenantOutput(index))?;
+                outputs.push(GenesisOutput {
+                    index,
+                    covenant_id: binding.covenant_id,
+                    outpoint: TransactionOutpoint::new(tx_id, index),
+                    utxo: UtxoEntry::new(output.value, output.script_public_key.clone(), 0, is_coinbase, Some(binding.covenant_id)),
+                });
+            }
+            populated_groups.push(GenesisCovenant { authorizing_input: group.authorizing_input, covenant_id, outputs });
+        }
+
+        Ok(GenesisCovenants { groups: populated_groups })
     }
 
     pub fn p2sh_signature_script(
@@ -1649,5 +1755,47 @@ mod tests {
             args![3, true, [0xaa_u8; 2]],
             vec![ArtifactValue::Int(3), ArtifactValue::Bool(true), ArtifactValue::Bytes(vec![0xaa; 2])]
         );
+    }
+
+    #[test]
+    fn populate_genesis_covenants_reports_multiple_groups() {
+        let funding_outpoint = TransactionOutpoint::new(Hash::from_bytes([0x91; 32]), 0);
+        let mut tx = TxBuilder::transaction(
+            vec![TxBuilder::transaction_input(funding_outpoint, Vec::new())],
+            vec![
+                TransactionOutput::new(1_000, Default::default()),
+                TransactionOutput::new(2_000, Default::default()),
+                TransactionOutput::new(3_000, Default::default()),
+                TransactionOutput::new(4_000, Default::default()),
+            ],
+        );
+
+        let genesis = TxBuilder::populate_genesis_covenants(
+            &mut tx,
+            &[GenesisCovenantGroup::new(0, vec![0, 2]), GenesisCovenantGroup::new(0, vec![1, 3])],
+        )
+        .expect("genesis covenant population succeeds");
+
+        assert_eq!(genesis.groups.len(), 2);
+        assert_eq!(genesis.groups[0].outputs.len(), 2);
+        assert_eq!(genesis.groups[1].outputs.len(), 2);
+        assert_ne!(genesis.groups[0].covenant_id, genesis.groups[1].covenant_id);
+
+        let output_0 = genesis.output(0).expect("output 0 handle exists");
+        let output_2 = genesis.output(2).expect("output 2 handle exists");
+        assert_eq!(output_0.covenant_id, genesis.groups[0].covenant_id);
+        assert_eq!(output_2.covenant_id, genesis.groups[0].covenant_id);
+        assert_eq!(output_0.outpoint, TransactionOutpoint::new(tx.id(), 0));
+        assert_eq!(output_2.outpoint, TransactionOutpoint::new(tx.id(), 2));
+        assert_eq!(output_0.utxo.amount, tx.outputs[0].value);
+        assert_eq!(output_0.utxo.script_public_key, tx.outputs[0].script_public_key);
+        assert_eq!(output_0.utxo.covenant_id, Some(output_0.covenant_id));
+
+        let output_1 = genesis.output(1).expect("output 1 handle exists");
+        let output_3 = genesis.output(3).expect("output 3 handle exists");
+        assert_eq!(output_1.covenant_id, genesis.groups[1].covenant_id);
+        assert_eq!(output_3.covenant_id, genesis.groups[1].covenant_id);
+        assert_eq!(tx.outputs[1].covenant.expect("output 1 covenant").covenant_id, output_1.covenant_id);
+        assert!(matches!(genesis.output(99), Err(BuilderError::UnknownGenesisOutput(99))));
     }
 }
