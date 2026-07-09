@@ -805,7 +805,8 @@ It may mutate fields such as:
 
 - position;
 - energy;
-- `custom_data_digest`.
+- virtual strategy/inventory slots when the observed agent output provides a new
+  digest.
 
 End-to-end test:
 
@@ -820,41 +821,50 @@ Obstacle to handle:
   cell lock should remain unchanged and the agent should become unable to act in
   that cell until a game-approved resync path updates the lock.
 
-### 20. Support Digest-Backed Expanded Agent State
+### 20. Support Virtual-Slot Expanded Agent State
 
-Allow concrete agent states to expand a shared header state by opening fixed
-digest fields into richer source-level memory views:
+Allow concrete agent states to expand a shared header state by binding virtual
+slots into richer source-level state views:
 
-```text
-state ForagerState expands AgentState {
-    expand custom_data_digest as ForagerMemory;
+```rust
+state AgentCapsule {
+    virtual strategy;
+}
+
+state ForagerStrategy {
+    int hunger;
+}
+
+state ForagerState expands AgentCapsule {
+    strategy: ForagerStrategy;
 }
 ```
 
-`ForagerState` has the exact stored covenant layout of `AgentState`. The
-`expands` body may only declare digest expansions; it does not add raw tail
-fields to the stored state. Interface reads through `actor<AgentState>` expose
-the shared header, while concrete agent code can open `custom_data_digest` as
-structured `ForagerMemory`.
+`ForagerState` has the exact stored covenant layout of `AgentCapsule`. The
+`expands` body may only bind virtual slots; it does not add raw tail fields to
+the stored state. Interface reads through `actor<AgentCapsule>` expose the
+shared header, while concrete agent code accesses structured strategy state as
+`strategy.hunger`.
 
 Done:
 
-- Parse and validate `state X expands Base { expand digest_field as Memory; }`.
-- Reject ordinary fields in the body, require `digest_field` to exist on `Base`
-  as `byte[32]`, reject empty/non-packable memory states, and reject expansion
-  cycles.
-- Record expansion metadata in the artifact: expanded state, base state, digest
-  field, memory state, and hidden preimage witness recipe.
+- Parse and validate `virtual <slot>;` declarations and
+  `state X expands Base { slot: Memory; }` bindings.
+- Reject ordinary fields in expanded-state bodies, require each bound slot to
+  exist on `Base` as virtual digest storage, reject empty/non-packable memory
+  states, and reject expansion cycles.
+- Record expansion metadata in the artifact: expanded state, base state,
+  virtual slot, memory state, and hidden preimage witness recipe.
 - Teach type checking and observed actor matching that an actor owning `X` may
   satisfy `actor<Base>`, while preserving the concrete runtime template handle.
 - Lower expanded memory access by hashing packed hidden preimages, exposing
-  memory fields in source code, and writing updated digests into the base stored
-  state.
-- Let `argent-runtime` callers provide flattened source fields; the runtime
+  memory fields through the slot namespace, and writing updated digests into the
+  base stored state.
+- Let `argent-runtime` callers provide slot-qualified source values; the runtime
   packs and hashes memory fields into storage and fills hidden preimage args.
 - Replace the `examples/open_lattice` sketches with a compiling
   `examples/open_icc` lattice fixture: a core `Cell` app observes an open-agent
-  app, and the agent app includes `ForagerState expands AgentState`.
+  app, and the agent app includes `ForagerState expands AgentCapsule`.
 
 Still useful follow-up tests:
 

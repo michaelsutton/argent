@@ -93,17 +93,20 @@ impl Parser {
         let mut digest_expansions = Vec::new();
         while !self.check_symbol('}') {
             if expands.is_some() {
-                self.expect_ident("expand")?;
                 let field = self.expect_any_ident()?;
-                self.expect_ident("as")?;
+                self.expect_symbol(':')?;
                 let state = self.expect_any_ident()?;
                 self.expect_symbol(';')?;
                 digest_expansions.push(StateDigestExpansionDecl { field, state });
+            } else if self.consume_ident("virtual") {
+                let name = self.expect_any_ident()?;
+                self.expect_symbol(';')?;
+                fields.push(FieldDecl { ty: TypeRef::array("byte", 32), name, virtual_slot: true });
             } else {
                 let ty = self.parse_type()?;
                 let name = self.expect_any_ident()?;
                 self.expect_symbol(';')?;
-                fields.push(FieldDecl { ty, name });
+                fields.push(FieldDecl { ty, name, virtual_slot: false });
             }
         }
         self.expect_symbol('}')?;

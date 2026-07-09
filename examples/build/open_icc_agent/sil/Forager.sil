@@ -9,20 +9,20 @@ contract Forager(
     byte[32] init_species_id,
     byte[32] init_controller_id,
     byte[32] init_capabilities_digest,
-    byte[32] init_custom_data_digest,
+    byte[32] init_strategy,
     int init_x,
     int init_y,
     int init_energy,
     int init_generation
 ) {
     // :: state layouts
-    struct AgentState {
+    struct AgentCapsule {
         byte[32] world_id;
         byte[32] agent_id;
         byte[32] species_id;
         byte[32] controller_id;
         byte[32] capabilities_digest;
-        byte[32] custom_data_digest;
+        byte[32] strategy;
         int x;
         int y;
         int energy;
@@ -47,7 +47,7 @@ contract Forager(
     byte[32] species_id = init_species_id;
     byte[32] controller_id = init_controller_id;
     byte[32] capabilities_digest = init_capabilities_digest;
-    byte[32] custom_data_digest = init_custom_data_digest;
+    byte[32] strategy = init_strategy;
     int x = init_x;
     int y = init_y;
     int energy = init_energy;
@@ -58,13 +58,13 @@ contract Forager(
         int next_x,
         int next_y,
         int next_energy,
-        byte[48] gen__custom_data_digest_forager_memory_preimage
+        byte[48] gen__strategy_forager_strategy_preimage
     ) {
         // :: expanded state
-        require(blake2b(gen__custom_data_digest_forager_memory_preimage) == custom_data_digest);
-        int hunger = OpBin2Num(gen__custom_data_digest_forager_memory_preimage.slice(0, 8));
-        int mood = OpBin2Num(gen__custom_data_digest_forager_memory_preimage.slice(8, 16));
-        byte[32] target_agent_id = byte[32](gen__custom_data_digest_forager_memory_preimage.slice(16, 48));
+        require(blake2b(gen__strategy_forager_strategy_preimage) == strategy);
+        int gen__strategy_hunger = OpBin2Num(gen__strategy_forager_strategy_preimage.slice(0, 8));
+        int gen__strategy_mood = OpBin2Num(gen__strategy_forager_strategy_preimage.slice(8, 16));
+        byte[32] gen__strategy_target_agent_id = byte[32](gen__strategy_forager_strategy_preimage.slice(16, 48));
 
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -81,7 +81,7 @@ contract Forager(
             species_id: species_id,
             controller_id: controller_id,
             capabilities_digest: capabilities_digest,
-            custom_data_digest: blake2b(byte[8](hunger + 1) + byte[8](mood) + byte[](target_agent_id)),
+            strategy: blake2b(byte[8](gen__strategy_hunger + 1) + byte[8](gen__strategy_mood) + byte[](gen__strategy_target_agent_id)),
             x: next_x,
             y: next_y,
             energy: next_energy,

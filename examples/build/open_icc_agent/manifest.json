@@ -12,7 +12,7 @@
   "actors": [
     {
       "name": "Agent",
-      "state": "AgentState",
+      "state": "AgentCapsule",
       "sil": "sil/Agent.sil",
       "entries": [
         {

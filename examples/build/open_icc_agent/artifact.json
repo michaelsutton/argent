@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "2b4c61d4646725fffbd212b10fb6badb3835efbb5fcd252048bc9e08f706ec88",
+  "id": "92f5520effac3ce65eacdd9ef90a686f08a815caf7ef5a3ae48c1c198798df9f",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -47,14 +47,14 @@
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
+          "id": "witness/state_expansion/ForagerState/strategy/forager_strategy/state_expansion_preimage",
           "subject": {
             "kind": "state_expansion",
             "state": "ForagerState",
-            "field": "custom_data_digest",
-            "memory_state": "ForagerMemory"
+            "field": "strategy",
+            "memory_state": "ForagerStrategy"
           },
-          "param": "gen__custom_data_digest_forager_memory_preimage",
+          "param": "gen__strategy_forager_strategy_preimage",
           "purpose": {
             "kind": "state_expansion_preimage"
           }
@@ -66,21 +66,21 @@
         {
           "id": "interface/actor/Agent",
           "actor": "Agent",
-          "state": "AgentState",
-          "fingerprint_hex": "34782986f640d2eb3c23d3ff997d857abce605ca9b27b520a99c9842e82e2fa4"
+          "state": "AgentCapsule",
+          "fingerprint_hex": "171bd9d32d2b6ce336f0aefd0056569cb9c40eb5b40936e8a22de9fbd3fb88b1"
         },
         {
           "id": "interface/actor/Forager",
           "actor": "Forager",
           "state": "ForagerState",
-          "fingerprint_hex": "a7a54859bdf4be3d084d361c75413de947fdb5be7722c02bb66104309b4e0382"
+          "fingerprint_hex": "d857826de05be461d98a9fa6db9eb65dcda018d104d4fead46f3c5afdd75a7d0"
         }
       ],
       "imports": []
     },
     "states": [
       {
-        "name": "AgentState",
+        "name": "AgentCapsule",
         "fields": [
           {
             "name": "world_id",
@@ -118,7 +118,7 @@
             }
           },
           {
-            "name": "custom_data_digest",
+            "name": "strategy",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -202,30 +202,6 @@
         ]
       },
       {
-        "name": "ForagerMemory",
-        "fields": [
-          {
-            "name": "hunger",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "mood",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "target_agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          }
-        ]
-      },
-      {
         "name": "ForagerState",
         "fields": [
           {
@@ -264,7 +240,7 @@
             }
           },
           {
-            "name": "custom_data_digest",
+            "name": "strategy",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -295,16 +271,40 @@
             }
           }
         ]
+      },
+      {
+        "name": "ForagerStrategy",
+        "fields": [
+          {
+            "name": "hunger",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "mood",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "target_agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
       }
     ],
     "state_expansions": [
       {
         "state": "ForagerState",
-        "base": "AgentState",
+        "base": "AgentCapsule",
         "digests": [
           {
-            "field": "custom_data_digest",
-            "state": "ForagerMemory"
+            "field": "strategy",
+            "state": "ForagerStrategy"
           }
         ]
       }
@@ -313,7 +313,7 @@
     "actors": [
       {
         "name": "Agent",
-        "state": "AgentState",
+        "state": "AgentCapsule",
         "abi": {
           "actor": "Agent"
         },
@@ -453,13 +453,13 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage"
+                "witness/state_expansion/ForagerState/strategy/forager_strategy/state_expansion_preimage"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
-                "name": "gen__custom_data_digest_forager_memory_preimage",
+                "recipe_id": "witness/state_expansion/ForagerState/strategy/forager_strategy/state_expansion_preimage",
+                "name": "gen__strategy_forager_strategy_preimage",
                 "type": {
                   "kind": "fixed_bytes",
                   "len": 48
@@ -467,8 +467,8 @@
                 "subject": {
                   "kind": "state_expansion",
                   "state": "ForagerState",
-                  "field": "custom_data_digest",
-                  "memory_state": "ForagerMemory"
+                  "field": "strategy",
+                  "memory_state": "ForagerStrategy"
                 },
                 "purpose": {
                   "kind": "state_expansion_preimage"
@@ -478,13 +478,13 @@
             "template_selectors": [],
             "witnesses": [
               {
-                "recipe_id": "witness/state_expansion/ForagerState/custom_data_digest/forager_memory/state_expansion_preimage",
-                "param": "gen__custom_data_digest_forager_memory_preimage",
+                "recipe_id": "witness/state_expansion/ForagerState/strategy/forager_strategy/state_expansion_preimage",
+                "param": "gen__strategy_forager_strategy_preimage",
                 "subject": {
                   "kind": "state_expansion",
                   "state": "ForagerState",
-                  "field": "custom_data_digest",
-                  "memory_state": "ForagerMemory"
+                  "field": "strategy",
+                  "memory_state": "ForagerStrategy"
                 },
                 "purpose": {
                   "kind": "state_expansion_preimage"
@@ -533,7 +533,7 @@
     "schema_version": 1,
     "states": [
       {
-        "name": "AgentState",
+        "name": "AgentCapsule",
         "fields": [
           {
             "name": "world_id",
@@ -571,7 +571,7 @@
             }
           },
           {
-            "name": "custom_data_digest",
+            "name": "strategy",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -655,30 +655,6 @@
         ]
       },
       {
-        "name": "ForagerMemory",
-        "fields": [
-          {
-            "name": "hunger",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "mood",
-            "type": {
-              "kind": "int"
-            }
-          },
-          {
-            "name": "target_agent_id",
-            "type": {
-              "kind": "fixed_bytes",
-              "len": 32
-            }
-          }
-        ]
-      },
-      {
         "name": "ForagerState",
         "fields": [
           {
@@ -717,7 +693,7 @@
             }
           },
           {
-            "name": "custom_data_digest",
+            "name": "strategy",
             "type": {
               "kind": "fixed_bytes",
               "len": 32
@@ -748,6 +724,30 @@
             }
           }
         ]
+      },
+      {
+        "name": "ForagerStrategy",
+        "fields": [
+          {
+            "name": "hunger",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "mood",
+            "type": {
+              "kind": "int"
+            }
+          },
+          {
+            "name": "target_agent_id",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          }
+        ]
       }
     ],
     "contracts": [
@@ -755,7 +755,7 @@
         "name": "Agent",
         "source_path": "sil/Agent.sil",
         "runtime_state": {
-          "source": "AgentState",
+          "source": "AgentCapsule",
           "fields": [
             {
               "name": "world_id",
@@ -793,7 +793,7 @@
               }
             },
             {
-              "name": "custom_data_digest",
+              "name": "strategy",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -895,7 +895,7 @@
               }
             },
             {
-              "name": "custom_data_digest",
+              "name": "strategy",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -951,7 +951,7 @@
                 }
               },
               {
-                "name": "gen__custom_data_digest_forager_memory_preimage",
+                "name": "gen__strategy_forager_strategy_preimage",
                 "type": {
                   "kind": "fixed_bytes",
                   "len": 48

@@ -2,10 +2,10 @@
 
 This example is a small cooperative-game fixture built out of two covenant apps:
 
-- `core.ag` defines the shared `AgentState` capsule and cells that observe an
+- `core.ag` defines the shared `AgentCapsule` capsule and cells that observe an
   agent by covenant id and apply local physics.
 - `agent.ag` imports `core.ag` and defines independently deployed agent actors
-  that satisfy or expand the shared state view.
+  that satisfy the shared capsule view or bind its virtual slots.
 
 The core idea is:
 
@@ -15,7 +15,7 @@ Agents authorize their own strategy state.
 ```
 
 The cell does not know which concrete agent template it is controlling. It stores
-an `actor<AgentState>` handle and uses it in the `observes` clause:
+an `actor<AgentCapsule>` handle and uses it in the `observes` clause:
 
 ```rust
 observes remote by self.occupant_agent_covid {
@@ -30,22 +30,22 @@ observes remote by self.occupant_agent_covid {
 ```
 
 At runtime that handle may point to `Agent`, `Forager`, or another app-specific
-actor whose stored state satisfies the shared `AgentState` capsule layout.
+actor whose stored state satisfies the shared `AgentCapsule` capsule layout.
 
-## State Shape
+## State Model
 
-`AgentState` lives in the core app. It is the fixed capability header the cell
+`AgentCapsule` lives in the core app. It is the fixed capability header the cell
 can reason about, and concrete agent apps import it:
 
 ```rust
-state AgentState {
+state AgentCapsule {
     byte[32] world_id;
     byte[32] agent_id;
     byte[32] species_id;
 
     covid controller_id;
     byte[32] capabilities_digest;
-    byte[32] custom_data_digest;
+    virtual strategy;
 
     int x;
     int y;
@@ -54,15 +54,20 @@ state AgentState {
 }
 ```
 
-`Forager` extends that header through a digest-backed source view:
+`Forager` binds the virtual slot to structured strategy state:
 
 ```rust
-state ForagerState expands AgentState {
-    expand custom_data_digest as ForagerMemory;
+state ForagerStrategy {
+    int hunger;
+    int mood;
+}
+
+state ForagerState expands AgentCapsule {
+    strategy: ForagerStrategy;
 }
 ```
 
-Forager code uses memory fields directly:
+Forager code accesses strategy fields through the slot namespace:
 
 ```rust
 ForagerState next_agent = {
@@ -71,9 +76,10 @@ ForagerState next_agent = {
     species_id: species_id,
     controller_id: controller_id,
     capabilities_digest: capabilities_digest,
-    hunger: hunger + 1,
-    mood: mood,
-    target_agent_id: target_agent_id,
+    strategy: ForagerStrategy {
+        hunger: strategy.hunger + 1,
+        mood: strategy.mood,
+    },
     x: next_x,
     y: next_y,
     energy: next_energy,
@@ -81,9 +87,9 @@ ForagerState next_agent = {
 };
 ```
 
-The generated Sil still stores only `custom_data_digest`. The runtime supplies a
-packed hidden preimage for `ForagerMemory`; the contract verifies the digest and
-the compiler rewrites mutations back into a new digest.
+The generated Sil stores only the `strategy` digest. The runtime supplies a
+packed hidden preimage for `ForagerStrategy`; the contract verifies the digest
+and the compiler rewrites slot mutations back into a new digest.
 
 ## Runtime Naming
 

@@ -42,6 +42,7 @@ pub struct StateDecl {
 pub struct FieldDecl {
     pub ty: TypeRef,
     pub name: String,
+    pub virtual_slot: bool,
 }
 
 #[derive(Debug, Clone)]

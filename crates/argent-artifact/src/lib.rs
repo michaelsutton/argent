@@ -354,6 +354,7 @@ pub struct HiddenParamArtifact {
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
     ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
+    ObservedOutputField { observe: String, handle: String, state: String, field: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
     StateExpansion { state: String, field: String, memory_state: String },
@@ -378,6 +379,7 @@ pub enum HiddenParamPurposeArtifact {
     RouteFamilyTable,
     RouteFamilyProof,
     StateExpansionPreimage,
+    ObservedOutputFieldValue,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -971,6 +973,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::ObservedActor { .. } => {}
+                HiddenParamSubjectArtifact::ObservedOutputField { .. } => {}
                 HiddenParamSubjectArtifact::RouteFamily { family_id } => {
                     if !route_families_by_id.contains_key(family_id.as_str()) {
                         return Err(TemplatePlanError::MissingWitnessRouteFamily {

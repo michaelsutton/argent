@@ -1,16 +1,16 @@
 // Open ICC cell-physics core app.
 //
 // The core app owns cells. It observes an independently deployed agent app
-// through a stored covenant id plus an actor<AgentState> handle.
+// through a stored covenant id plus an actor<AgentCapsule> handle.
 
-state AgentState {
+state AgentCapsule {
     byte[32] world_id;
     byte[32] agent_id;
     byte[32] species_id;
 
     covid controller_id;
     byte[32] capabilities_digest;
-    byte[32] custom_data_digest;
+    virtual strategy;
 
     int x;
     int y;
@@ -25,7 +25,7 @@ state CellState {
     int food;
 
     covid occupant_agent_covid;
-    actor<AgentState> occupant_agent_type;
+    actor<AgentCapsule> occupant_agent_type;
     byte[32] occupant_caps_digest;
 }
 
@@ -51,18 +51,17 @@ actor Cell owns CellState {
     emits {
         cell: Cell;
     } {
-        AgentState prev_state = remote.inputs.agent.state;
+        AgentCapsule prev_state = remote.inputs.agent.state;
 
         require(prev_state.world_id == world_id);
         require(prev_state.capabilities_digest == occupant_caps_digest);
 
-        AgentState next_state = {
+        AgentCapsule next_state = {
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
             species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
             capabilities_digest: prev_state.capabilities_digest,
-            custom_data_digest: prev_state.custom_data_digest,
             x: prev_state.x,
             y: prev_state.y,
             energy: prev_state.energy - 1,
@@ -89,9 +88,8 @@ actor Cell owns CellState {
     entry move(
         dx: int,
         dy: int,
-        next_custom_data_digest: byte[32],
         empty_agent_covid: covid,
-        empty_agent_type: actor<AgentState>,
+        empty_agent_type: actor<AgentCapsule>,
         empty_caps_digest: byte[32]
     )
     observes remote by self.occupant_agent_covid {
@@ -110,7 +108,7 @@ actor Cell owns CellState {
         source_cell: Cell;
         target_cell: Cell;
     } {
-        AgentState prev_state = remote.inputs.agent.state;
+        AgentCapsule prev_state = remote.inputs.agent.state;
 
         int distance = abs1(dx) + abs1(dy);
         require(distance == 1);
@@ -127,13 +125,12 @@ actor Cell owns CellState {
         require(target_cell.occupant_agent_type == empty_agent_type);
         require(target_cell.occupant_caps_digest == empty_caps_digest);
 
-        AgentState next_agent = {
+        AgentCapsule next_agent = {
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
             species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
             capabilities_digest: prev_state.capabilities_digest,
-            custom_data_digest: next_custom_data_digest,
             x: target_cell.x,
             y: target_cell.y,
             energy: prev_state.energy - 1,

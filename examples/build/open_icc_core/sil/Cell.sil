@@ -14,13 +14,13 @@ contract Cell(
     byte[32] init_occupant_caps_digest
 ) {
     // :: state layouts
-    struct AgentState {
+    struct AgentCapsule {
         byte[32] world_id;
         byte[32] agent_id;
         byte[32] species_id;
         byte[32] controller_id;
         byte[32] capabilities_digest;
-        byte[32] custom_data_digest;
+        byte[32] strategy;
         int x;
         int y;
         int energy;
@@ -51,7 +51,8 @@ contract Cell(
     // :: entrypoints
     entrypoint function advance(
         byte[] gen__remote_occupant_agent_type_prefix,
-        byte[] gen__remote_occupant_agent_type_suffix
+        byte[] gen__remote_occupant_agent_type_suffix,
+        byte[32] gen__remote_agent_next_strategy
     ) {
         // :: observed covenants
         byte[32] gen__remote_cov_id = occupant_agent_covid; // observe remote
@@ -61,7 +62,7 @@ contract Cell(
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
         int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
         int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
-        AgentState gen__remote_agent_state = readInputStateWithTemplate(
+        AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_occupant_agent_type_prefix_len,
             gen__remote_occupant_agent_type_suffix_len,
@@ -74,16 +75,16 @@ contract Cell(
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output cell: Cell
 
-        AgentState prev_state = gen__remote_agent_state;
+        AgentCapsule prev_state = gen__remote_agent_state;
         require(prev_state.world_id == world_id);
         require(prev_state.capabilities_digest == occupant_caps_digest);
-        AgentState next_state = {
+        AgentCapsule next_state = {
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
             species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
             capabilities_digest: prev_state.capabilities_digest,
-            custom_data_digest: prev_state.custom_data_digest,
+            strategy: gen__remote_agent_next_strategy,
             x: prev_state.x,
             y: prev_state.y,
             energy: prev_state.energy - 1,
@@ -115,14 +116,14 @@ contract Cell(
     entrypoint function move(
         int dx,
         int dy,
-        byte[32] next_custom_data_digest,
         byte[32] empty_agent_covid,
         byte[32] empty_agent_type,
         byte[32] empty_caps_digest,
         int gen__cell_prefix_len,
         int gen__cell_suffix_len,
         byte[] gen__remote_occupant_agent_type_prefix,
-        byte[] gen__remote_occupant_agent_type_suffix
+        byte[] gen__remote_occupant_agent_type_suffix,
+        byte[32] gen__remote_agent_next_strategy
     ) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
@@ -144,7 +145,7 @@ contract Cell(
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
         int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
         int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
-        AgentState gen__remote_agent_state = readInputStateWithTemplate(
+        AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_occupant_agent_type_prefix_len,
             gen__remote_occupant_agent_type_suffix_len,
@@ -160,7 +161,7 @@ contract Cell(
         // :: output target_cell: Cell
         int gen__target_cell_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
-        AgentState prev_state = gen__remote_agent_state;
+        AgentCapsule prev_state = gen__remote_agent_state;
         int distance = abs1(dx) + abs1(dy);
         require(distance == 1);
         require(prev_state.world_id == world_id);
@@ -174,13 +175,13 @@ contract Cell(
         require(target_cell.occupant_agent_covid == empty_agent_covid);
         require(target_cell.occupant_agent_type == empty_agent_type);
         require(target_cell.occupant_caps_digest == empty_caps_digest);
-        AgentState next_agent = {
+        AgentCapsule next_agent = {
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
             species_id: prev_state.species_id,
             controller_id: prev_state.controller_id,
             capabilities_digest: prev_state.capabilities_digest,
-            custom_data_digest: next_custom_data_digest,
+            strategy: gen__remote_agent_next_strategy,
             x: target_cell.x,
             y: target_cell.y,
             energy: prev_state.energy - 1,

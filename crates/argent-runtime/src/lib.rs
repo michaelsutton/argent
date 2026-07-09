@@ -532,6 +532,7 @@ impl<'a> TxBuilder<'a> {
                 HiddenParamPurposeArtifact::StateExpansionPreimage => {
                     self.state_expansion_preimage_arg(entry_ref.artifact, contract, hidden, &input_source_state)?
                 }
+                HiddenParamPurposeArtifact::ObservedOutputFieldValue => self.observed_output_field_arg(hidden, observed)?,
             });
         }
 
@@ -822,7 +823,9 @@ impl<'a> TxBuilder<'a> {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
                 self.contract_ref_in_artifact(primary_artifact, &actor)
             }
-            HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::StateExpansion { .. } => {
+            HiddenParamSubjectArtifact::RouteFamily { .. }
+            | HiddenParamSubjectArtifact::StateExpansion { .. }
+            | HiddenParamSubjectArtifact::ObservedOutputField { .. } => {
                 Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
             }
         }
@@ -1146,6 +1149,36 @@ impl<'a> TxBuilder<'a> {
         Ok(ArtifactValue::Bytes(self.state_expansion_preimage_payload(artifact, contract, field, memory_state, &mut source_state)?))
     }
 
+    fn observed_output_field_arg(
+        &self,
+        hidden: &HiddenParamArtifact,
+        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+    ) -> BuilderResult<ArtifactValue> {
+        let HiddenParamSubjectArtifact::ObservedOutputField { observe, handle, state, field } = &hidden.subject else {
+            return Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "observed output field" });
+        };
+        let context = observed
+            .and_then(|contexts| contexts.get(observe))
+            .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
+        let output = context.outputs.get(handle).ok_or_else(|| BuilderError::MissingObservedActor {
+            observe: observe.clone(),
+            side: observed_side_label(ObservedActorSideArtifact::Output),
+            handle: handle.clone(),
+        })?;
+        let contract_ref = self.contract_ref_in_app(&context.app, &output.actor)?;
+        if !state_satisfies(contract_ref.artifact, &contract_ref.contract.runtime_state.source, state) {
+            return Err(BuilderError::ObservedStateLayoutMismatch {
+                observe: observe.clone(),
+                side: observed_side_label(ObservedActorSideArtifact::Output),
+                handle: handle.clone(),
+                state: state.clone(),
+                actor: output.actor.clone(),
+            });
+        }
+        let values = self.runtime_state_values(contract_ref.artifact, contract_ref.contract, output.state.clone())?;
+        values.get(field).cloned().ok_or_else(|| CodecError::MissingField(field.clone()).into())
+    }
+
     fn state_expansion_preimage_payload(
         &self,
         artifact: &'a Artifact,
@@ -1155,14 +1188,21 @@ impl<'a> TxBuilder<'a> {
         source_state: &mut BTreeMap<String, ArtifactValue>,
     ) -> BuilderResult<Vec<u8>> {
         let memory = state_artifact(artifact, memory_state)?;
-        let mut fields = BTreeMap::new();
-        for field in &memory.fields {
-            let value = source_state.remove(&field.name).ok_or_else(|| BuilderError::MissingStateExpansionPreimage {
+        let Some(ArtifactValue::Object(fields)) = source_state.remove(digest_field) else {
+            return Err(BuilderError::MissingStateExpansionPreimage {
                 contract: contract.name.clone(),
                 field: digest_field.to_string(),
                 memory_state: memory_state.to_string(),
-            })?;
-            fields.insert(field.name.clone(), value);
+            });
+        };
+        for field in &memory.fields {
+            if !fields.contains_key(&field.name) {
+                return Err(BuilderError::MissingStateExpansionPreimage {
+                    contract: contract.name.clone(),
+                    field: digest_field.to_string(),
+                    memory_state: memory_state.to_string(),
+                });
+            }
         }
         Ok(encode_struct_payload(&artifact.sil_abi, contract, memory_state, &fields)?)
     }
@@ -1274,6 +1314,7 @@ fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
         HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.as_str()),
         HiddenParamSubjectArtifact::RouteFamily { .. }
         | HiddenParamSubjectArtifact::TemplateSelector { .. }
+        | HiddenParamSubjectArtifact::ObservedOutputField { .. }
         | HiddenParamSubjectArtifact::StateExpansion { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor" })
         }
@@ -1286,6 +1327,7 @@ fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
         HiddenParamSubjectArtifact::Actor { .. }
         | HiddenParamSubjectArtifact::ObservedActor { .. }
         | HiddenParamSubjectArtifact::TemplateSelector { .. }
+        | HiddenParamSubjectArtifact::ObservedOutputField { .. }
         | HiddenParamSubjectArtifact::StateExpansion { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "route family" })
         }
@@ -1327,7 +1369,9 @@ fn hidden_template_actor(
             }
             Ok(selected_actor.clone())
         }
-        HiddenParamSubjectArtifact::RouteFamily { .. } | HiddenParamSubjectArtifact::StateExpansion { .. } => {
+        HiddenParamSubjectArtifact::RouteFamily { .. }
+        | HiddenParamSubjectArtifact::StateExpansion { .. }
+        | HiddenParamSubjectArtifact::ObservedOutputField { .. } => {
             Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "actor or template selector" })
         }
     }

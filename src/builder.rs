@@ -36,6 +36,7 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
+            HiddenParamSubjectArtifact::ObservedOutputField { field, .. } => field,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
             HiddenParamSubjectArtifact::StateExpansion { memory_state, .. } => memory_state,
@@ -1197,6 +1198,28 @@ mod tests {
             .with_app("open_agent", &agent_artifact)
             .expect("bundle accepts open ICC agent app");
         let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts open ICC bundle");
+        let advance = core_artifact
+            .argent
+            .actors
+            .iter()
+            .find(|actor| actor.name == "Cell")
+            .and_then(|actor| actor.entries.iter().find(|entry| entry.name == "advance"))
+            .expect("Cell::advance artifact exists");
+        let next_digest = advance
+            .hidden_params
+            .iter()
+            .find(|param| param.name == "gen__remote_agent_next_strategy")
+            .expect("virtual observed output slot is hidden runtime plumbing");
+        assert_eq!(next_digest.purpose, HiddenParamPurposeArtifact::ObservedOutputFieldValue);
+        assert_eq!(
+            next_digest.subject,
+            HiddenParamSubjectArtifact::ObservedOutputField {
+                observe: "remote".to_string(),
+                handle: "agent".to_string(),
+                state: "AgentCapsule".to_string(),
+                field: "strategy".to_string(),
+            }
+        );
 
         let controller_covenant_id = Hash::from_bytes([0x31; 32]);
         let agent_covenant_id = Hash::from_bytes([0x41; 32]);
@@ -1254,9 +1277,9 @@ mod tests {
             .argent
             .states
             .iter_mut()
-            .find(|state| state.name == "AgentState")
+            .find(|state| state.name == "AgentCapsule")
             .and_then(|state| state.fields.iter_mut().find(|field| field.name == "energy"))
-            .expect("AgentState.energy exists");
+            .expect("AgentCapsule.energy exists");
         bad_energy_field.ty = TypeArtifact::Bool;
         bad_layout_agent_artifact.id = bad_layout_agent_artifact.computed_id_hex().expect("mutated agent artifact id computes");
         let bad_layout_bundle = ArtifactBundle::new(&core_artifact)
@@ -1271,7 +1294,7 @@ mod tests {
             matches!(
                 &bad_layout_err,
                 BuilderError::ObservedStateLayoutMismatch { observe, side, handle, state, actor }
-                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentState" && actor == "Agent"
+                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentCapsule" && actor == "Agent"
             ),
             "unexpected error: {bad_layout_err}"
         );
@@ -1311,7 +1334,20 @@ mod tests {
                 expanded_open_agent_state(controller_covenant_id, 2, 5),
                 vec![],
             )
-            .expect("expanded agent sigscript is built from flattened source fields");
+            .expect("expanded agent sigscript is built from slot-qualified source fields");
+        let mut flattened_forager_state = expanded_open_agent_state(controller_covenant_id, 2, 5);
+        flattened_forager_state.remove("strategy");
+        flattened_forager_state.insert("hunger".to_string(), ArtifactValue::Int(2));
+        flattened_forager_state.insert("mood".to_string(), ArtifactValue::Int(1));
+        flattened_forager_state.insert("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32]));
+        let flattened_err = expanded_builder
+            .p2sh_signature_script_in_app("open_agent", "Forager", "step", flattened_forager_state, vec![])
+            .expect_err("expanded agent state must provide slot-qualified source fields");
+        assert!(
+            matches!(&flattened_err, BuilderError::MissingStateExpansionPreimage { contract, field, memory_state }
+                if contract == "Forager" && field == "strategy" && memory_state == "ForagerStrategy"),
+            "unexpected error: {flattened_err}"
+        );
 
         let forager_type =
             decode_hex(&agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
@@ -1451,14 +1487,14 @@ mod tests {
         inline_artifact(
             "open-icc-expanded-agent",
             r#"
-            state AgentState {
+            state AgentCapsule {
                 byte[32] world_id;
                 byte[32] agent_id;
                 byte[32] species_id;
 
                 covid controller_id;
                 byte[32] capabilities_digest;
-                byte[32] custom_data_digest;
+                virtual strategy;
 
                 int x;
                 int y;
@@ -1466,14 +1502,14 @@ mod tests {
                 int generation;
             }
 
-            state ForagerMemory {
+            state ForagerStrategy {
                 int hunger;
                 int mood;
                 byte[32] target_agent_id;
             }
 
-            state ForagerState expands AgentState {
-                expand custom_data_digest as ForagerMemory;
+            state ForagerState expands AgentCapsule {
+                strategy: ForagerStrategy;
             }
 
             actor Forager owns ForagerState {
@@ -1488,9 +1524,11 @@ mod tests {
                         species_id: species_id,
                         controller_id: controller_id,
                         capabilities_digest: capabilities_digest,
-                        hunger: hunger + 1,
-                        mood: mood,
-                        target_agent_id: target_agent_id,
+                        strategy: ForagerStrategy {
+                            hunger: strategy.hunger + 1,
+                            mood: strategy.mood,
+                            target_agent_id: strategy.target_agent_id,
+                        },
                         x: x,
                         y: y,
                         energy: energy - 1,
@@ -1651,7 +1689,7 @@ mod tests {
             ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
             ("capabilities_digest".to_string(), ArtifactValue::Bytes(caps_digest)),
-            ("custom_data_digest".to_string(), ArtifactValue::Bytes(vec![0x44; 32])),
+            ("strategy".to_string(), ArtifactValue::Bytes(vec![0x44; 32])),
             ("x".to_string(), ArtifactValue::Int(0)),
             ("y".to_string(), ArtifactValue::Int(0)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
@@ -1670,9 +1708,14 @@ mod tests {
             ("species_id".to_string(), ArtifactValue::Bytes(vec![0x33; 32])),
             ("controller_id".to_string(), ArtifactValue::Bytes(controller_id.as_bytes().to_vec())),
             ("capabilities_digest".to_string(), ArtifactValue::Bytes(vec![0x77; 32])),
-            ("hunger".to_string(), ArtifactValue::Int(hunger)),
-            ("mood".to_string(), ArtifactValue::Int(1)),
-            ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
+            (
+                "strategy".to_string(),
+                ArtifactValue::Object(BTreeMap::from([
+                    ("hunger".to_string(), ArtifactValue::Int(hunger)),
+                    ("mood".to_string(), ArtifactValue::Int(1)),
+                    ("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32])),
+                ])),
+            ),
             ("x".to_string(), ArtifactValue::Int(x)),
             ("y".to_string(), ArtifactValue::Int(y)),
             ("energy".to_string(), ArtifactValue::Int(energy)),
