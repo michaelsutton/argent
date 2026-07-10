@@ -5543,7 +5543,13 @@ fn compact_expr(input: &str) -> String {
 
 fn indent_block_body(body: &str, spaces: usize) -> String {
     let indent = " ".repeat(spaces);
-    let trimmed = body.trim_matches('\n');
+    // Normalize CRLF to LF first. `body` may originate from a CRLF-checked-out
+    // source file (e.g. on Windows with core.autocrlf=true); without this,
+    // trim_matches('\n') only strips bare '\n' from the very edges, leaving a
+    // stray '\r' attached to the first/last line and producing output that
+    // differs byte-for-byte from the same source checked out with LF endings.
+    let normalized = body.replace("\r\n", "\n");
+    let trimmed = normalized.trim_matches('\n');
     if trimmed.trim().is_empty() {
         return String::new();
     }
