@@ -95,3 +95,47 @@ The goal is to explain a covenant id already seen in a live UTXO: given the
 funding outpoint and initial actor states, show exactly how that id was
 launched, so auditing the contracts and initial states gives confidence in the
 live covenant.
+
+## Open observation: shape checks vs. behavioural checks
+
+Open ICC (`observes { inputs { actor<State> as x } }`) proves *shape*, not
+*behaviour*. The observer confirms a covenant of the expected actor/state layout
+is present in the transaction; it does not re-execute that covenant's body. The
+observed covenant is a separate input that validates itself against its own
+script.
+
+This is sound as long as observers only *read* fields they can independently
+constrain. The subtle case is when an observer writes an output whose contents
+are lifted from an observed peer via an *unconstrained* hidden witness. In
+`open_icc/core.ag`, `Cell.advance` fills the new occupant's `strategy` from a
+witness (`gen__remote_agent_next_strategy`) that the Cell covenant does not tie
+back to the observed agent's own transition. A misbehaving agent implementation
+could therefore let a Cell advance with a strategy the agent itself would never
+have produced. The observed agent still validates *its* own output, so this is
+safe when the agent is well-behaved, but the coupling is behavioural, not
+enforced by the Cell.
+
+Worth deciding explicitly:
+
+- document that open observation is a shape contract, and that any field an
+  observer copies out of an observed peer must either be re-derived by the
+  observer or be validated by the peer's own transition in the same tx
+- consider a lint: warn when a hidden witness feeds an output state field that
+  originates from an observed-but-not-re-executed covenant
+
+## In-script hashing: BLAKE2b vs BLAKE3 cost
+
+The generated Silverscript verifies template hashes, route-family tables, and
+virtual-slot preimages with `blake2b` (see the route-family digest check and the
+`Forager` virtual-slot unpack). On Toccata, BLAKE3 costs ~1 SU/byte versus
+BLAKE2b's ~2 SU/byte, and the per-input SU allowance is bounded by the committed
+compute budget. Route tables (`byte[N*32]`) and expansion preimages are the
+largest things hashed in-script, so the hash choice directly scales the SU cost
+of the widest-fan-out actors.
+
+Worth deciding explicitly: is BLAKE2b a hard requirement (e.g. it must match the
+covenant-id hash the protocol computes), or is it an internal Argent choice for
+template/route/slot commitments that could switch to BLAKE3 and roughly halve
+the hashing SU on the hot path? If the covenant id itself is BLAKE2b-derived,
+the id check is fixed, but the *internal* commitments (route digest, slot
+digest) are Argent's own and could differ.
