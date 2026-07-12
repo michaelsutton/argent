@@ -175,14 +175,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            entry.route_plan.terminal_paths[0].witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            entry.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
             entry.witnesses.iter().map(|witness| witness.recipe_id.as_str()).collect::<Vec<_>>()
-        );
-        assert!(entry.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty());
-        assert!(entry.route_plan.terminal_paths[0].routes[1].witness_recipe_ids.is_empty());
-        assert_eq!(
-            entry.route_plan.terminal_paths[0].routes[2].witness_recipe_ids.as_slice(),
-            ["witness/stones_game/template_prefix_bytes", "witness/stones_game/template_suffix_bytes"]
         );
 
         let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
@@ -226,24 +220,11 @@ mod tests {
             .covenant_utxo("Player", initial_b.clone(), input_b_value, 0, false, Some(covenant_id))
             .expect("player B utxo builds");
         let entries = vec![player_a_utxo.clone(), player_b_utxo.clone()];
-        let output_states =
-            BTreeMap::from([("self_out".to_string(), next_a), ("opponent_out".to_string(), next_b), ("game".to_string(), next_game)]);
-        let output_values = BTreeMap::from([
-            ("self_out".to_string(), input_a_value),
-            ("opponent_out".to_string(), input_b_value),
-            ("game".to_string(), game_value),
-        ]);
-        let outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "Player",
-                entry_name: "start_game",
-                path_index: 0,
-                output_states,
-                output_values,
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("route-plan outputs build");
+        let outputs = vec![
+            builder.covenant_output("Player", next_a, input_a_value, 0, covenant_id).expect("player A output builds"),
+            builder.covenant_output("Player", next_b, input_b_value, 0, covenant_id).expect("player B output builds"),
+            builder.covenant_output("StonesGame", next_game, game_value, 0, covenant_id).expect("game output builds"),
+        ];
         let unsigned_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(outpoint_a, Vec::new()), TxBuilder::transaction_input(outpoint_b, Vec::new())],
             outputs.clone(),
@@ -669,20 +650,10 @@ mod tests {
             .covenant_utxo("League", league_initial.clone(), input_value, 0, false, Some(covenant_id))
             .expect("league utxo builds");
         let entries = vec![league_utxo.clone()];
-        let outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "League",
-                entry_name: "register_player",
-                path_index: 0,
-                output_states: BTreeMap::from([
-                    ("league".to_string(), league_initial.clone()),
-                    ("player".to_string(), player_next.clone()),
-                ]),
-                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("register outputs build");
+        let outputs = vec![
+            builder.covenant_output("League", league_initial.clone(), input_value, 0, covenant_id).expect("league output builds"),
+            builder.covenant_output("Player", player_next.clone(), player_value, 0, covenant_id).expect("player output builds"),
+        ];
         let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], outputs.clone());
         let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
         let sigscript = builder
@@ -723,17 +694,10 @@ mod tests {
         );
 
         let changed_league_state = league_state(vec![0x56; 32], 7, 3);
-        let bad_outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "League",
-                entry_name: "register_player",
-                path_index: 0,
-                output_states: BTreeMap::from([("league".to_string(), changed_league_state), ("player".to_string(), player_next)]),
-                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("bad register outputs build");
+        let bad_outputs = vec![
+            builder.covenant_output("League", changed_league_state, input_value, 0, covenant_id).expect("league output builds"),
+            builder.covenant_output("Player", player_next, player_value, 0, covenant_id).expect("player output builds"),
+        ];
         let bad_unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], bad_outputs.clone());
         let bad_signature = sign_input(&bad_unsigned_tx, entries.clone(), 0, &owner);
         let bad_sigscript = builder

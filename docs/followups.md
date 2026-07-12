@@ -102,6 +102,39 @@ Open question: should Argent eventually have source syntax for declaring a
 paired entry relation, or should this remain expressed through `observes`,
 `co_spent()`, consumed inputs, and output checks?
 
+## Correlated output variants
+
+Allow `emits` to declare valid combinations of output actors rather than only
+an independent actor union for each output:
+
+```rust
+emits {
+    left: A;
+    right: B;
+} | {
+    left: C;
+    right: D;
+}
+```
+
+This represents `(A x B) | (C x D)`. The current form:
+
+```rust
+emits {
+    left: A | C;
+    right: B | D;
+}
+```
+
+represents `(A | C) x (B | D)` and leaves the entry body to reject the invalid
+cross-combinations.
+
+Initially require every alternative to use the same named output handles and
+ordering. The compiler should verify that each internal terminal route set
+matches one declared alternative. The artifact should record the source-level
+alternatives so a typed builder can match concrete outputs without exposing a
+terminal path index.
+
 ## Genesis launch roots
 
 Expose artifact/runtime guidance for actors that look genesis-created: actors

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "22de235b3c4c27aa872bf92f3d29647d769b7b63de6ccbe793e2a3b705dca72e",
+  "id": "53442214fbad1387ec219089e395d28bd79679fd258647d7189f86d6777951f5",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -509,35 +509,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "league",
-                      "auth_index": 0,
-                      "actor": "League",
-                      "template_id": "template/league",
-                      "state_expr": "self.state",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "player",
-                      "auth_index": 1,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_player",
-                      "witness_recipe_ids": [
-                        "witness/player/template_prefix_bytes",
-                        "witness/player/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/player/template_prefix_bytes",
-                    "witness/player/template_suffix_bytes"
-                  ]
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/player/template_prefix_bytes",
                 "witness/player/template_suffix_bytes"
@@ -631,24 +602,6 @@
                 "template_id": "template/player",
                 "state_expr": "next_player"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "league",
-                    "actor": "League",
-                    "template_id": "template/league",
-                    "state_expr": "self.state"
-                  },
-                  {
-                    "output": "player",
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_player"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -705,45 +658,6 @@
                   "auth_index": 2,
                   "actors": [
                     "StonesGame"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "self_out",
-                      "auth_index": 0,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_self",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "opponent_out",
-                      "auth_index": 1,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_opponent",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "game",
-                      "auth_index": 2,
-                      "actor": "StonesGame",
-                      "template_id": "template/stones_game",
-                      "state_expr": "next_game",
-                      "witness_recipe_ids": [
-                        "witness/stones_game/template_prefix_bytes",
-                        "witness/stones_game/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/player/template_prefix_len",
-                    "witness/player/template_suffix_len",
-                    "witness/stones_game/template_prefix_bytes",
-                    "witness/stones_game/template_suffix_bytes"
                   ]
                 }
               ],
@@ -910,30 +824,6 @@
                 "template_id": "template/stones_game",
                 "state_expr": "next_game"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "self_out",
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_self"
-                  },
-                  {
-                    "output": "opponent_out",
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_opponent"
-                  },
-                  {
-                    "output": "game",
-                    "actor": "StonesGame",
-                    "template_id": "template/stones_game",
-                    "state_expr": "next_game"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -962,7 +852,6 @@
                 }
               ],
               "outputs": [],
-              "terminal_paths": [],
               "witness_recipe_ids": [
                 "witness/player/template_prefix_len",
                 "witness/player/template_suffix_len"
@@ -1032,8 +921,7 @@
             "emits": {
               "kind": "none"
             },
-            "routes": [],
-            "terminal_paths": []
+            "routes": []
           },
           {
             "name": "settle",
@@ -1061,7 +949,6 @@
                 }
               ],
               "outputs": [],
-              "terminal_paths": [],
               "witness_recipe_ids": [
                 "witness/stones_settle/template_prefix_len",
                 "witness/stones_settle/template_suffix_len"
@@ -1131,8 +1018,7 @@
             "emits": {
               "kind": "none"
             },
-            "routes": [],
-            "terminal_paths": []
+            "routes": []
           },
           {
             "name": "retire",
@@ -1154,7 +1040,6 @@
               },
               "consumes": [],
               "outputs": [],
-              "terminal_paths": [],
               "witness_recipe_ids": []
             },
             "hidden_params": [],
@@ -1164,8 +1049,7 @@
             "emits": {
               "kind": "none"
             },
-            "routes": [],
-            "terminal_paths": []
+            "routes": []
           }
         ]
       },
@@ -1203,40 +1087,6 @@
                     "StonesGame",
                     "StonesSettle"
                   ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "next",
-                      "auth_index": 0,
-                      "actor": "StonesSettle",
-                      "template_id": "template/stones_settle",
-                      "state_expr": "ticket",
-                      "witness_recipe_ids": [
-                        "witness/stones_settle/template_prefix_bytes",
-                        "witness/stones_settle/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/stones_settle/template_prefix_bytes",
-                    "witness/stones_settle/template_suffix_bytes"
-                  ]
-                },
-                {
-                  "routes": [
-                    {
-                      "output": "next",
-                      "auth_index": 0,
-                      "actor": "StonesGame",
-                      "template_id": "template/stones_game",
-                      "state_expr": "next_game",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
                 }
               ],
               "witness_recipe_ids": [
@@ -1326,28 +1176,6 @@
                 "template_id": "template/stones_game",
                 "state_expr": "next_game"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "next",
-                    "actor": "StonesSettle",
-                    "template_id": "template/stones_settle",
-                    "state_expr": "ticket"
-                  }
-                ]
-              },
-              {
-                "routes": [
-                  {
-                    "output": "next",
-                    "actor": "StonesGame",
-                    "template_id": "template/stones_game",
-                    "state_expr": "next_game"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -1375,27 +1203,6 @@
                   "auth_index": 0,
                   "actors": [
                     "StonesSettle"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "settle",
-                      "auth_index": 0,
-                      "actor": "StonesSettle",
-                      "template_id": "template/stones_settle",
-                      "state_expr": "ticket",
-                      "witness_recipe_ids": [
-                        "witness/stones_settle/template_prefix_bytes",
-                        "witness/stones_settle/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/stones_settle/template_prefix_bytes",
-                    "witness/stones_settle/template_suffix_bytes"
                   ]
                 }
               ],
@@ -1479,18 +1286,6 @@
                 "template_id": "template/stones_settle",
                 "state_expr": "ticket"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "settle",
-                    "actor": "StonesSettle",
-                    "template_id": "template/stones_settle",
-                    "state_expr": "ticket"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -1545,38 +1340,6 @@
                   "auth_index": 1,
                   "actors": [
                     "Player"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "player_a_out",
-                      "auth_index": 0,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_player_a",
-                      "witness_recipe_ids": [
-                        "witness/player/template_prefix_len",
-                        "witness/player/template_suffix_len"
-                      ]
-                    },
-                    {
-                      "output": "player_b_out",
-                      "auth_index": 1,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_player_b",
-                      "witness_recipe_ids": [
-                        "witness/player/template_prefix_len",
-                        "witness/player/template_suffix_len"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/player/template_prefix_len",
-                    "witness/player/template_suffix_len"
                   ]
                 }
               ],
@@ -1681,24 +1444,6 @@
                 "actor": "Player",
                 "template_id": "template/player",
                 "state_expr": "next_player_b"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "player_a_out",
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_player_a"
-                  },
-                  {
-                    "output": "player_b_out",
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_player_b"
-                  }
-                ]
               }
             ]
           }

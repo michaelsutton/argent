@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "8ce144ec9f984dd3ae5bd1eec70ddef649bf5d6a3862519a33120f6d6a47d000",
+  "id": "6a858b2c834ad7d3e464f4af5fcaef7adce81d1e9b1e4e19c6f2672affeacc75",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -532,27 +532,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Player",
-                      "template_id": "template/player",
-                      "state_expr": "next_player",
-                      "witness_recipe_ids": [
-                        "witness/player/template_prefix_bytes",
-                        "witness/player/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/player/template_prefix_bytes",
-                    "witness/player/template_suffix_bytes"
-                  ]
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/player/template_prefix_bytes",
                 "witness/player/template_suffix_bytes"
@@ -627,18 +606,6 @@
                 "template_id": "template/player",
                 "state_expr": "next_player"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Player",
-                    "template_id": "template/player",
-                    "state_expr": "next_player"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -675,29 +642,6 @@
                   "auth_index": 0,
                   "actors": [
                     "Mux"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Mux",
-                      "template_id": "template/mux",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/mux/template_prefix_bytes",
-                        "witness/mux/template_suffix_bytes",
-                        "witness/mux/route_family_table"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/mux/template_prefix_bytes",
-                    "witness/mux/template_suffix_bytes",
-                    "witness/mux/route_family_table"
                   ]
                 }
               ],
@@ -802,18 +746,6 @@
                 "template_id": "template/mux",
                 "state_expr": "next_board"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Mux",
-                    "template_id": "template/mux",
-                    "state_expr": "next_board"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -851,38 +783,6 @@
                   "actors": [
                     "Pawn",
                     "Knight"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Pawn",
-                      "template_id": "template/pawn",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/template_selector/target/template_prefix_bytes",
-                        "witness/template_selector/target/template_suffix_bytes"
-                      ]
-                    },
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Knight",
-                      "template_id": "template/knight",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/template_selector/target/template_prefix_bytes",
-                        "witness/template_selector/target/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/template_selector/target/template_prefix_bytes",
-                    "witness/template_selector/target/template_suffix_bytes"
                   ]
                 }
               ],
@@ -977,24 +877,6 @@
                 "template_id": "template/knight",
                 "state_expr": "next_board"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Pawn",
-                    "template_id": "template/pawn",
-                    "state_expr": "next_board"
-                  },
-                  {
-                    "output": null,
-                    "actor": "Knight",
-                    "template_id": "template/knight",
-                    "state_expr": "next_board"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -1023,27 +905,6 @@
                   "actors": [
                     "Pawn",
                     "Knight"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Knight",
-                      "template_id": "template/knight",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/template_selector/target/template_prefix_bytes",
-                        "witness/template_selector/target/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/template_selector/target/template_prefix_bytes",
-                    "witness/template_selector/target/template_suffix_bytes"
                   ]
                 }
               ],
@@ -1133,18 +994,6 @@
                 "template_id": "template/knight",
                 "state_expr": "next_board"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Knight",
-                    "template_id": "template/knight",
-                    "state_expr": "next_board"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -1172,27 +1021,6 @@
                   "auth_index": 0,
                   "actors": [
                     "Pawn"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Pawn",
-                      "template_id": "template/pawn",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/pawn/template_prefix_bytes",
-                        "witness/pawn/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/pawn/template_prefix_bytes",
-                    "witness/pawn/template_suffix_bytes"
                   ]
                 }
               ],
@@ -1270,18 +1098,6 @@
                 "template_id": "template/pawn",
                 "state_expr": "next_board"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Pawn",
-                    "template_id": "template/pawn",
-                    "state_expr": "next_board"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -1309,27 +1125,6 @@
                   "auth_index": 0,
                   "actors": [
                     "Knight"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Knight",
-                      "template_id": "template/knight",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/knight/template_prefix_bytes",
-                        "witness/knight/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/knight/template_prefix_bytes",
-                    "witness/knight/template_suffix_bytes"
                   ]
                 }
               ],
@@ -1407,18 +1202,6 @@
                 "template_id": "template/knight",
                 "state_expr": "next_board"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Knight",
-                    "template_id": "template/knight",
-                    "state_expr": "next_board"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -1455,27 +1238,6 @@
                   "auth_index": 0,
                   "actors": [
                     "Mux"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Mux",
-                      "template_id": "template/mux",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/mux/template_prefix_bytes",
-                        "witness/mux/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/mux/template_prefix_bytes",
-                    "witness/mux/template_suffix_bytes"
                   ]
                 }
               ],
@@ -1552,18 +1314,6 @@
                 "actor": "Mux",
                 "template_id": "template/mux",
                 "state_expr": "next_board"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Mux",
-                    "template_id": "template/mux",
-                    "state_expr": "next_board"
-                  }
-                ]
               }
             ]
           }
@@ -1604,27 +1354,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": null,
-                      "auth_index": 0,
-                      "actor": "Mux",
-                      "template_id": "template/mux",
-                      "state_expr": "next_board",
-                      "witness_recipe_ids": [
-                        "witness/mux/template_prefix_bytes",
-                        "witness/mux/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/mux/template_prefix_bytes",
-                    "witness/mux/template_suffix_bytes"
-                  ]
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/mux/template_prefix_bytes",
                 "witness/mux/template_suffix_bytes"
@@ -1698,18 +1427,6 @@
                 "actor": "Mux",
                 "template_id": "template/mux",
                 "state_expr": "next_board"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": null,
-                    "actor": "Mux",
-                    "template_id": "template/mux",
-                    "state_expr": "next_board"
-                  }
-                ]
               }
             ]
           }

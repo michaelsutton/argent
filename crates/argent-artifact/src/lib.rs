@@ -296,7 +296,6 @@ pub struct EntryArtifact {
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
     pub routes: Vec<RouteArtifact>,
-    pub terminal_paths: Vec<TerminalPathArtifact>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -422,7 +421,6 @@ pub struct EntryRoutePlanArtifact {
     pub leader_input: Option<RouteInputArtifact>,
     pub consumes: Vec<RouteInputArtifact>,
     pub outputs: Vec<RouteOutputHandleArtifact>,
-    pub terminal_paths: Vec<PlannedTerminalPathArtifact>,
     pub witness_recipe_ids: Vec<String>,
 }
 
@@ -441,32 +439,11 @@ pub struct RouteOutputHandleArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlannedTerminalPathArtifact {
-    pub routes: Vec<PlannedRouteArtifact>,
-    pub witness_recipe_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlannedRouteArtifact {
-    pub output: Option<String>,
-    pub auth_index: usize,
-    pub actor: String,
-    pub template_id: String,
-    pub state_expr: String,
-    pub witness_recipe_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RouteArtifact {
     pub output: Option<String>,
     pub actor: String,
     pub template_id: String,
     pub state_expr: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalPathArtifact {
-    pub routes: Vec<RouteArtifact>,
 }
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
@@ -1051,20 +1028,8 @@ impl TemplatePlanArtifact {
                 }
 
                 self.verify_route_recipe_ids(&entry_id, &entry.route_plan.witness_recipe_ids, &entry_recipe_ids, &recipes_by_id)?;
-                for path in &entry.route_plan.terminal_paths {
-                    self.verify_route_recipe_ids(&entry_id, &path.witness_recipe_ids, &entry_recipe_ids, &recipes_by_id)?;
-                    for route in &path.routes {
-                        self.verify_route_template(&entry_id, route.actor.as_str(), route.template_id.as_str(), &templates_by_id)?;
-                        self.verify_route_recipe_ids(&entry_id, &route.witness_recipe_ids, &entry_recipe_ids, &recipes_by_id)?;
-                    }
-                }
                 for route in &entry.routes {
                     self.verify_route_template(&entry_id, route.actor.as_str(), route.template_id.as_str(), &templates_by_id)?;
-                }
-                for path in &entry.terminal_paths {
-                    for route in &path.routes {
-                        self.verify_route_template(&entry_id, route.actor.as_str(), route.template_id.as_str(), &templates_by_id)?;
-                    }
                 }
             }
         }

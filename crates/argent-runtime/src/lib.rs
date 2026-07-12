@@ -296,16 +296,8 @@ pub enum BuilderError {
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
-    #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
-    UnknownTerminalPath { actor: String, entry: String, path_index: usize },
     #[error("missing output `{0}`")]
     MissingOutput(String),
-    #[error("unknown output `{0}`")]
-    UnknownOutput(String),
-    #[error("duplicate output `{0}`")]
-    DuplicateOutput(String),
-    #[error("unsupported route without a named output")]
-    UnnamedRouteOutput,
     #[error("genesis covenant output {0} was not populated")]
     MissingGenesisCovenantOutput(u32),
     #[error("genesis covenant output {0} does not exist")]
@@ -374,44 +366,6 @@ struct ActorRef<'a> {
 struct EntryRef<'a> {
     artifact: &'a Artifact,
     entry: &'a EntryArtifact,
-}
-
-/// Request for building the covenant outputs of one terminal `become` path.
-///
-/// Argent entries can declare named outputs:
-///
-/// ```text
-/// emits {
-///     left_out: Left;
-///     peer_out: Right;
-/// }
-/// ```
-///
-/// `terminal_path_outputs` uses the artifact's route plan for such an entry to
-/// turn source-level output states into concrete transaction outputs. The caller
-/// supplies values by output handle; the runtime chooses the declared actor
-/// template, generated hidden state fields, authorizing input index, and output
-/// ordering.
-///
-/// `path_index` selects one terminal path through an entry body. It is usually
-/// `0` for entries with a single unconditional `become` block. Entries with
-/// conditional `become` paths expose one path per terminal route in artifact
-/// order.
-pub struct TerminalPathOutputRequest<'a> {
-    /// Actor whose entry is being spent.
-    pub actor_name: &'a str,
-    /// Entry that declares the output handles.
-    pub entry_name: &'a str,
-    /// Terminal `become` path to materialize.
-    pub path_index: usize,
-    /// Source-level state for each named output handle.
-    pub output_states: BTreeMap<String, BTreeMap<String, ArtifactValue>>,
-    /// KAS value for each named output handle.
-    pub output_values: BTreeMap<String, u64>,
-    /// Transaction input index that authorizes these outputs.
-    pub authorizing_input: u16,
-    /// Covenant id carried by the emitted outputs.
-    pub covenant_id: Hash,
 }
 
 #[derive(Clone, Debug)]
@@ -990,45 +944,6 @@ impl<'a> TxBuilder<'a> {
             is_coinbase,
             covenant_id,
         ))
-    }
-
-    /// Build all outputs for one terminal path of a named-output entry.
-    ///
-    /// This is the multi-output counterpart to `covenant_output`. It is useful
-    /// when an entry emits several named actors and the runtime should apply the
-    /// artifact route plan instead of asking the caller to manually match output
-    /// handles to actors/templates.
-    pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
-        let entry = self.entry(request.actor_name, request.entry_name)?;
-        let path = entry.route_plan.terminal_paths.get(request.path_index).ok_or_else(|| BuilderError::UnknownTerminalPath {
-            actor: request.actor_name.to_string(),
-            entry: request.entry_name.to_string(),
-            path_index: request.path_index,
-        })?;
-        for output in request.output_states.keys().chain(request.output_values.keys()) {
-            if path.routes.iter().all(|route| route.output.as_ref() != Some(output)) {
-                return Err(BuilderError::UnknownOutput(output.clone()));
-            }
-        }
-
-        let mut outputs = Vec::with_capacity(path.routes.len());
-        for route in &path.routes {
-            let output = route.output.as_ref().ok_or(BuilderError::UnnamedRouteOutput)?;
-            let state = request.output_states.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?.clone();
-            let value = *request.output_values.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?;
-            outputs.push((
-                route.auth_index,
-                output.clone(),
-                self.covenant_output(&route.actor, state, value, request.authorizing_input, request.covenant_id)?,
-            ));
-        }
-        outputs.sort_by_key(|(auth_index, _, _)| *auth_index);
-        for window in outputs.windows(2) {
-            if window[0].0 == window[1].0 {
-                return Err(BuilderError::DuplicateOutput(window[0].1.clone()));
-            }
-        }
-        Ok(outputs.into_iter().map(|(_, _, output)| output).collect())
     }
 
     /// Build observed covenant outputs in the declaration order of an

@@ -4507,11 +4507,6 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             .collect(),
         emits: emit_spec_artifact(&entry.emits, model),
         routes: expanded_routes.iter().map(route_artifact).collect(),
-        terminal_paths: entry
-            .terminal_route_sets
-            .iter()
-            .map(|routes| TerminalPathArtifact { routes: expand_route_set(routes, &selectors).iter().map(route_artifact).collect() })
-            .collect(),
     })
 }
 
@@ -4572,19 +4567,11 @@ fn entry_route_plan_artifact(
         EntryKind::Delegate => consumes.first().cloned(),
     };
     let outputs = route_output_handles(&entry.emits, model);
-    let selectors = model.template_selectors_for_entry(actor, entry)?;
-    let terminal_paths = entry
-        .terminal_route_sets
-        .iter()
-        .map(|routes| planned_terminal_path_artifact(actor, routes, entry, model, &selectors))
-        .collect::<Result<Vec<_>>>()?;
-
     Ok(EntryRoutePlanArtifact {
         active_input: Some(active_input),
         leader_input,
         consumes,
         outputs,
-        terminal_paths,
         witness_recipe_ids: witnesses.iter().map(|witness| witness.recipe_id.clone()).collect(),
     })
 }
@@ -4610,145 +4597,6 @@ fn route_output_handles(emits: &EmitSpec, model: &Model<'_>) -> Vec<RouteOutputH
                 actors: model.expand_actor_refs(&output.actors),
             })
             .collect(),
-    }
-}
-
-fn planned_terminal_path_artifact(
-    actor: &ActorDecl,
-    routes: &[RouteCall],
-    entry: &EntryDecl,
-    model: &Model<'_>,
-    selectors: &BTreeMap<String, TemplateSelector>,
-) -> Result<PlannedTerminalPathArtifact> {
-    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
-    let write_actors = routes
-        .iter()
-        .filter(|route| !selectors.contains_key(&route.actor))
-        .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
-        .map(|route| route.actor.clone())
-        .collect::<BTreeSet<_>>();
-    let selector_names =
-        routes.iter().filter_map(|route| selectors.get(&route.actor).map(|selector| selector.name.clone())).collect::<BTreeSet<_>>();
-
-    let mut witness_recipe_ids =
-        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors.clone(), write_actors));
-    for selector_name in &selector_names {
-        witness_recipe_ids.extend(template_selector_witness_recipe_ids(selector_name));
-    }
-
-    let mut planned_routes = Vec::new();
-    for route in routes {
-        if let Some(selector) = selectors.get(&route.actor) {
-            let selector_recipe_ids = template_selector_witness_recipe_ids(&selector.name);
-            for variant in selector.route_actors() {
-                let concrete_route = RouteCall { output: route.output.clone(), actor: variant.clone(), state: route.state.clone() };
-                let output = route_output_handle(&entry.emits, &concrete_route, model)?;
-                planned_routes.push(PlannedRouteArtifact {
-                    output: output.name.clone(),
-                    auth_index: output.auth_index,
-                    actor: variant.clone(),
-                    template_id: template_receipt_id(&variant),
-                    state_expr: compact_expr(&route.state),
-                    witness_recipe_ids: selector_recipe_ids.clone(),
-                });
-            }
-            continue;
-        }
-
-        let output = route_output_handle(&entry.emits, route, model)?;
-        planned_routes.push(PlannedRouteArtifact {
-            output: output.name.clone(),
-            auth_index: output.auth_index,
-            actor: route.actor.clone(),
-            template_id: template_receipt_id(&route.actor),
-            state_expr: compact_expr(&route.state),
-            witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
-                let route_read_actors =
-                    if read_actors.contains(&route.actor) { [route.actor.clone()].into_iter().collect() } else { BTreeSet::new() };
-                witness_recipe_ids_for_specs(template_witness_specs_for_actor(
-                    actor,
-                    model,
-                    route_read_actors,
-                    [route.actor.clone()].into_iter().collect(),
-                ))
-            } else {
-                Vec::new()
-            },
-        });
-    }
-
-    Ok(PlannedTerminalPathArtifact { routes: planned_routes, witness_recipe_ids })
-}
-
-fn template_selector_witness_recipe_ids(selector_name: &str) -> Vec<String> {
-    vec![
-        template_selector_witness_recipe_id(selector_name, HiddenParamPurposeArtifact::TemplatePrefixBytes),
-        template_selector_witness_recipe_id(selector_name, HiddenParamPurposeArtifact::TemplateSuffixBytes),
-    ]
-}
-
-fn witness_recipe_ids_for_specs(specs: EntryWitnessSpecs) -> Vec<String> {
-    let mut ids = Vec::new();
-    for spec in specs.templates {
-        push_actor_witness_recipe_ids(&mut ids, &spec);
-    }
-    for spec in specs.families {
-        ids.push(route_family_witness_recipe_id(&spec.family_id, HiddenParamPurposeArtifact::RouteFamilyTable));
-    }
-    for spec in specs.selectors {
-        ids.extend(template_selector_witness_recipe_ids(&spec.name));
-    }
-    for spec in specs.observed_actors {
-        match spec.side {
-            ObservedActorSideArtifact::Input => {
-                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplatePrefixLen));
-                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplateSuffixLen));
-            }
-            ObservedActorSideArtifact::Output => {
-                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplatePrefixBytes));
-                ids.push(observed_actor_witness_recipe_id(&spec, HiddenParamPurposeArtifact::TemplateSuffixBytes));
-            }
-        }
-    }
-    for spec in specs.state_expansions {
-        ids.push(state_expansion_witness_recipe_id(&spec));
-    }
-    for spec in specs.observed_output_fields {
-        ids.push(observed_output_field_witness_recipe_id(&spec));
-    }
-    ids
-}
-
-fn push_actor_witness_recipe_ids(out: &mut Vec<String>, spec: &TemplateWitnessSpec) {
-    match spec.form {
-        TemplateWitnessForm::Bytes => {
-            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixBytes));
-            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixBytes));
-        }
-        TemplateWitnessForm::Len => {
-            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplatePrefixLen));
-            out.push(template_witness_recipe_id(&spec.actor, HiddenParamPurposeArtifact::TemplateSuffixLen));
-        }
-    }
-}
-
-fn route_output_handle(emits: &EmitSpec, route: &RouteCall, model: &Model<'_>) -> Result<RouteOutputHandleArtifact> {
-    match (emits, &route.output) {
-        (EmitSpec::One { actors }, None) => {
-            Ok(RouteOutputHandleArtifact { name: None, auth_index: 0, actors: model.expand_actor_refs(actors) })
-        }
-        (EmitSpec::Outputs(outputs), Some(name)) => outputs
-            .iter()
-            .find(|output| &output.name == name)
-            .map(|output| RouteOutputHandleArtifact {
-                name: Some(output.name.clone()),
-                auth_index: output.auth_index,
-                actors: model.expand_actor_refs(&output.actors),
-            })
-            .ok_or_else(|| ArgentError::new(format!("route references unknown output `{name}`"))),
-        (EmitSpec::Outputs(_), None) => Err(ArgentError::new("named output route is missing an output handle")),
-        (EmitSpec::One { .. }, Some(name)) => Err(ArgentError::new(format!("single-output route unexpectedly named `{name}`"))),
-        (EmitSpec::None, _) => Err(ArgentError::new("route cannot target an entry that emits none")),
     }
 }
 
@@ -6022,7 +5870,6 @@ mod tests {
         assert!(bump.hidden_params.is_empty());
         assert!(bump.witnesses.is_empty());
         assert!(bump.route_plan.witness_recipe_ids.is_empty());
-        assert!(bump.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
 
         let sil_foo = artifact.sil_abi.contract("Foo").expect("Foo Sil ABI exists");
         let sil_bump = sil_foo.entry("bump").expect("bump Sil ABI exists");
@@ -6112,17 +5959,12 @@ mod tests {
         assert!(matches!(entry.emits, EmitArtifact::One { .. }));
         assert_eq!(entry.routes[0].actor, "Foo");
         assert_eq!(entry.routes[0].state_expr, "self.state");
-        assert_eq!(entry.terminal_paths[0].routes[0], entry.routes[0]);
         assert_eq!(
             entry.route_plan.active_input.as_ref().map(|input| (input.actor.as_str(), input.cov_index)),
             Some(("Foo", Some(0)))
         );
         assert_eq!(entry.route_plan.outputs[0].auth_index, 0);
         assert_eq!(entry.route_plan.outputs[0].name, None);
-        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].actor, "Foo");
-        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].template_id, "template/foo");
-        assert_eq!(entry.route_plan.terminal_paths[0].routes[0].auth_index, 0);
-        assert!(entry.route_plan.terminal_paths[0].witness_recipe_ids.is_empty());
 
         let sil_entry = sil_contract.entry(&entry.abi.entry).expect("outer entry should point at Sil ABI entry");
         assert_eq!(sil_entry.selector, None);
@@ -6973,11 +6815,6 @@ mod tests {
                 ("gen__player_suffix", TypeArtifact::Bytes, "Player", HiddenParamPurposeArtifact::TemplateSuffixBytes),
             ]
         );
-        assert!(
-            register_player.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty(),
-            "exact league continuation should not need per-route template witnesses"
-        );
-
         let _ = fs::remove_dir_all(out_dir);
     }
 

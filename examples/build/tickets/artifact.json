@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "0490388a750e1f8305f199f06ea01044b55d07c151b4fc8fa3735a62189117f0",
+  "id": "cd57dfad4a9c53fd9080515b5a4d5fefa34095cd6371816a699a42c5bcb9b209",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -203,35 +203,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "issuer",
-                      "auth_index": 0,
-                      "actor": "Issuer",
-                      "template_id": "template/issuer",
-                      "state_expr": "next_issuer",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "ticket",
-                      "auth_index": 1,
-                      "actor": "Ticket",
-                      "template_id": "template/ticket",
-                      "state_expr": "new_ticket",
-                      "witness_recipe_ids": [
-                        "witness/ticket/template_prefix_bytes",
-                        "witness/ticket/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/ticket/template_prefix_bytes",
-                    "witness/ticket/template_suffix_bytes"
-                  ]
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/ticket/template_prefix_bytes",
                 "witness/ticket/template_suffix_bytes"
@@ -325,24 +296,6 @@
                 "template_id": "template/ticket",
                 "state_expr": "new_ticket"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "issuer",
-                    "actor": "Issuer",
-                    "template_id": "template/issuer",
-                    "state_expr": "next_issuer"
-                  },
-                  {
-                    "output": "ticket",
-                    "actor": "Ticket",
-                    "template_id": "template/ticket",
-                    "state_expr": "new_ticket"
-                  }
-                ]
-              }
             ]
           }
         ]
@@ -382,21 +335,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "next",
-                      "auth_index": 0,
-                      "actor": "Ticket",
-                      "template_id": "template/ticket",
-                      "state_expr": "redeemed_ticket",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
-                }
-              ],
               "witness_recipe_ids": []
             },
             "hidden_params": [],
@@ -421,18 +359,6 @@
                 "actor": "Ticket",
                 "template_id": "template/ticket",
                 "state_expr": "redeemed_ticket"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "next",
-                    "actor": "Ticket",
-                    "template_id": "template/ticket",
-                    "state_expr": "redeemed_ticket"
-                  }
-                ]
               }
             ]
           }
