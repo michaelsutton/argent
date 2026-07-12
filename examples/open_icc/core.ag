@@ -1,7 +1,7 @@
 // Open ICC cell-physics core app.
 //
 // The core app owns cells. It observes an independently deployed agent app
-// through a stored covenant id plus an actor<AgentCapsule> handle.
+// through a stored covenant id plus an actor_type<AgentCapsule> handle.
 
 state AgentCapsule {
     byte[32] world_id;
@@ -25,7 +25,7 @@ state CellState {
     int food;
 
     covid occupant_agent_covid;
-    actor<AgentCapsule> occupant_agent_type;
+    actor_type<AgentCapsule> occupant_agent_type;
     byte[32] occupant_caps_digest;
 }
 
@@ -89,7 +89,7 @@ actor Cell owns CellState {
         dx: int,
         dy: int,
         empty_agent_covid: covid,
-        empty_agent_type: actor<AgentCapsule>,
+        empty_agent_type: actor_type<AgentCapsule>,
         empty_caps_digest: byte[32]
     )
     observes remote by self.occupant_agent_covid {

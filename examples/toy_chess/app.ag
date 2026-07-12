@@ -57,7 +57,7 @@ actor Mux owns BoardState {
             ply: ply + 1,
         };
 
-        actor<BoardState> target = MoveActor::Knight;
+        actor_type<BoardState> target = MoveActor::Knight;
         become target(next_board);
     }
 

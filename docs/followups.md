@@ -12,7 +12,7 @@ fields.
 The core invariant to preserve:
 
 - the base capsule ABI observed by another app remains stable
-- expanded states can satisfy `actor<BaseCapsule>` handles
+- expanded states can satisfy `actor_type<BaseCapsule>` handles
 - hidden route/template fields needed by the extending app do not leak into the
   observed capsule ABI
 - generated state-layout/cut validation rejects mismatched compiled layouts

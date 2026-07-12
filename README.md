@@ -84,7 +84,8 @@ Core terms:
 - `emits` declares the authorized output handles for an entrypoint.
 - `become` is the terminal transition into successor actor state.
 - `observes` declares a foreign covenant view for ICC.
-- `actor<State>` is a typed runtime actor handle.
+- `actor_type<State>` identifies a runtime-selected actor implementation
+  compatible with `State`.
 - `actor enum` defines a closed set of runtime-selected actor targets.
 - `virtual` slots and `state X expands Base` let concrete actors bind private
   digest-backed memory while preserving a shared base state layout.

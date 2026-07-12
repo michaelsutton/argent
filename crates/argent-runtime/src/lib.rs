@@ -1357,12 +1357,12 @@ impl<'a> TxBuilder<'a> {
         if let Some(expected_state) = expected.open_state.as_deref() {
             let found = self.argent_actor_ref_in_artifact(self.bundle.app(app)?, found_actor)?;
             if !state_satisfies(found.artifact, &found.actor.state, expected_state) {
-                return Err(BuilderError::ObservedActorMismatch {
+                return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
                     side: observed_side_label(side),
                     handle: expected.name.clone(),
-                    expected: format!("actor<{expected_state}>"),
-                    found: format!("{}: actor<{}>", found_actor, found.actor.state),
+                    actor: found_actor.to_string(),
+                    state: expected_state.to_string(),
                 });
             }
             let expected_layout = state_artifact(self.bundle.primary, expected_state)?;

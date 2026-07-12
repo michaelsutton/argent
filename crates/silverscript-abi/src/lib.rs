@@ -85,7 +85,6 @@ impl TypeArtifact {
     pub fn from_parts(name: &str, array_len: Option<usize>) -> Self {
         match (name, array_len) {
             ("byte", Some(len)) => Self::FixedBytes { len },
-            ("covid", Some(len)) => Self::FixedArray { item: Box::new(Self::FixedBytes { len: 32 }), len },
             (_, Some(len)) => Self::FixedArray { item: Box::new(Self::scalar(name)), len },
             (_, None) => Self::scalar(name),
         }
@@ -103,7 +102,6 @@ impl TypeArtifact {
             "bytes" => Self::Bytes,
             "string" => Self::Text,
             "pubkey" => Self::Pubkey,
-            "covid" => Self::FixedBytes { len: 32 },
             "sig" => Self::Sig,
             "datasig" => Self::Datasig,
             _ => Self::Struct { name: name.to_string() },

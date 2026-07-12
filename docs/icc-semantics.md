@@ -183,7 +183,7 @@ hard-code every possible implementation.
 ```rust
 state CellState {
     covid agent_covid;
-    actor<AgentState> agent_type;
+    actor_type<AgentState> agent_type;
     int tick;
 }
 ```
@@ -230,7 +230,7 @@ emits {
 ```
 
 `self.agent_type` is not an actor instance; it is an actor handle value. The
-`actor<AgentState>` type says that whatever implementation the handle denotes
+`actor_type<AgentState>` type says that whatever implementation the handle denotes
 must expose the `AgentState` state shape. Using the same handle in the observed
 input and output means the observed transition must preserve that implementation
 identity while changing only the state the cell authorizes.
@@ -241,7 +241,7 @@ bind a scoped runtime handle with `as`:
 ```rust
 observes remote by self.agent_covid {
     inputs {
-        agent: actor<AgentState> as observed_agent;
+        agent: actor_type<AgentState> as observed_agent;
     }
 
     outputs {
@@ -260,8 +260,8 @@ published agent contracts that share a state ABI or interface discipline.
 
 Open ICC rules:
 
-- `actor<State>` is a first-class actor handle type
-- the observer may store or receive an `actor<State>` handle
+- `actor_type<State>` is a first-class actor handle type
+- the observer may store or receive an `actor_type<State>` handle
 - observed actors must have a state shape compatible with that actor type
 - the observed transition must bind to the same actor handle the observer
   committed to
@@ -284,14 +284,14 @@ Legal state-carried form:
 ```rust
 state CellState {
     covid agent_covid;
-    actor<AgentState> agent_type;
+    actor_type<AgentState> agent_type;
 }
 ```
 
 Legal entry-parameter form:
 
 ```rust
-entry inspect(agent_type: actor<AgentState>)
+entry inspect(agent_type: actor_type<AgentState>)
 observes remote by self.agent_covid {
     inputs {
         agent: self.agent_type;
@@ -303,7 +303,7 @@ observes remote by self.agent_covid {
 ```
 
 If an open observed input has no matching observed output and no source-level
-`actor<State>` handle binding, the program should be rejected.
+`actor_type<State>` handle binding, the program should be rejected.
 
 ## Choosing Closed Or Open
 
@@ -322,7 +322,7 @@ Use open ICC when:
 - dynamic dispatch over actor implementations is intentional
 
 The compiler should keep these modes distinct. A concrete imported actor should
-not accidentally become an open dispatch slot, and an open `actor<State>` handle
+not accidentally become an open dispatch slot, and an open `actor_type<State>` handle
 should not accidentally become a closed dependency on one implementation.
 
 ## Language Surface
@@ -338,11 +338,11 @@ Current and expected source-level ICC features:
   stored actor handle
 - `outputs { handle: self.actor_field; }`: constrain an observed output by a
   stored actor handle
-- `inputs { handle: actor<State> as observed; }`: bind an open observed actor handle
+- `inputs { handle: actor_type<State> as observed; }`: bind an open observed actor handle
 - `outputs { handle: observed; }`: require an output to use the same open actor handle
 - `<observe>.inputs.<handle>.state`: read observed input state
 - `require <observe>.outputs become { ... };`: constrain observed outputs
-- `actor<State>`: first-class actor handle type
+- `actor_type<State>`: first-class actor handle type
 
 These features should let source code express ICC intent without exposing the
 implementation machinery used to enforce it.
