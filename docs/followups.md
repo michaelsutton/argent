@@ -95,3 +95,31 @@ The goal is to explain a covenant id already seen in a live UTXO: given the
 funding outpoint and initial actor states, show exactly how that id was
 launched, so auditing the contracts and initial states gives confidence in the
 live covenant.
+
+## ICC controller/asset bootstrap
+
+Document the safe bootstrap pattern for assets whose state authorizes a
+controller by covenant-id co-spend.
+
+The delicate case:
+
+- the asset accepts `controller_id.authorized()` or an equivalent covenant-id
+  co-spend check
+- the controller is not yet bound to the asset covenant id
+- a controller init transaction can accidentally authorize unrelated asset
+  spends unless it proves the asset is being created at the same boundary
+
+The recommended pattern is:
+
+- create an uninitialized controller covenant first
+- create the asset covenant and initialize the controller in the same
+  transaction
+- have controller init bind to the asset output covenant id
+- have controller init also prove that the asset output is genesis-created, not
+  a continuation of an existing asset spend
+
+The proof should check that the asset output is authorized by the controller
+init input and that the authorizing input is not already the same asset covenant
+id. This keeps the launch easy to audit: the asset id is born at the same point
+where the controller becomes bound to it, so later controller co-spends cannot
+retroactively cover an unchecked pre-existing asset transition.

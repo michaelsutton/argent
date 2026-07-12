@@ -1,0 +1,40 @@
+state ForeignState {
+    int count;
+}
+
+state LocalState {
+    byte[32] target_id;
+}
+
+actor Foreign owns ForeignState {
+    entry hold() emits none {
+        require(1 == 1);
+    }
+}
+
+actor Local owns LocalState {
+    entry step()
+    observes asset by target_id {
+        inputs {
+            src: Foreign;
+        }
+
+        outputs {
+            dst: Foreign;
+        }
+    }
+    emits none {
+        ForeignState prev = asset.inputs.src.state;
+        ForeignState next = {
+            count: prev.count + 1,
+        };
+
+        require asset.outputs become {
+            dst <- Foreign(next);
+        };
+    }
+}
+
+app Test {
+    actor Local;
+}

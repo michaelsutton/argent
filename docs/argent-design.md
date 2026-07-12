@@ -39,7 +39,7 @@ Template hashes must exclude all instance state, including hidden template field
 The working rule is the chess rule:
 
 ```text
-template_hash = blake2b(template_prefix || template_suffix)
+template_hash = blake2b(i64le(template_prefix.length) || template_prefix || i64le(template_suffix.length) || template_suffix)
 ```
 
 The state bytes live between prefix and suffix, so template references stored in

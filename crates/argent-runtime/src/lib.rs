@@ -376,13 +376,41 @@ struct EntryRef<'a> {
     entry: &'a EntryArtifact,
 }
 
+/// Request for building the covenant outputs of one terminal `become` path.
+///
+/// Argent entries can declare named outputs:
+///
+/// ```text
+/// emits {
+///     left_out: Left;
+///     peer_out: Right;
+/// }
+/// ```
+///
+/// `terminal_path_outputs` uses the artifact's route plan for such an entry to
+/// turn source-level output states into concrete transaction outputs. The caller
+/// supplies values by output handle; the runtime chooses the declared actor
+/// template, generated hidden state fields, authorizing input index, and output
+/// ordering.
+///
+/// `path_index` selects one terminal path through an entry body. It is usually
+/// `0` for entries with a single unconditional `become` block. Entries with
+/// conditional `become` paths expose one path per terminal route in artifact
+/// order.
 pub struct TerminalPathOutputRequest<'a> {
+    /// Actor whose entry is being spent.
     pub actor_name: &'a str,
+    /// Entry that declares the output handles.
     pub entry_name: &'a str,
+    /// Terminal `become` path to materialize.
     pub path_index: usize,
+    /// Source-level state for each named output handle.
     pub output_states: BTreeMap<String, BTreeMap<String, ArtifactValue>>,
+    /// KAS value for each named output handle.
     pub output_values: BTreeMap<String, u64>,
+    /// Transaction input index that authorizes these outputs.
     pub authorizing_input: u16,
+    /// Covenant id carried by the emitted outputs.
     pub covenant_id: Hash,
 }
 
@@ -954,6 +982,12 @@ impl<'a> TxBuilder<'a> {
         ))
     }
 
+    /// Build all outputs for one terminal path of a named-output entry.
+    ///
+    /// This is the multi-output counterpart to `covenant_output`. It is useful
+    /// when an entry emits several named actors and the runtime should apply the
+    /// artifact route plan instead of asking the caller to manually match output
+    /// handles to actors/templates.
     pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
         let entry = self.entry(request.actor_name, request.entry_name)?;
         let path = entry.route_plan.terminal_paths.get(request.path_index).ok_or_else(|| BuilderError::UnknownTerminalPath {
