@@ -67,6 +67,10 @@ impl Artifact {
     pub fn computed_id_hex(&self) -> std::result::Result<String, ArtifactIdentityError> {
         let mut artifact = self.clone();
         artifact.id.clear();
+        // Source paths are informational and must not make artifact ids
+        // dependent on the checkout location.
+        artifact.root.clear();
+        artifact.modules.clear();
         hash_json("argent/artifact/v1", &artifact)
     }
 
@@ -1487,6 +1491,21 @@ mod tests {
         assert_eq!(artifact.argent.actors[0].abi.actor, "Foo");
         assert_eq!(artifact.argent.template_plan.runtime_states[0].field_roles[0].name, "gen__foo_template");
         assert_eq!(artifact.sil_abi.contracts[0].compiled.script_hex, "");
+    }
+
+    #[test]
+    fn artifact_id_is_independent_of_root_and_module_paths() {
+        let mut first = artifact_with_route_families(Vec::new());
+        first.root = "checkout-a/app.ag".to_string();
+        first.modules = vec!["checkout-a/app.ag".to_string(), "checkout-a/types.ag".to_string()];
+
+        let mut second = first.clone();
+        second.root = "/workspace/checkout-b/app.ag".to_string();
+        second.modules = vec!["/workspace/checkout-b/app.ag".to_string(), "/workspace/checkout-b/types.ag".to_string()];
+
+        assert_ne!(first.root, second.root);
+        assert_ne!(first.modules, second.modules);
+        assert_eq!(first.computed_id_hex().expect("first id computes"), second.computed_id_hex().expect("second id computes"));
     }
 
     #[test]
