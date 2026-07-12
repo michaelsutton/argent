@@ -1,2 +1,12 @@
 *.sil linguist-language=JavaScript
 *.ag linguist-language=Rust
+
+# Force LF endings for source and generated files regardless of platform
+# checkout settings (e.g. Windows core.autocrlf=true). The compiler is
+# content-hashed and byte-reproducibility across platforms depends on
+# consistent line endings in .ag sources and generated .sil output.
+*.ag text eol=lf
+*.sil text eol=lf
+*.rs text eol=lf
+*.md text eol=lf
+*.json text eol=lf
