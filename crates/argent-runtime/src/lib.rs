@@ -10,10 +10,13 @@
 //! Argent-specific for now; lower-level Silverscript runtime abstractions can
 //! split out later if the artifact model becomes generic enough.
 
+mod transition;
+
 use std::collections::BTreeMap;
 
 pub use argent_artifact::Artifact;
 pub use silverscript_abi::ArtifactValue;
+pub use transition::{BuiltTransition, TransitionBuilder};
 
 use argent_artifact::{
     ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, EntryArtifact, HiddenParamArtifact,
@@ -25,6 +28,7 @@ use kaspa_consensus_core::{
     Hash,
     errors::tx::PopulateGenesisCovenantsError,
     hashing::sighash::SigHashReusedValuesUnsync,
+    mass::ScriptUnits,
     tx::{
         CovenantBinding, GenesisCovenantGroup, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint,
         TransactionOutput, UtxoEntry, VerifiableTransaction,
@@ -296,16 +300,12 @@ pub enum BuilderError {
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
-    #[error("unknown terminal path {path_index} for `{actor}::{entry}`")]
-    UnknownTerminalPath { actor: String, entry: String, path_index: usize },
+    #[error("cannot build transition `{actor}::{entry}`: {message}")]
+    InvalidTransition { actor: String, entry: String, message: String },
+    #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
+    ComputeBudgetOverflow { input_index: usize, script_units: u64 },
     #[error("missing output `{0}`")]
     MissingOutput(String),
-    #[error("unknown output `{0}`")]
-    UnknownOutput(String),
-    #[error("duplicate output `{0}`")]
-    DuplicateOutput(String),
-    #[error("unsupported route without a named output")]
-    UnnamedRouteOutput,
     #[error("genesis covenant output {0} was not populated")]
     MissingGenesisCovenantOutput(u32),
     #[error("genesis covenant output {0} does not exist")]
@@ -374,44 +374,6 @@ struct ActorRef<'a> {
 struct EntryRef<'a> {
     artifact: &'a Artifact,
     entry: &'a EntryArtifact,
-}
-
-/// Request for building the covenant outputs of one terminal `become` path.
-///
-/// Argent entries can declare named outputs:
-///
-/// ```text
-/// emits {
-///     left_out: Left;
-///     peer_out: Right;
-/// }
-/// ```
-///
-/// `terminal_path_outputs` uses the artifact's route plan for such an entry to
-/// turn source-level output states into concrete transaction outputs. The caller
-/// supplies values by output handle; the runtime chooses the declared actor
-/// template, generated hidden state fields, authorizing input index, and output
-/// ordering.
-///
-/// `path_index` selects one terminal path through an entry body. It is usually
-/// `0` for entries with a single unconditional `become` block. Entries with
-/// conditional `become` paths expose one path per terminal route in artifact
-/// order.
-pub struct TerminalPathOutputRequest<'a> {
-    /// Actor whose entry is being spent.
-    pub actor_name: &'a str,
-    /// Entry that declares the output handles.
-    pub entry_name: &'a str,
-    /// Terminal `become` path to materialize.
-    pub path_index: usize,
-    /// Source-level state for each named output handle.
-    pub output_states: BTreeMap<String, BTreeMap<String, ArtifactValue>>,
-    /// KAS value for each named output handle.
-    pub output_values: BTreeMap<String, u64>,
-    /// Transaction input index that authorizes these outputs.
-    pub authorizing_input: u16,
-    /// Covenant id carried by the emitted outputs.
-    pub covenant_id: Hash,
 }
 
 #[derive(Clone, Debug)]
@@ -665,6 +627,11 @@ impl<'a> TxBuilder<'a> {
         Ok(GenesisCovenants { groups: populated_groups })
     }
 
+    /// Build a primary-app P2SH sigscript from source state and user arguments.
+    ///
+    /// Template witnesses for closed observed actors are inferred from attached
+    /// app interfaces. Open observed actors and observed state-derived witnesses
+    /// require `p2sh_signature_script_with_observed_covenants`.
     pub fn p2sh_signature_script(
         &self,
         actor_name: &str,
@@ -987,45 +954,6 @@ impl<'a> TxBuilder<'a> {
         ))
     }
 
-    /// Build all outputs for one terminal path of a named-output entry.
-    ///
-    /// This is the multi-output counterpart to `covenant_output`. It is useful
-    /// when an entry emits several named actors and the runtime should apply the
-    /// artifact route plan instead of asking the caller to manually match output
-    /// handles to actors/templates.
-    pub fn terminal_path_outputs(&self, request: TerminalPathOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
-        let entry = self.entry(request.actor_name, request.entry_name)?;
-        let path = entry.route_plan.terminal_paths.get(request.path_index).ok_or_else(|| BuilderError::UnknownTerminalPath {
-            actor: request.actor_name.to_string(),
-            entry: request.entry_name.to_string(),
-            path_index: request.path_index,
-        })?;
-        for output in request.output_states.keys().chain(request.output_values.keys()) {
-            if path.routes.iter().all(|route| route.output.as_ref() != Some(output)) {
-                return Err(BuilderError::UnknownOutput(output.clone()));
-            }
-        }
-
-        let mut outputs = Vec::with_capacity(path.routes.len());
-        for route in &path.routes {
-            let output = route.output.as_ref().ok_or(BuilderError::UnnamedRouteOutput)?;
-            let state = request.output_states.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?.clone();
-            let value = *request.output_values.get(output).ok_or_else(|| BuilderError::MissingOutput(output.clone()))?;
-            outputs.push((
-                route.auth_index,
-                output.clone(),
-                self.covenant_output(&route.actor, state, value, request.authorizing_input, request.covenant_id)?,
-            ));
-        }
-        outputs.sort_by_key(|(auth_index, _, _)| *auth_index);
-        for window in outputs.windows(2) {
-            if window[0].0 == window[1].0 {
-                return Err(BuilderError::DuplicateOutput(window[0].1.clone()));
-            }
-        }
-        Ok(outputs.into_iter().map(|(_, _, output)| output).collect())
-    }
-
     /// Build observed covenant outputs in the declaration order of an
     /// `observes { outputs { ... } }` block.
     pub fn observed_covenant_outputs(&self, request: ObservedCovenantOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
@@ -1166,22 +1094,30 @@ impl<'a> TxBuilder<'a> {
         &self,
         primary_artifact: &'a Artifact,
         hidden: &HiddenParamArtifact,
-        entry: &EntryArtifact,
+        entry: &'a EntryArtifact,
         template_selectors: &BTreeMap<String, String>,
         observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
     ) -> BuilderResult<ContractRef<'a>> {
         match &hidden.subject {
             HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
             HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, actor } => {
-                let context = observed
-                    .and_then(|contexts| contexts.get(observe))
-                    .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
-                let observed_actor = match side {
-                    ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
-                    ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
+                match observed.and_then(|contexts| contexts.get(observe)) {
+                    Some(context) => {
+                        let observed_actor = match side {
+                            ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
+                            ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
+                        }
+                        .unwrap_or(actor.as_str());
+                        self.contract_ref_in_app(&context.app, observed_actor)
+                    }
+                    None => {
+                        let observed_actor = self.observed_actor(entry, observe, *side, handle)?;
+                        if observed_actor.open_state.is_some() {
+                            return Err(BuilderError::MissingObservedCovenant { observe: observe.clone() });
+                        }
+                        self.observed_contract_ref(observe, &observed_actor.actor)
+                    }
                 }
-                .unwrap_or(actor.as_str());
-                self.contract_ref_in_app(&context.app, observed_actor)
             }
             HiddenParamSubjectArtifact::TemplateSelector { .. } => {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
@@ -1253,6 +1189,25 @@ impl<'a> TxBuilder<'a> {
             actor: actor_name.to_string(),
             entry: entry_name.to_string(),
             observe: observe_name.to_string(),
+        })
+    }
+
+    fn observed_actor(
+        &self,
+        entry: &'a EntryArtifact,
+        observe_name: &str,
+        side: ObservedActorSideArtifact,
+        handle: &str,
+    ) -> BuilderResult<&'a ObservedActorArtifact> {
+        let observe = self.observe(&entry.abi.actor, &entry.name, entry, observe_name)?;
+        let actors = match side {
+            ObservedActorSideArtifact::Input => &observe.inputs,
+            ObservedActorSideArtifact::Output => &observe.outputs,
+        };
+        actors.iter().find(|actor| actor.name == handle).ok_or_else(|| BuilderError::MissingObservedActor {
+            observe: observe_name.to_string(),
+            side: observed_side_label(side),
+            handle: handle.to_string(),
         })
     }
 
@@ -1816,22 +1771,32 @@ fn blake2b32(data: &[u8]) -> Vec<u8> {
 }
 
 pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
+    measure_input_script_units_with_covenants(tx, entries, input_idx).map(|_| ())
+}
+
+pub(crate) fn measure_input_script_units_with_covenants(
+    tx: &Transaction,
+    entries: Vec<UtxoEntry>,
+    input_idx: usize,
+) -> Result<ScriptUnits, TxScriptError> {
     let reused_values = SigHashReusedValuesUnsync::new();
-    let sig_cache = Cache::new(10_000);
+    let sig_cache = Cache::new(100);
     let input = tx.inputs[input_idx].clone();
     let populated = PopulatedTransaction::new(tx, entries);
     let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
     let utxo = populated.utxo(input_idx).expect("selected input utxo");
 
-    TxScriptEngine::from_transaction_input(
+    let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
         &populated,
         &input,
         input_idx,
         utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
         covenant_engine_flags(),
-    )
-    .execute()
+        ScriptUnits(u64::MAX),
+    );
+    vm.execute()?;
+    Ok(vm.used_script_units())
 }
 
 pub fn covenant_engine_flags() -> EngineFlags {

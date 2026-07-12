@@ -5,19 +5,65 @@ their own branch or design doc.
 
 ## Expanded capsules and route templates
 
-Check what happens when a capsule state is extended by another app, and that
-extending app has multiple actors whose route graph requires generated template
-fields.
+An app that expands a shared capsule may also need compiler-owned route
+commitments for a multi-actor route graph. Those commitments must not occupy a
+`virtual` slot: virtual slots are implementation-owned mutable state, while
+route commitments are fixed app context.
 
-The core invariant to preserve:
+Use one physical redeem script with two logical cuts:
 
-- the base capsule ABI observed by another app remains stable
-- expanded states can satisfy `actor_type<BaseCapsule>` handles
-- hidden route/template fields needed by the extending app do not leak into the
-  observed capsule ABI
-- generated state-layout/cut validation rejects mismatched compiled layouts
+```text
+internal app view:
+[ prefix ][ fixed route context ][ concrete state ][ suffix ]
 
-Useful fixture:
+external capsule view:
+[ prefix + fixed route context ][ BaseCapsule state ][ suffix ]
+```
+
+Internal routes continue to use the app's ordinary generated templates. Their
+route commitments do not depend on external handles, so route cycles remain
+non-recursive.
+
+The route context is compiler-owned, fixed during bootstrap, and immutable
+afterward. It is not authored state even if its serialized bytes occupy the
+template-variable region used by the internal cut.
+
+An external `actor_type<BaseCapsule>` handle uses the wider cut. The route
+context becomes part of the prefix, leaving only the stable capsule ABI as the
+variable region. The handle therefore commits to both the concrete actor and
+its bootstrapped route context. The same internal template may have different
+external handles in different app route graphs.
+
+Artifact sketch:
+
+```json
+{
+  "canonical_template_hash": "<canonical-template-hash>",
+  "actor_type_handles": {
+    "BaseCapsule": "<external-capsule-handle>"
+  }
+}
+```
+
+`canonical_template_hash` identifies the ordinary generated template used by
+internal routes. `actor_type_handles.BaseCapsule` identifies the wider
+`actor_type<BaseCapsule>` cut exposed to external apps.
+
+Compiler requirements:
+
+- encode route context canonically in a compiler-owned region before the capsule
+- initialize that context during bootstrap and preserve it as immutable metadata
+- keep virtual slots exclusively for implementation-owned state
+- record the external cut, capsule ABI, and route-context encoding in the artifact
+- keep internal route commitments independent of external capsule handles
+- populate or validate the exact target route context on every internal route;
+  validating only the ordinary target template is insufficient
+- preserve or reuse the route context when an external transition keeps the
+  same `actor_type<BaseCapsule>` handle
+- reject incompatible capsule layouts and cut descriptors before building a
+  transaction
+
+Fixture:
 
 ```rust
 state AgentCapsule {
@@ -55,6 +101,39 @@ Things to make explicit in docs/tests:
 Open question: should Argent eventually have source syntax for declaring a
 paired entry relation, or should this remain expressed through `observes`,
 `co_spent()`, consumed inputs, and output checks?
+
+## Correlated output variants
+
+Allow `emits` to declare valid combinations of output actors rather than only
+an independent actor union for each output:
+
+```rust
+emits {
+    left: A;
+    right: B;
+} | {
+    left: C;
+    right: D;
+}
+```
+
+This represents `(A x B) | (C x D)`. The current form:
+
+```rust
+emits {
+    left: A | C;
+    right: B | D;
+}
+```
+
+represents `(A | C) x (B | D)` and leaves the entry body to reject the invalid
+cross-combinations.
+
+Initially require every alternative to use the same named output handles and
+ordering. The compiler should verify that each internal terminal route set
+matches one declared alternative. The artifact should record the source-level
+alternatives so a typed builder can match concrete outputs without exposing a
+terminal path index.
 
 ## Genesis launch roots
 

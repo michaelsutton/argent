@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "826fc5a1e9cfddbf23e962303f12e7562efcb6fac2a29f6afc0f628b16dec64f",
+  "id": "8740556ba18ebb213bf552a1c9f020d6e3dbeddfe1ad6b6c4cc86a1739457de5",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -190,21 +190,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "next",
-                      "auth_index": 0,
-                      "actor": "KCC20",
-                      "template_id": "template/kcc20",
-                      "state_expr": "next_state",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
-                }
-              ],
               "witness_recipe_ids": []
             },
             "hidden_params": [],
@@ -229,18 +214,6 @@
                 "actor": "KCC20",
                 "template_id": "template/kcc20",
                 "state_expr": "next_state"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "next",
-                    "actor": "KCC20",
-                    "template_id": "template/kcc20",
-                    "state_expr": "next_state"
-                  }
-                ]
               }
             ]
           }
@@ -285,35 +258,6 @@
                   "auth_index": 1,
                   "actors": [
                     "KCC20"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "proxy",
-                      "auth_index": 0,
-                      "actor": "MinterProxy",
-                      "template_id": "template/minter_proxy",
-                      "state_expr": "next_proxy",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "recipient",
-                      "auth_index": 1,
-                      "actor": "KCC20",
-                      "template_id": "template/kcc20",
-                      "state_expr": "recipient",
-                      "witness_recipe_ids": [
-                        "witness/kcc20/template_prefix_bytes",
-                        "witness/kcc20/template_suffix_bytes"
-                      ]
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/kcc20/template_prefix_bytes",
-                    "witness/kcc20/template_suffix_bytes"
                   ]
                 }
               ],
@@ -409,24 +353,6 @@
                 "actor": "KCC20",
                 "template_id": "template/kcc20",
                 "state_expr": "recipient"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "proxy",
-                    "actor": "MinterProxy",
-                    "template_id": "template/minter_proxy",
-                    "state_expr": "next_proxy"
-                  },
-                  {
-                    "output": "recipient",
-                    "actor": "KCC20",
-                    "template_id": "template/kcc20",
-                    "state_expr": "recipient"
-                  }
-                ]
               }
             ]
           }

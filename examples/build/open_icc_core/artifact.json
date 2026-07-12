@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "707531cc918a4aa3e109b7a1e87e088be57b68e47d187ebdc1c9729cba52d88d",
+  "id": "c08057ffdd49874791a08e8ea5e6e39e859edce294ec85d86c17bf33c709fe28",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -287,21 +287,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "cell",
-                      "auth_index": 0,
-                      "actor": "Cell",
-                      "template_id": "template/cell",
-                      "state_expr": "next_cell",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
                 "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
@@ -447,18 +432,6 @@
                 "template_id": "template/cell",
                 "state_expr": "next_cell"
               }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "cell",
-                    "actor": "Cell",
-                    "template_id": "template/cell",
-                    "state_expr": "next_cell"
-                  }
-                ]
-              }
             ]
           },
           {
@@ -499,32 +472,6 @@
                   "auth_index": 1,
                   "actors": [
                     "Cell"
-                  ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "source_cell",
-                      "auth_index": 0,
-                      "actor": "Cell",
-                      "template_id": "template/cell",
-                      "state_expr": "next_source",
-                      "witness_recipe_ids": []
-                    },
-                    {
-                      "output": "target_cell",
-                      "auth_index": 1,
-                      "actor": "Cell",
-                      "template_id": "template/cell",
-                      "state_expr": "next_target",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": [
-                    "witness/cell/template_prefix_len",
-                    "witness/cell/template_suffix_len"
                   ]
                 }
               ],
@@ -742,24 +689,6 @@
                 "actor": "Cell",
                 "template_id": "template/cell",
                 "state_expr": "next_target"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "source_cell",
-                    "actor": "Cell",
-                    "template_id": "template/cell",
-                    "state_expr": "next_source"
-                  },
-                  {
-                    "output": "target_cell",
-                    "actor": "Cell",
-                    "template_id": "template/cell",
-                    "state_expr": "next_target"
-                  }
-                ]
               }
             ]
           }

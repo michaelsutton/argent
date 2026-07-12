@@ -198,3 +198,9 @@ What is still being built:
 
 Design notes can be found in [docs/argent-design.md](docs/argent-design.md).
 ICC semantics can be found in [docs/icc-semantics.md](docs/icc-semantics.md).
+
+## Contributing
+
+Run `./check.sh --full` before submitting changes. Open design questions and
+implementation sketches are collected in [docs/followups.md](docs/followups.md);
+they are useful starting points for discussion and contributions.

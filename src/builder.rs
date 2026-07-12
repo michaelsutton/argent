@@ -25,7 +25,7 @@ mod tests {
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
             sighash_type::SIG_HASH_ALL,
         },
-        tx::{MutableTransaction, Transaction, TransactionId, TransactionOutpoint, UtxoEntry},
+        tx::{CovenantBinding, MutableTransaction, Transaction, TransactionId, TransactionOutpoint, UtxoEntry},
     };
     use kaspa_txscript::pay_to_script_hash_signature_script_with_flags;
     use secp256k1::{Keypair, Secp256k1, SecretKey};
@@ -146,6 +146,72 @@ mod tests {
     }
 
     #[test]
+    fn fluent_transition_builds_and_verifies_signed_single_output() {
+        let artifact = inline_artifact(
+            "fluent-counter",
+            r#"
+            state CounterState {
+                pubkey owner;
+                int count;
+            }
+
+            actor Counter owns CounterState {
+                entry bump(owner_sig: sig, delta: int) emits one Counter {
+                    require(checkSig(owner_sig, owner));
+
+                    CounterState next = {
+                        owner: owner,
+                        count: count + delta,
+                    };
+
+                    become Counter(next);
+                }
+            }
+
+            app CounterApp {
+                actor Counter;
+            }
+            "#,
+        );
+        let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
+        let owner = keypair_from_byte(1);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let initial = state! { owner: owner_pk.clone(), count: 2 };
+        let next = state! { owner: owner_pk, count: 5 };
+        let input_value = 1_000;
+        let covenant_id = Hash::from_bytes([0x42; 32]);
+        let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 0 };
+        let input_utxo =
+            builder.covenant_utxo("Counter", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+
+        let built = builder
+            .transition("Counter", "bump")
+            .input(outpoint, input_utxo.clone(), initial.clone())
+            .expect(next)
+            .preserve_value()
+            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
+            .build()
+            .expect("fluent transition builds");
+
+        assert_eq!(built.transaction.inputs.len(), 1);
+        assert_eq!(built.transaction.outputs.len(), 1);
+        assert_eq!(built.transaction.version, 1);
+        assert!(built.transaction.inputs[0].compute_commit.compute_budget().is_some());
+        assert_eq!(built.transaction.outputs[0].value, input_value);
+        assert_eq!(built.transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
+
+        let err = builder
+            .transition("Counter", "bump")
+            .input(outpoint, input_utxo, initial.clone())
+            .expect(initial)
+            .preserve_value()
+            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
+            .build()
+            .expect_err("incorrect expected state must fail contract execution");
+        assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
+    }
+
+    #[test]
     fn route_plan_builds_stones_start_game_and_rejects_bad_routes() {
         let artifact = example_artifact("examples/stones/app.ag", "stones-route-plan");
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
@@ -175,14 +241,8 @@ mod tests {
             ]
         );
         assert_eq!(
-            entry.route_plan.terminal_paths[0].witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            entry.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
             entry.witnesses.iter().map(|witness| witness.recipe_id.as_str()).collect::<Vec<_>>()
-        );
-        assert!(entry.route_plan.terminal_paths[0].routes[0].witness_recipe_ids.is_empty());
-        assert!(entry.route_plan.terminal_paths[0].routes[1].witness_recipe_ids.is_empty());
-        assert_eq!(
-            entry.route_plan.terminal_paths[0].routes[2].witness_recipe_ids.as_slice(),
-            ["witness/stones_game/template_prefix_bytes", "witness/stones_game/template_suffix_bytes"]
         );
 
         let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
@@ -226,24 +286,11 @@ mod tests {
             .covenant_utxo("Player", initial_b.clone(), input_b_value, 0, false, Some(covenant_id))
             .expect("player B utxo builds");
         let entries = vec![player_a_utxo.clone(), player_b_utxo.clone()];
-        let output_states =
-            BTreeMap::from([("self_out".to_string(), next_a), ("opponent_out".to_string(), next_b), ("game".to_string(), next_game)]);
-        let output_values = BTreeMap::from([
-            ("self_out".to_string(), input_a_value),
-            ("opponent_out".to_string(), input_b_value),
-            ("game".to_string(), game_value),
-        ]);
-        let outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "Player",
-                entry_name: "start_game",
-                path_index: 0,
-                output_states,
-                output_values,
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("route-plan outputs build");
+        let outputs = vec![
+            builder.covenant_output("Player", next_a, input_a_value, 0, covenant_id).expect("player A output builds"),
+            builder.covenant_output("Player", next_b, input_b_value, 0, covenant_id).expect("player B output builds"),
+            builder.covenant_output("StonesGame", next_game, game_value, 0, covenant_id).expect("game output builds"),
+        ];
         let unsigned_tx = TxBuilder::transaction(
             vec![TxBuilder::transaction_input(outpoint_a, Vec::new()), TxBuilder::transaction_input(outpoint_b, Vec::new())],
             outputs.clone(),
@@ -669,20 +716,10 @@ mod tests {
             .covenant_utxo("League", league_initial.clone(), input_value, 0, false, Some(covenant_id))
             .expect("league utxo builds");
         let entries = vec![league_utxo.clone()];
-        let outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "League",
-                entry_name: "register_player",
-                path_index: 0,
-                output_states: BTreeMap::from([
-                    ("league".to_string(), league_initial.clone()),
-                    ("player".to_string(), player_next.clone()),
-                ]),
-                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("register outputs build");
+        let outputs = vec![
+            builder.covenant_output("League", league_initial.clone(), input_value, 0, covenant_id).expect("league output builds"),
+            builder.covenant_output("Player", player_next.clone(), player_value, 0, covenant_id).expect("player output builds"),
+        ];
         let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], outputs.clone());
         let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
         let sigscript = builder
@@ -723,17 +760,10 @@ mod tests {
         );
 
         let changed_league_state = league_state(vec![0x56; 32], 7, 3);
-        let bad_outputs = builder
-            .terminal_path_outputs(TerminalPathOutputRequest {
-                actor_name: "League",
-                entry_name: "register_player",
-                path_index: 0,
-                output_states: BTreeMap::from([("league".to_string(), changed_league_state), ("player".to_string(), player_next)]),
-                output_values: BTreeMap::from([("league".to_string(), input_value), ("player".to_string(), player_value)]),
-                authorizing_input: 0,
-                covenant_id,
-            })
-            .expect("bad register outputs build");
+        let bad_outputs = vec![
+            builder.covenant_output("League", changed_league_state, input_value, 0, covenant_id).expect("league output builds"),
+            builder.covenant_output("Player", player_next, player_value, 0, covenant_id).expect("player output builds"),
+        ];
         let bad_unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], bad_outputs.clone());
         let bad_signature = sign_input(&bad_unsigned_tx, entries.clone(), 0, &owner);
         let bad_sigscript = builder
@@ -829,6 +859,14 @@ mod tests {
             outputs.clone(),
         );
         let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
+        let inferred_sigscript = builder
+            .p2sh_signature_script(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                args![signature.clone(), recipient_owner.clone(), minted_amount],
+            )
+            .expect("closed observed template witnesses are inferred from the attached app");
         let sigscript = builder
             .p2sh_signature_script_with_observed_covenants(
                 "Minter",
@@ -838,6 +876,7 @@ mod tests {
                 &observed,
             )
             .expect("observed mint sigscript builds");
+        assert_eq!(inferred_sigscript, sigscript);
         let tx = TxBuilder::transaction(
             vec![
                 TxBuilder::transaction_input(minter_outpoint, sigscript),
@@ -1117,6 +1156,14 @@ mod tests {
         let cell_next = open_cell_state(agent_covenant_id, agent_type.clone(), 8);
         let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
         let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
+
+        let missing_context_err = builder
+            .p2sh_signature_script("Cell", "advance", cell_initial.clone(), args![])
+            .expect_err("open observed actors still require explicit context");
+        assert!(
+            matches!(&missing_context_err, BuilderError::MissingObservedCovenant { observe } if observe == "remote"),
+            "unexpected error: {missing_context_err}"
+        );
 
         let agent_utxo = builder
             .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
@@ -1838,6 +1885,10 @@ mod tests {
 
     fn sign_input(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {
         let tx = MutableTransaction::with_entries(tx.clone(), entries);
+        sign_mutable_input(&tx, input_idx, keypair)
+    }
+
+    fn sign_mutable_input<T: AsRef<Transaction>>(tx: &MutableTransaction<T>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {
         let reused_values = SigHashReusedValuesUnsync::new();
         let sig_hash = calc_schnorr_signature_hash(&tx.as_verifiable(), input_idx, SIG_HASH_ALL, &reused_values);
         let msg = secp256k1::Message::from_digest_slice(sig_hash.as_bytes().as_slice()).expect("valid sighash message");

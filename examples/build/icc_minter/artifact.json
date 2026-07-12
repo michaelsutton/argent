@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "eaa70ff5e832462d8ddb8d69fb5a17d4be73e1080ce4e3d667cba5b9d57788c2",
+  "id": "c13347316d4699c8b0a64b0acea671210c224f105be09cd95b64a75464a4656f",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -248,21 +248,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "controller",
-                      "auth_index": 0,
-                      "actor": "Minter",
-                      "template_id": "template/minter",
-                      "state_expr": "next_controller",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
-                }
-              ],
               "witness_recipe_ids": [
                 "witness/observed/asset/input/minter_proxy/template_prefix_len",
                 "witness/observed/asset/input/minter_proxy/template_suffix_len",
@@ -440,18 +425,6 @@
                 "actor": "Minter",
                 "template_id": "template/minter",
                 "state_expr": "next_controller"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "controller",
-                    "actor": "Minter",
-                    "template_id": "template/minter",
-                    "state_expr": "next_controller"
-                  }
-                ]
               }
             ]
           }

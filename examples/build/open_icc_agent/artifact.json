@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "2f54142a49315bcc4ffd3945b2b576fe83016242267a9ca173bcbcc745613ca9",
+  "id": "64beb6fe8049acab2639fb87ddc1258f592c2ffda34e5bdc5ec3e92e9ec1b52d",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -346,21 +346,6 @@
                   ]
                 }
               ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "agent",
-                      "auth_index": 0,
-                      "actor": "Agent",
-                      "template_id": "template/agent",
-                      "state_expr": "next_agent",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
-                }
-              ],
               "witness_recipe_ids": []
             },
             "hidden_params": [],
@@ -385,18 +370,6 @@
                 "actor": "Agent",
                 "template_id": "template/agent",
                 "state_expr": "next_agent"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "agent",
-                    "actor": "Agent",
-                    "template_id": "template/agent",
-                    "state_expr": "next_agent"
-                  }
-                ]
               }
             ]
           }
@@ -435,21 +408,6 @@
                   "actors": [
                     "Forager"
                   ]
-                }
-              ],
-              "terminal_paths": [
-                {
-                  "routes": [
-                    {
-                      "output": "agent",
-                      "auth_index": 0,
-                      "actor": "Forager",
-                      "template_id": "template/forager",
-                      "state_expr": "next_agent",
-                      "witness_recipe_ids": []
-                    }
-                  ],
-                  "witness_recipe_ids": []
                 }
               ],
               "witness_recipe_ids": [
@@ -510,18 +468,6 @@
                 "actor": "Forager",
                 "template_id": "template/forager",
                 "state_expr": "next_agent"
-              }
-            ],
-            "terminal_paths": [
-              {
-                "routes": [
-                  {
-                    "output": "agent",
-                    "actor": "Forager",
-                    "template_id": "template/forager",
-                    "state_expr": "next_agent"
-                  }
-                ]
               }
             ]
           }
