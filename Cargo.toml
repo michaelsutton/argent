@@ -3,6 +3,8 @@ name = "argent"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
+license = "ISC"
+authors = ["Kaspa developers"]
 
 [workspace]
 members = [".", "crates/argent-artifact", "crates/argent-runtime", "crates/silverscript-abi"]
