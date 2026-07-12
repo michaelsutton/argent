@@ -829,6 +829,14 @@ mod tests {
             outputs.clone(),
         );
         let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
+        let inferred_sigscript = builder
+            .p2sh_signature_script(
+                "Minter",
+                "mint",
+                minter_initial.clone(),
+                args![signature.clone(), recipient_owner.clone(), minted_amount],
+            )
+            .expect("closed observed template witnesses are inferred from the attached app");
         let sigscript = builder
             .p2sh_signature_script_with_observed_covenants(
                 "Minter",
@@ -838,6 +846,7 @@ mod tests {
                 &observed,
             )
             .expect("observed mint sigscript builds");
+        assert_eq!(inferred_sigscript, sigscript);
         let tx = TxBuilder::transaction(
             vec![
                 TxBuilder::transaction_input(minter_outpoint, sigscript),
@@ -1117,6 +1126,14 @@ mod tests {
         let cell_next = open_cell_state(agent_covenant_id, agent_type.clone(), 8);
         let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
         let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
+
+        let missing_context_err = builder
+            .p2sh_signature_script("Cell", "advance", cell_initial.clone(), args![])
+            .expect_err("open observed actors still require explicit context");
+        assert!(
+            matches!(&missing_context_err, BuilderError::MissingObservedCovenant { observe } if observe == "remote"),
+            "unexpected error: {missing_context_err}"
+        );
 
         let agent_utxo = builder
             .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))

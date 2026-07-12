@@ -665,6 +665,11 @@ impl<'a> TxBuilder<'a> {
         Ok(GenesisCovenants { groups: populated_groups })
     }
 
+    /// Build a primary-app P2SH sigscript from source state and user arguments.
+    ///
+    /// Template witnesses for closed observed actors are inferred from attached
+    /// app interfaces. Open observed actors and observed state-derived witnesses
+    /// require `p2sh_signature_script_with_observed_covenants`.
     pub fn p2sh_signature_script(
         &self,
         actor_name: &str,
@@ -1166,22 +1171,30 @@ impl<'a> TxBuilder<'a> {
         &self,
         primary_artifact: &'a Artifact,
         hidden: &HiddenParamArtifact,
-        entry: &EntryArtifact,
+        entry: &'a EntryArtifact,
         template_selectors: &BTreeMap<String, String>,
         observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
     ) -> BuilderResult<ContractRef<'a>> {
         match &hidden.subject {
             HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
             HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, actor } => {
-                let context = observed
-                    .and_then(|contexts| contexts.get(observe))
-                    .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
-                let observed_actor = match side {
-                    ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
-                    ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
+                match observed.and_then(|contexts| contexts.get(observe)) {
+                    Some(context) => {
+                        let observed_actor = match side {
+                            ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
+                            ObservedActorSideArtifact::Output => context.outputs.get(handle).map(|observed| observed.actor.as_str()),
+                        }
+                        .unwrap_or(actor.as_str());
+                        self.contract_ref_in_app(&context.app, observed_actor)
+                    }
+                    None => {
+                        let observed_actor = self.observed_actor(entry, observe, *side, handle)?;
+                        if observed_actor.open_state.is_some() {
+                            return Err(BuilderError::MissingObservedCovenant { observe: observe.clone() });
+                        }
+                        self.observed_contract_ref(observe, &observed_actor.actor)
+                    }
                 }
-                .unwrap_or(actor.as_str());
-                self.contract_ref_in_app(&context.app, observed_actor)
             }
             HiddenParamSubjectArtifact::TemplateSelector { .. } => {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
@@ -1253,6 +1266,25 @@ impl<'a> TxBuilder<'a> {
             actor: actor_name.to_string(),
             entry: entry_name.to_string(),
             observe: observe_name.to_string(),
+        })
+    }
+
+    fn observed_actor(
+        &self,
+        entry: &'a EntryArtifact,
+        observe_name: &str,
+        side: ObservedActorSideArtifact,
+        handle: &str,
+    ) -> BuilderResult<&'a ObservedActorArtifact> {
+        let observe = self.observe(&entry.abi.actor, &entry.name, entry, observe_name)?;
+        let actors = match side {
+            ObservedActorSideArtifact::Input => &observe.inputs,
+            ObservedActorSideArtifact::Output => &observe.outputs,
+        };
+        actors.iter().find(|actor| actor.name == handle).ok_or_else(|| BuilderError::MissingObservedActor {
+            observe: observe_name.to_string(),
+            side: observed_side_label(side),
+            handle: handle.to_string(),
         })
     }
 
