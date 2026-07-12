@@ -67,15 +67,8 @@ impl Artifact {
     pub fn computed_id_hex(&self) -> std::result::Result<String, ArtifactIdentityError> {
         let mut artifact = self.clone();
         artifact.id.clear();
-        // `root` and `modules` are filesystem paths recorded for informational/
-        // debugging purposes only. They must NOT participate in artifact
-        // identity: two builds of byte-identical source should produce the
-        // same id regardless of which absolute path the source happened to
-        // live at when it was built (e.g. a different clone directory, a
-        // different machine, or - on Windows specifically - a `\\?\` UNC-
-        // extended-length canonical path that a naive `strip_prefix` against
-        // `current_dir()` fails to match, silently leaking the full absolute
-        // path into what's supposed to be a portable, content-addressed id).
+        // Source paths are informational and must not make artifact ids
+        // dependent on the checkout location.
         artifact.root.clear();
         artifact.modules.clear();
         hash_json("argent/artifact/v1", &artifact)
@@ -1502,114 +1495,17 @@ mod tests {
 
     #[test]
     fn artifact_id_is_independent_of_root_and_module_paths() {
-        // The `root` and `modules` fields record where the source lived on
-        // disk at build time. They are informational only and must NOT
-        // affect the content-addressed artifact id: the same source built
-        // from two different directories (a different clone location, a
-        // different machine, or a Windows `\\?\` UNC-extended canonical
-        // path that a naive `strip_prefix(current_dir())` fails to strip)
-        // must yield the same id. Otherwise "portable artifact" and
-        // "verifiable bundle id" claims don't hold.
-        fn artifact_with_paths(root: &str, modules: &[&str]) -> Artifact {
-            let root_json = serde_json::to_string(root).expect("root serializes");
-            let modules_json = serde_json::to_string(modules).expect("modules serialize");
-            let json = format!(
-                r#"{{
-                  "schema_version": 1,
-                  "generator": {{ "name": "argentc", "version": "0.1.0" }},
-                  "app": "Tiny",
-                  "root": {root_json},
-                  "modules": {modules_json},
-                  "argent": {{
-                    "templates": [{{ "id": "template/foo", "actor": "Foo", "symbol": "gen__foo_template" }}],
-                    "template_plan": {{
-                      "templates": [],
-                      "runtime_states": [
-                        {{
-                          "contract": "Foo",
-                          "source": "FooState",
-                          "field_roles": [
-                            {{
-                              "name": "gen__foo_template",
-                              "role": {{ "kind": "template", "contract": "Foo" }}
-                            }}
-                          ]
-                        }}
-                      ],
-                      "witness_recipes": []
-                    }},
-                    "states": [
-                      {{
-                        "name": "FooState",
-                        "fields": [{{ "name": "owner", "type": {{ "kind": "fixed_bytes", "len": 32 }} }}]
-                      }}
-                    ],
-                    "actors": [
-                      {{
-                        "name": "Foo",
-                        "state": "FooState",
-                        "abi": {{ "actor": "Foo" }},
-                        "entries": []
-                      }}
-                    ]
-                  }},
-                  "sil_abi": {{
-                    "schema_version": 1,
-                    "states": [
-                      {{
-                        "name": "FooState",
-                        "fields": [{{ "name": "owner", "type": {{ "kind": "fixed_bytes", "len": 32 }} }}]
-                      }}
-                    ],
-                    "contracts": [
-                      {{
-                        "name": "Foo",
-                        "source_path": "sil/Foo.sil",
-                        "runtime_state": {{
-                          "source": "FooState",
-                          "fields": [
-                            {{
-                              "name": "gen__foo_template",
-                              "type": {{ "kind": "fixed_bytes", "len": 32 }}
-                            }},
-                            {{
-                              "name": "owner",
-                              "type": {{ "kind": "fixed_bytes", "len": 32 }}
-                            }}
-                          ]
-                        }},
-                        "entries": [],
-                        "compiled": {{
-                          "script_hex": "",
-                          "template": {{ "prefix_hex": "", "suffix_hex": "", "hash_hex": "" }},
-                          "state_span": {{ "offset": 0, "len": 0 }}
-                        }}
-                      }}
-                    ]
-                  }}
-                }}"#,
-            );
-            serde_json::from_str(&json).expect("artifact should deserialize")
-        }
+        let mut first = artifact_with_route_families(Vec::new());
+        first.root = "checkout-a/app.ag".to_string();
+        first.modules = vec!["checkout-a/app.ag".to_string(), "checkout-a/types.ag".to_string()];
 
-        let built_at_repo_root = artifact_with_paths("examples/tiny.ag", &["examples/tiny.ag"]);
-        let built_at_different_absolute_path = artifact_with_paths(
-            r"\\?\C:\Users\wolfie\projects\kaspanet\argent\examples\tiny.ag",
-            &[r"\\?\C:\Users\wolfie\projects\kaspanet\argent\examples\tiny.ag"],
-        );
-        let built_from_a_third_location =
-            artifact_with_paths("/home/ci-runner/build-42/examples/tiny.ag", &["/home/ci-runner/build-42/examples/tiny.ag"]);
+        let mut second = first.clone();
+        second.root = "/workspace/checkout-b/app.ag".to_string();
+        second.modules = vec!["/workspace/checkout-b/app.ag".to_string(), "/workspace/checkout-b/types.ag".to_string()];
 
-        let id_a = built_at_repo_root.computed_id_hex().expect("id computes");
-        let id_b = built_at_different_absolute_path.computed_id_hex().expect("id computes");
-        let id_c = built_from_a_third_location.computed_id_hex().expect("id computes");
-
-        assert_eq!(id_a, id_b, "artifact id must not depend on the build's source root path");
-        assert_eq!(id_a, id_c, "artifact id must not depend on the build's source root path");
-
-        // Sanity check the fields themselves genuinely differ, so this test
-        // isn't accidentally comparing two identical inputs.
-        assert_ne!(built_at_repo_root.root, built_at_different_absolute_path.root);
+        assert_ne!(first.root, second.root);
+        assert_ne!(first.modules, second.modules);
+        assert_eq!(first.computed_id_hex().expect("first id computes"), second.computed_id_hex().expect("second id computes"));
     }
 
     #[test]
