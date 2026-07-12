@@ -378,6 +378,8 @@ pub enum HiddenParamPurposeArtifact {
     TemplateSuffixBytes,
     TemplatePrefixLen,
     TemplateSuffixLen,
+    /// Hash of a runtime-selected actor template, resolved from its artifact.
+    TemplateHash,
     RouteTemplateLeaf,
     RouteTemplateProof,
     RouteFamilyTable,

@@ -1563,7 +1563,7 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     let witness_specs = entry_witness_specs(actor, entry, model);
-    let sil_params = lower_entry_params(actor, &entry.params, &witness_specs, model);
+    let sil_params = lower_entry_params(actor, entry, &witness_specs, model);
     push_entry_signature(out, &entry.name, &sil_params);
 
     let has_byte_witnesses =
@@ -1727,10 +1727,10 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
             if !observed_is_dynamic_binding(observe, output) || !materialized_open_bindings.insert(output.actor.as_str()) {
                 continue;
             }
-            let spec = observed_output_spec(observe, output);
-            let prefix = hidden_observed_actor_prefix_name(&spec);
-            let suffix = hidden_observed_actor_suffix_name(&spec);
-            push_generated_call(out, 8, &format!("byte[32] {} = ", output.actor), "templateHash", &[prefix, suffix]);
+            let input =
+                first_observed_input_for_actor(observe, &output.actor).expect("dynamic observed output requires its binding input");
+            let spec = observed_input_spec(observe, input);
+            out.push_str(&format!("        byte[32] {} = {};\n", output.actor, hidden_observed_actor_template_name(&spec)));
         }
         for (idx, input) in observe.inputs.iter().enumerate() {
             let lens_spec = observed_input_lens_source_for_input(observe, input);
@@ -3287,9 +3287,9 @@ fn route_validation_kind(actor: &ActorDecl, route: &RouteCall) -> RouteValidatio
     RouteValidationKind::ForeignTemplate
 }
 
-fn lower_entry_params(actor: &ActorDecl, params: &[ParamDecl], witness_specs: &EntryWitnessSpecs, model: &Model<'_>) -> Vec<String> {
+fn lower_entry_params(actor: &ActorDecl, entry: &EntryDecl, witness_specs: &EntryWitnessSpecs, model: &Model<'_>) -> Vec<String> {
     let mut out = Vec::new();
-    for param in params {
+    for param in &entry.params {
         out.push(format!("{} {}", lower_entry_param_type(actor, &param.ty, model), param.name));
     }
     for spec in &witness_specs.templates {
@@ -3316,6 +3316,9 @@ fn lower_entry_params(actor: &ActorDecl, params: &[ParamDecl], witness_specs: &E
             ObservedActorSideArtifact::Input => {
                 out.push(format!("int {}", hidden_observed_actor_prefix_len_name(spec)));
                 out.push(format!("int {}", hidden_observed_actor_suffix_len_name(spec)));
+                if observed_spec_is_dynamic_binding(entry, spec) {
+                    out.push(format!("byte[32] {}", hidden_observed_actor_template_name(spec)));
+                }
             }
             ObservedActorSideArtifact::Output => {
                 out.push(format!("byte[] {}", hidden_observed_actor_prefix_name(spec)));
@@ -3718,7 +3721,14 @@ fn observed_actor_spec(observe: &ObserveDecl, side: ObservedActorSideArtifact, h
 }
 
 fn observed_reuses_input_template(observe: &ObserveDecl, output: &ObservedActorDecl) -> bool {
-    !observed_is_dynamic_binding(observe, output) && observe.inputs.iter().any(|input| input.actor == output.actor)
+    observe.inputs.iter().any(|input| input.actor == output.actor)
+}
+
+fn observed_spec_is_dynamic_binding(entry: &EntryDecl, spec: &ObservedActorWitnessSpec) -> bool {
+    let Some(observe) = entry.observes.iter().find(|observe| observe.name == spec.observe) else {
+        return false;
+    };
+    observed_decl_for_spec(observe, spec).is_some_and(|observed| observed_is_dynamic_binding(observe, observed))
 }
 
 fn first_observed_output_for_actor<'a>(observe: &'a ObserveDecl, actor: &str) -> Option<&'a ObservedActorDecl> {
@@ -4414,6 +4424,16 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     purpose: HiddenParamPurposeArtifact::TemplateSuffixLen,
                     route_proof_id: None,
                 });
+                if observed_spec_is_dynamic_binding(entry, spec) {
+                    hidden_params.push(HiddenParamArtifact {
+                        recipe_id: observed_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplateHash),
+                        name: hidden_observed_actor_template_name(spec),
+                        ty: TypeArtifact::FixedBytes { len: 32 },
+                        subject,
+                        purpose: HiddenParamPurposeArtifact::TemplateHash,
+                        route_proof_id: None,
+                    });
+                }
             }
             ObservedActorSideArtifact::Output => {
                 hidden_params.push(HiddenParamArtifact {
@@ -5430,6 +5450,7 @@ fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str 
         HiddenParamPurposeArtifact::TemplateSuffixBytes => "template_suffix_bytes",
         HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
         HiddenParamPurposeArtifact::TemplateSuffixLen => "template_suffix_len",
+        HiddenParamPurposeArtifact::TemplateHash => "template_hash",
         HiddenParamPurposeArtifact::RouteTemplateLeaf => "route_template_leaf",
         HiddenParamPurposeArtifact::RouteTemplateProof => "route_template_proof",
         HiddenParamPurposeArtifact::RouteFamilyTable => "route_family_table",
@@ -6675,8 +6696,12 @@ mod tests {
         assert_eq!(observe.inputs[0].open_state.as_deref(), Some("AgentCapsule"));
         assert_eq!(observe.outputs[0].open_state.as_deref(), Some("AgentCapsule"));
         assert_eq!(
-            advance.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
-            vec!["gen__remote_observed_agent_prefix", "gen__remote_observed_agent_suffix"]
+            advance.hidden_params.iter().map(|param| (param.name.as_str(), param.purpose)).collect::<Vec<_>>(),
+            vec![
+                ("gen__remote_observed_agent_prefix_len", HiddenParamPurposeArtifact::TemplatePrefixLen),
+                ("gen__remote_observed_agent_suffix_len", HiddenParamPurposeArtifact::TemplateSuffixLen),
+                ("gen__remote_observed_agent_template", HiddenParamPurposeArtifact::TemplateHash),
+            ]
         );
     }
 

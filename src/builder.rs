@@ -1327,6 +1327,81 @@ mod tests {
         execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts authorized header-preserving output");
     }
 
+    #[test]
+    fn anonymous_open_binding_hash_is_filled_from_observed_input_actor() {
+        let core_artifact = example_artifact("tests/fixtures/emit/open_observed_actor_binding/app.ag", "anonymous-open-binding-core");
+        let agent_artifact = inline_artifact(
+            "anonymous-open-binding-agent",
+            r#"
+            state AgentCapsule {
+                byte[32] controller_id;
+                byte[32] caps_digest;
+                int energy;
+            }
+
+            actor Agent owns AgentCapsule {
+                entry hold() emits none {
+                    require(energy >= 0);
+                }
+            }
+
+            app AgentApp {
+                actor Agent;
+            }
+            "#,
+        );
+        let bundle = ArtifactBundle::new(&core_artifact)
+            .expect("bundle accepts anonymous open core")
+            .with_app("agent_app", &agent_artifact)
+            .expect("bundle accepts anonymous observed app");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts anonymous open bundle");
+
+        let agent_template = agent_artifact.sil_abi.contract("Agent").expect("Agent contract exists").compiled.template.clone();
+        let agent_template_hash = decode_hex(&agent_template.hash_hex).expect("Agent template hash decodes");
+        let agent_state = state! {
+            controller_id: vec![0x11; 32],
+            caps_digest: vec![0x22; 32],
+            energy: 5,
+        };
+        let cell_state = state! {
+            agent_covid: Hash::from_bytes([0x33; 32]),
+            agent_type: agent_template_hash.clone(),
+            tick: 0,
+        };
+        let agent_utxo = builder
+            .covenant_utxo_in_app("agent_app", "Agent", agent_state.clone(), 1_000, 0, false, Some(Hash::from_bytes([0x33; 32])))
+            .expect("observed Agent UTXO builds");
+        let observed = BTreeMap::from([(
+            "remote".to_string(),
+            ObservedCovenantContext::from_app("agent_app").input("agent", "Agent", agent_utxo, agent_state.clone()).output(
+                "agent",
+                "Agent",
+                agent_state,
+            ),
+        )]);
+
+        let sigscript = builder
+            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_state.clone(), args![], &observed)
+            .expect("anonymous open sigscript builds");
+        let contract = builder.contract("Cell").expect("Cell contract exists");
+        let entry = contract.entry("advance").expect("advance entry exists");
+        let expected_args = vec![
+            ArtifactValue::Int(decode_hex(&agent_template.prefix_hex).expect("Agent prefix decodes").len() as i64),
+            ArtifactValue::Int(decode_hex(&agent_template.suffix_hex).expect("Agent suffix decodes").len() as i64),
+            ArtifactValue::Bytes(agent_template_hash),
+        ];
+        let expected_entry = encode_entry_sig_script(&core_artifact.sil_abi, contract, entry, &expected_args)
+            .expect("expected entry sigscript encodes");
+        let expected = pay_to_script_hash_signature_script_with_flags(
+            builder.redeem_script("Cell", cell_state).expect("Cell redeem script builds"),
+            expected_entry,
+            covenant_engine_flags(),
+        )
+        .expect("expected P2SH sigscript builds");
+
+        assert_eq!(sigscript, expected);
+    }
+
     fn tickets_artifact() -> Artifact {
         example_artifact("examples/tickets.ag", "tickets")
     }
