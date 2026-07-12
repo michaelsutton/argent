@@ -604,19 +604,20 @@ impl TemplatePlanArtifact {
                     contract: template.contract.clone(),
                 });
             }
-            let expected_hash =
-                template_hash_hex(&template.id, &contract.compiled.template.prefix_hex, &contract.compiled.template.suffix_hex)?;
-            if contract.compiled.template.hash_hex != expected_hash {
+            // Validate the encoded Sil ABI material before the template plan
+            // references it. The canonical hash is produced by Silverscript;
+            // this layer does not recompute it from the prefix and suffix.
+            decode_hex_for_template(&template.id, &contract.compiled.template.prefix_hex)?;
+            decode_hex_for_template(&template.id, &contract.compiled.template.suffix_hex)?;
+            decode_hash_hex(&template.id, &contract.compiled.template.hash_hex)?;
+
+            // The plan carries a denormalized copy for route-proof leaves. Keep
+            // that receipt consistent with the authoritative Sil ABI value.
+            let expected_hash = &contract.compiled.template.hash_hex;
+            if template.hash_hex.as_str() != expected_hash.as_str() {
                 return Err(TemplatePlanError::TemplateHashMismatch {
                     id: template.id.clone(),
-                    expected: expected_hash,
-                    found: contract.compiled.template.hash_hex.clone(),
-                });
-            }
-            if template.hash_hex != expected_hash {
-                return Err(TemplatePlanError::TemplateHashMismatch {
-                    id: template.id.clone(),
-                    expected: expected_hash,
+                    expected: expected_hash.clone(),
                     found: template.hash_hex.clone(),
                 });
             }
@@ -1107,13 +1108,6 @@ impl TemplatePlanArtifact {
         }
         Ok(())
     }
-}
-
-fn template_hash_hex(id: &str, prefix_hex: &str, suffix_hex: &str) -> std::result::Result<String, TemplatePlanError> {
-    let prefix = decode_hex_for_template(id, prefix_hex)?;
-    let suffix = decode_hex_for_template(id, suffix_hex)?;
-    let hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
-    Ok(encode_hex(hash.as_bytes()))
 }
 
 pub fn actor_interface_id(actor: &str) -> String {
@@ -1632,7 +1626,7 @@ mod tests {
 
     #[test]
     fn rejects_nested_route_family_table_leaf() {
-        let template_hash = template_hash_hex("template/test", "", "").expect("empty template hash is valid");
+        let template_hash = "00".repeat(32);
         let templates = ["Mux", "Pawn", "Knight", "Bishop"]
             .into_iter()
             .map(|actor| TemplatePlanTemplateArtifact {

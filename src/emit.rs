@@ -1730,7 +1730,7 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
             let spec = observed_output_spec(observe, output);
             let prefix = hidden_observed_actor_prefix_name(&spec);
             let suffix = hidden_observed_actor_suffix_name(&spec);
-            push_generated_call(out, 8, &format!("byte[32] {} = ", output.actor), "blake2b", &[format!("{prefix} + {suffix}")]);
+            push_generated_call(out, 8, &format!("byte[32] {} = ", output.actor), "templateHash", &[prefix, suffix]);
         }
         for (idx, input) in observe.inputs.iter().enumerate() {
             let lens_spec = observed_input_lens_source_for_input(observe, input);
@@ -4170,14 +4170,14 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
 
     let prefix = &compiled.script[..layout.start];
     let suffix = &compiled.script[suffix_start..];
-    let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(prefix).update(suffix).finalize();
+    let template_hash = compiled.template_hash();
 
     Ok(CompiledContractArtifact {
         script_hex: encode_hex(&compiled.script),
         template: CompiledTemplateArtifact {
             prefix_hex: encode_hex(prefix),
             suffix_hex: encode_hex(suffix),
-            hash_hex: encode_hex(template_hash.as_bytes()),
+            hash_hex: encode_hex(&template_hash),
         },
         state_span: StateSpanArtifact { offset: layout.start, len: layout.len },
     })
@@ -6072,59 +6072,9 @@ mod tests {
 
     #[test]
     fn state_expansion_uses_base_storage_layout() {
-        let module = crate::parser::parse_module(
-            PathBuf::from("test.ag"),
-            r#"
-            state AgentCapsule {
-                virtual strategy;
-                int energy;
-            }
+        let (sil, artifact) = emit_fixture("state_expansion", "Forager");
 
-            state ForagerStrategy {
-                int hunger;
-            }
-
-            state ForagerState expands AgentCapsule {
-                strategy: ForagerStrategy;
-            }
-
-            actor Forager owns ForagerState {
-                entry hold() emits one Forager {
-                    require(energy > 0);
-
-                    ForagerState next_state = {
-                        strategy: ForagerStrategy {
-                            hunger: strategy.hunger + 1,
-                        },
-                        energy: energy - 1,
-                    };
-
-                    become Forager(next_state);
-                }
-            }
-
-            app Test {
-                actor Forager;
-            }
-            "#
-            .to_string(),
-        )
-        .expect("source parses");
-        let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
-        let model = Model::from_program(&program).expect("model validates");
-        let actor = model.actor("Forager").expect("Forager actor exists");
-        let sil = emit_actor(actor, &model).expect("Forager emits");
-        let actor_sil = actor_sil_for_model(&model);
-        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
-
-        assert!(sil.contains("contract Forager(\n    byte[32] init_strategy,\n    int init_energy\n)"), "{sil}");
-        assert!(sil.contains("byte[32] strategy = init_strategy;"), "{sil}");
-        assert!(sil.contains("int energy = init_energy;"), "{sil}");
-        assert!(!sil.contains("init_hunger"), "{sil}");
-        assert!(sil.contains("entrypoint function hold(byte[8] gen__strategy_forager_strategy_preimage)"), "{sil}");
-        assert!(sil.contains("require(blake2b(gen__strategy_forager_strategy_preimage) == strategy);"), "{sil}");
-        assert!(sil.contains("int gen__strategy_hunger = OpBin2Num(gen__strategy_forager_strategy_preimage.slice(0, 8));"), "{sil}");
-        assert!(sil.contains("strategy: blake2b(byte[8](gen__strategy_hunger + 1))"), "{sil}");
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/state_expansion/Forager.sil"));
 
         let expansion = artifact.argent.state_expansions.first().expect("state expansion is recorded");
         assert_eq!(expansion.state, "ForagerState");
@@ -6232,8 +6182,8 @@ mod tests {
             "examples/tickets.ag",
             "tickets",
             &[
-                ("Issuer", "e91f3e3570438b064be220a2cc0f623450af006ef883810349d2fc07acf8814e"),
-                ("Ticket", "be416b25f340479bb31b271c28cdd230764a8595bc1298270736449a1edb4575"),
+                ("Issuer", "50e292bdb137981290dec826a6b432c50f5d385141c050c87295794939c7fc11"),
+                ("Ticket", "fe9ed8bd62293091afa65b0520f1175b4cace3f5864232f2fc932c367a42cc25"),
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
@@ -6593,70 +6543,9 @@ mod tests {
 
     #[test]
     fn observed_template_witnesses_are_keyed_by_actor_not_handle() {
-        let source = r#"
-            state ForeignState {
-                int count;
-            }
+        let (sil, artifact) = emit_fixture("observed_template_witnesses", "Local");
 
-            state LocalState {
-                byte[32] target_id;
-            }
-
-            actor Foreign owns ForeignState {
-                entry hold() emits none {
-                    require(1 == 1);
-                }
-            }
-
-            actor Local owns LocalState {
-                entry step()
-                observes asset by target_id {
-                    inputs {
-                        src: Foreign;
-                    }
-
-                    outputs {
-                        dst: Foreign;
-                    }
-                }
-                emits none {
-                    ForeignState prev = asset.inputs.src.state;
-                    ForeignState next = {
-                        count: prev.count + 1,
-                    };
-
-                    require asset.outputs become {
-                        dst <- Foreign(next);
-                    };
-                }
-            }
-
-            app Test {
-                actor Local;
-            }
-            "#;
-
-        let path = PathBuf::from("test.ag");
-        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
-        let program = Program { root: path, modules: vec![module] };
-        let model = Model::from_program(&program).expect("model validates");
-        let local = model.actor("Local").expect("Local actor exists");
-        let sil = emit_actor(local, &model).expect("Local emits");
-        let actor_sil = actor_sil_for_model(&model);
-        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
-
-        assert!(sil.contains("byte[32] gen__asset_foreign_template = gen__init_asset_foreign_template;"), "{sil}");
-        assert!(sil.contains("byte[] gen__asset_foreign_prefix"), "{sil}");
-        assert!(sil.contains("byte[] gen__asset_foreign_suffix"), "{sil}");
-        assert!(sil.contains("int gen__asset_foreign_prefix_len = gen__asset_foreign_prefix.length;"), "{sil}");
-        assert!(sil.contains("int gen__asset_foreign_suffix_len = gen__asset_foreign_suffix.length;"), "{sil}");
-        assert!(sil.contains("ForeignState gen__asset_src_state = readInputStateWithTemplate("), "{sil}");
-        assert!(sil.contains("gen__asset_src_input_idx,"), "{sil}");
-        assert!(sil.contains("gen__asset_foreign_template"), "{sil}");
-        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__asset_dst_output_idx,"), "{sil}");
-        assert!(sil.contains("gen__asset_foreign_prefix,"), "{sil}");
-        assert!(!sil.contains("gen__asset_src_prefix"), "{sil}");
-        assert!(!sil.contains("gen__asset_dst_prefix"), "{sil}");
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/observed_template_witnesses/Local.sil"));
 
         assert_eq!(
             runtime_state_plan(&artifact, "Local")
@@ -6693,84 +6582,9 @@ mod tests {
 
     #[test]
     fn open_observed_actor_binding_lowers_to_runtime_template_handle() {
-        let source = r#"
-            state AgentCapsule {
-                byte[32] controller_id;
-                byte[32] caps_digest;
-                int energy;
-            }
+        let (sil, artifact) = emit_fixture("open_observed_actor_binding", "Cell");
 
-            state CellState {
-                covid agent_covid;
-                actor<AgentCapsule> agent_type;
-                int tick;
-            }
-
-            actor Cell owns CellState {
-                entry advance()
-                observes remote by self.agent_covid {
-                    inputs {
-                        agent: actor<AgentCapsule> as observed_agent;
-                    }
-
-                    outputs {
-                        agent: observed_agent;
-                    }
-                }
-                emits {
-                    cell: Cell;
-                } {
-                    AgentCapsule prev_state = remote.inputs.agent.state;
-
-                    require(agent_type == observed_agent);
-                    require(prev_state.controller_id == self.covenant_id);
-
-                    AgentCapsule next_state = {
-                        controller_id: prev_state.controller_id,
-                        caps_digest: prev_state.caps_digest,
-                        energy: prev_state.energy - 1,
-                    };
-
-                    require remote.outputs become {
-                        agent <- observed_agent(next_state);
-                    };
-
-                    CellState next_cell = {
-                        agent_covid: agent_covid,
-                        agent_type: agent_type,
-                        tick: tick + 1,
-                    };
-
-                    become cell <- Cell(next_cell);
-                }
-            }
-
-            app Test {
-                actor Cell;
-            }
-            "#;
-
-        let path = PathBuf::from("test.ag");
-        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
-        let program = Program { root: path, modules: vec![module] };
-        let model = Model::from_program(&program).expect("model validates");
-        let cell = model.actor("Cell").expect("Cell actor exists");
-        let sil = emit_actor(cell, &model).expect("Cell emits");
-        let actor_sil = actor_sil_for_model(&model);
-        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
-
-        assert!(sil.contains("byte[32] init_agent_type"), "{sil}");
-        assert!(sil.contains("byte[32] agent_type = init_agent_type;"), "{sil}");
-        assert!(sil.contains("byte[32] observed_agent = blake2b("), "{sil}");
-        assert!(sil.contains("gen__remote_observed_agent_prefix + gen__remote_observed_agent_suffix"), "{sil}");
-        assert!(sil.contains("AgentCapsule gen__remote_agent_state = readInputStateWithTemplate("), "{sil}");
-        assert!(sil.contains("gen__remote_agent_input_idx,"), "{sil}");
-        assert!(sil.contains("observed_agent\n        );"), "{sil}");
-        assert!(sil.contains("require(agent_type == observed_agent);"), "{sil}");
-        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__remote_agent_output_idx,"), "{sil}");
-        assert!(sil.contains("observed_agent\n        );"), "{sil}");
-        assert!(!sil.contains("gen__remote_observed_agent_template"), "{sil}");
-        assert!(!sil.contains("gen__init_remote_observed_agent_template"), "{sil}");
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/open_observed_actor_binding/Cell.sil"));
 
         assert!(runtime_state_plan(&artifact, "Cell").is_none(), "{:#?}", artifact.argent.template_plan.runtime_states);
 
@@ -6787,81 +6601,9 @@ mod tests {
 
     #[test]
     fn open_observed_state_handle_lowers_to_source_actor_handle() {
-        let source = r#"
-            state AgentCapsule {
-                byte[32] controller_id;
-                byte[32] caps_digest;
-                int energy;
-            }
+        let (sil, artifact) = emit_fixture("open_observed_state_handle", "Cell");
 
-            state CellState {
-                covid agent_covid;
-                actor<AgentCapsule> agent_type;
-                int tick;
-            }
-
-            actor Cell owns CellState {
-                entry advance()
-                observes remote by self.agent_covid {
-                    inputs {
-                        agent: self.agent_type;
-                    }
-
-                    outputs {
-                        agent: self.agent_type;
-                    }
-                }
-                emits {
-                    cell: Cell;
-                } {
-                    AgentCapsule prev_state = remote.inputs.agent.state;
-                    require(prev_state.controller_id == self.covenant_id);
-
-                    AgentCapsule next_state = {
-                        controller_id: prev_state.controller_id,
-                        caps_digest: prev_state.caps_digest,
-                        energy: prev_state.energy - 1,
-                    };
-
-                    require remote.outputs become {
-                        agent <- self.agent_type(next_state);
-                    };
-
-                    CellState next_cell = {
-                        agent_covid: agent_covid,
-                        agent_type: agent_type,
-                        tick: tick + 1,
-                    };
-
-                    become cell <- Cell(next_cell);
-                }
-            }
-
-            app Test {
-                actor Cell;
-            }
-            "#;
-
-        let path = PathBuf::from("test.ag");
-        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
-        let program = Program { root: path, modules: vec![module] };
-        let model = Model::from_program(&program).expect("model validates");
-        let cell = model.actor("Cell").expect("Cell actor exists");
-        let sil = emit_actor(cell, &model).expect("Cell emits");
-        let actor_sil = actor_sil_for_model(&model);
-        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
-
-        assert!(sil.contains("byte[32] init_agent_type"), "{sil}");
-        assert!(sil.contains("byte[32] agent_type = init_agent_type;"), "{sil}");
-        assert!(!sil.contains("byte[32] observed_agent = blake2b("), "{sil}");
-        assert!(sil.contains("AgentCapsule gen__remote_agent_state = readInputStateWithTemplate("), "{sil}");
-        assert!(sil.contains("gen__remote_agent_type_prefix.length"), "{sil}");
-        assert!(sil.contains("gen__remote_agent_type_suffix.length"), "{sil}");
-        assert!(sil.contains("agent_type\n        );"), "{sil}");
-        assert!(sil.contains("validateOutputStateWithTemplate(\n            gen__remote_agent_output_idx,"), "{sil}");
-        assert!(sil.contains("agent_type\n        );"), "{sil}");
-        assert!(!sil.contains("gen__remote_agent_type_template"), "{sil}");
-        assert!(!sil.contains("gen__init_remote_agent_type_template"), "{sil}");
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/open_observed_state_handle/Cell.sil"));
 
         assert!(runtime_state_plan(&artifact, "Cell").is_none(), "{:#?}", artifact.argent.template_plan.runtime_states);
 
@@ -7897,6 +7639,19 @@ mod tests {
         emit_artifact(&program, &model, &actor_sil).expect("artifact emits")
     }
 
+    fn emit_fixture(case: &str, actor: &str) -> (String, Artifact) {
+        let path = PathBuf::from("tests/fixtures/emit").join(case).join("app.ag");
+        let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(&path)).expect("fixture source exists");
+        let module = crate::parser::parse_module(path.clone(), source).expect("fixture source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("fixture model validates");
+        let actor = model.actor(actor).expect("fixture actor exists");
+        let sil = emit_actor(actor, &model).expect("fixture actor emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("fixture artifact emits");
+        (sil, artifact)
+    }
+
     fn emit_inline_error(source: &str) -> ArgentError {
         let path = PathBuf::from("test.ag");
         let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
@@ -8214,11 +7969,11 @@ mod tests {
 
         let prefix = crate::codec::decode_hex(&compiled.template.prefix_hex).expect("prefix hex decodes");
         let suffix = crate::codec::decode_hex(&compiled.template.suffix_hex).expect("suffix hex decodes");
-        let template_hash = blake2b_simd::Params::new().hash_length(32).to_state().update(&prefix).update(&suffix).finalize();
+        let template_hash = silverscript_lang::template::template_hash(&prefix, &suffix);
         assert_eq!(
-            encode_hex(template_hash.as_bytes()),
+            encode_hex(&template_hash),
             compiled.template.hash_hex,
-            "actor `{actor}` template hash must be blake2b(prefix || suffix)"
+            "actor `{actor}` template hash must use the canonical template hash"
         );
     }
 

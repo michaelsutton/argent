@@ -1,0 +1,31 @@
+state AgentCapsule {
+    virtual strategy;
+    int energy;
+}
+
+state ForagerStrategy {
+    int hunger;
+}
+
+state ForagerState expands AgentCapsule {
+    strategy: ForagerStrategy;
+}
+
+actor Forager owns ForagerState {
+    entry hold() emits one Forager {
+        require(energy > 0);
+
+        ForagerState next_state = {
+            strategy: ForagerStrategy {
+                hunger: strategy.hunger + 1,
+            },
+            energy: energy - 1,
+        };
+
+        become Forager(next_state);
+    }
+}
+
+app Test {
+    actor Forager;
+}

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "92f5520effac3ce65eacdd9ef90a686f08a815caf7ef5a3ae48c1c198798df9f",
+  "id": "0d13cd038a210f2abf8768c169f5ac6a9e6f183520249ae4f311bfb9257b2c6f",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -31,14 +31,14 @@
           "actor": "Agent",
           "contract": "Agent",
           "symbol": "gen__agent_template",
-          "hash_hex": "d934dea8a8cc904d43206b6baa39bf5cb52f402f5d96f00539758c42204bd179"
+          "hash_hex": "3e9a48214bd0f125224d922e171ea49c2d5e533cca89115b2454fab554c0310c"
         },
         {
           "id": "template/forager",
           "actor": "Forager",
           "contract": "Forager",
           "symbol": "gen__forager_template",
-          "hash_hex": "62b31f332f7e8e24db678cd8a4633281e0555bc459bd3812dffbf497e4bc46df"
+          "hash_hex": "f1a1d40fa3a3e0127c1f64c3e56c7c170c70699fc5bd37c35a28d6637ff1be6b"
         }
       ],
       "runtime_states": [],
@@ -845,7 +845,7 @@
           "template": {
             "prefix_hex": "",
             "suffix_hex": "b9cb519c695679d000a0690113795a79876901127959798769011179587987696079577987695f79567987695e79557987695a79789c6901137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137901207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602b1019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757575757575757551",
-            "hash_hex": "d934dea8a8cc904d43206b6baa39bf5cb52f402f5d96f00539758c42204bd179"
+            "hash_hex": "3e9a48214bd0f125224d922e171ea49c2d5e533cca89115b2454fab554c0310c"
           },
           "state_span": {
             "offset": 0,
@@ -965,7 +965,7 @@
           "template": {
             "prefix_hex": "",
             "suffix_hex": "5a79aa55798769b9cb519c695679d000a0695b79527951949c695b7900a269597901207c7e597901207c7e597901207c7e597901207c7e597901207c7e5f7900587fce519358cd607958607fce58cd7e60796001307f7eaa01207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e597958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602a5019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757551",
-            "hash_hex": "62b31f332f7e8e24db678cd8a4633281e0555bc459bd3812dffbf497e4bc46df"
+            "hash_hex": "f1a1d40fa3a3e0127c1f64c3e56c7c170c70699fc5bd37c35a28d6637ff1be6b"
           },
           "state_span": {
             "offset": 0,
