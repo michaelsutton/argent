@@ -849,10 +849,9 @@ mod tests {
 
         let minter_contract = builder.contract("Minter").expect("Minter contract exists");
         let minter_entry = minter_contract.entry("mint").expect("mint entry exists");
-        let mut bad_proxy_suffix =
-            decode_hex(&builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template.suffix_hex)
-                .expect("proxy suffix decodes");
-        bad_proxy_suffix.push(0);
+        let proxy_template = &builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template;
+        let proxy_prefix_len = decode_hex(&proxy_template.prefix_hex).expect("proxy prefix decodes").len() as i64;
+        let bad_proxy_suffix_len = decode_hex(&proxy_template.suffix_hex).expect("proxy suffix decodes").len() as i64 + 1;
         let corrupt_hidden_sigscript = encode_entry_sig_script(
             &controller_artifact.sil_abi,
             minter_contract,
@@ -861,11 +860,8 @@ mod tests {
                 ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
                 ArtifactValue::Bytes(recipient_owner.clone()),
                 ArtifactValue::Int(minted_amount),
-                ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template.prefix_hex)
-                        .expect("proxy prefix decodes"),
-                ),
-                ArtifactValue::Bytes(bad_proxy_suffix),
+                ArtifactValue::Int(proxy_prefix_len),
+                ArtifactValue::Int(bad_proxy_suffix_len),
                 ArtifactValue::Bytes(
                     decode_hex(&builder.contract_in_app("kcc20_asset", "KCC20").unwrap().compiled.template.prefix_hex)
                         .expect("KCC20 prefix decodes"),

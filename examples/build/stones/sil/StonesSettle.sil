@@ -92,11 +92,7 @@ contract StonesSettle(
     int status = init_status;
 
     // :: entrypoints
-    entrypoint function settle(byte[] gen__player_prefix, byte[] gen__player_suffix) {
-        // :: witness lens
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
-
+    entrypoint function settle(int gen__player_prefix_len, int gen__player_suffix_len) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) == 3);
@@ -170,19 +166,21 @@ contract StonesSettle(
             losses: player_b_losses,
         };
         // :: become Player
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__player_a_out_output_idx,
             next_player_a,
-            gen__player_prefix,
-            gen__player_suffix,
+            gen__player_a_in_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
             gen__player_template
         );
         // :: become Player
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__player_b_out_output_idx,
             next_player_b,
-            gen__player_prefix,
-            gen__player_suffix,
+            gen__player_a_in_input_idx,
+            gen__player_prefix_len,
+            gen__player_suffix_len,
             gen__player_template
         );
     }

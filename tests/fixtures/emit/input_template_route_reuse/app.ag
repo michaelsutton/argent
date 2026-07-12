@@ -1,0 +1,34 @@
+state PeerState {
+    int count;
+}
+
+state ControllerState {
+    int tick;
+}
+
+actor Peer owns PeerState {
+    entry hold() emits none {
+        require(count >= 0);
+    }
+}
+
+actor Controller owns ControllerState {
+    entry step()
+    consumes {
+        peer: Peer;
+    }
+    emits {
+        peer: Peer;
+    } {
+        PeerState next_peer = {
+            count: peer.count + 1,
+        };
+
+        become peer <- Peer(next_peer);
+    }
+}
+
+app Test {
+    actor Controller;
+    actor Peer;
+}

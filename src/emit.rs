@@ -2310,19 +2310,39 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         push_indent(out, indent);
         out.push_str(&format!("// :: observed become {}.{} -> {}\n", observe_name, observed_output.name, observed_output.actor));
-        push_generated_call(
-            out,
-            indent,
-            "",
-            "validateOutputStateWithTemplate",
-            &[
-                output_idx,
-                state_arg,
-                hidden_observed_actor_prefix_name(&spec),
-                hidden_observed_actor_suffix_name(&spec),
-                self.observed_actor_template_expr(observe, observed_output, &spec, indent)?,
-            ],
-        );
+        if observed_reuses_input_template(observe, observed_output) {
+            let input = first_observed_input_for_actor(observe, &observed_output.actor)
+                .expect("input-template reuse requires a matching observed input");
+            let input_spec = observed_input_spec(observe, input);
+            push_generated_call(
+                out,
+                indent,
+                "",
+                "validateOutputStateWithInputTemplate",
+                &[
+                    output_idx,
+                    state_arg,
+                    hidden_observed_input_idx_name(observe_name, &input.name),
+                    hidden_observed_actor_prefix_len_name(&input_spec),
+                    hidden_observed_actor_suffix_len_name(&input_spec),
+                    self.observed_actor_template_expr(observe, observed_output, &spec, indent)?,
+                ],
+            );
+        } else {
+            push_generated_call(
+                out,
+                indent,
+                "",
+                "validateOutputStateWithTemplate",
+                &[
+                    output_idx,
+                    state_arg,
+                    hidden_observed_actor_prefix_name(&spec),
+                    hidden_observed_actor_suffix_name(&spec),
+                    self.observed_actor_template_expr(observe, observed_output, &spec, indent)?,
+                ],
+            );
+        }
         Ok(())
     }
 
@@ -2383,16 +2403,37 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 push_generated_call(out, indent, "", "validateOutputState", &[output_idx, state_arg]);
             }
             RouteValidationKind::ForeignTemplate => {
-                let prefix = hidden_witness_prefix_name(&route.actor);
-                let suffix = hidden_witness_suffix_name(&route.actor);
                 let template = hidden_template_name(&route.actor);
-                push_generated_call(
-                    out,
-                    indent,
-                    "",
-                    "validateOutputStateWithTemplate",
-                    &[output_idx, state_arg, prefix, suffix, template],
-                );
+                if let Some(input) = self.entry.consumes.iter().find(|input| input.actor == route.actor) {
+                    push_generated_call(
+                        out,
+                        indent,
+                        "",
+                        "validateOutputStateWithInputTemplate",
+                        &[
+                            output_idx,
+                            state_arg,
+                            hidden_input_idx_name(&input.name),
+                            hidden_witness_prefix_len_name(&route.actor),
+                            hidden_witness_suffix_len_name(&route.actor),
+                            template,
+                        ],
+                    );
+                } else {
+                    push_generated_call(
+                        out,
+                        indent,
+                        "",
+                        "validateOutputStateWithTemplate",
+                        &[
+                            output_idx,
+                            state_arg,
+                            hidden_witness_prefix_name(&route.actor),
+                            hidden_witness_suffix_name(&route.actor),
+                            template,
+                        ],
+                    );
+                }
             }
         }
         Ok(())
@@ -3425,20 +3466,20 @@ fn template_witness_specs(
         if required.remove(actor) {
             ordered.push(TemplateWitnessSpec {
                 actor: actor.clone(),
-                form: witness_form(actor, &byte_actors),
+                form: witness_form(actor, &read_actors, &byte_actors),
                 source: TemplateWitnessSource::Field,
             });
         }
     }
     ordered.extend(required.into_iter().map(|actor| {
-        let form = witness_form(&actor, &byte_actors);
+        let form = witness_form(&actor, &read_actors, &byte_actors);
         TemplateWitnessSpec { actor, form, source: TemplateWitnessSource::Field }
     }));
     ordered
 }
 
-fn witness_form(actor: &str, byte_actors: &BTreeSet<String>) -> TemplateWitnessForm {
-    if byte_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
+fn witness_form(actor: &str, read_actors: &BTreeSet<String>, byte_actors: &BTreeSet<String>) -> TemplateWitnessForm {
+    if byte_actors.contains(actor) && !read_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
 }
 
 fn template_source_for_actor(state: &str, actor: &str, model: &Model<'_>) -> TemplateWitnessSource {
@@ -3516,13 +3557,19 @@ fn observed_actor_specs_for_observe(
     let mut specs = Vec::new();
 
     for output in &observe.outputs {
-        let spec = observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
+        let spec = if observed_reuses_input_template(observe, output) {
+            let input = first_observed_input_for_actor(observe, &output.actor)
+                .expect("input-template reuse requires a matching observed input");
+            observed_input_spec(observe, input)
+        } else {
+            observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor)
+        };
         if seen.insert((spec.side, observed_witness_key(actor, entry, observe, output, model)?)) {
             specs.push(spec);
         }
     }
     for input in &observe.inputs {
-        if observe_has_output_actor(observe, &input.actor) {
+        if first_observed_output_for_actor(observe, &input.actor).is_some() {
             continue;
         }
         let spec = observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor);
@@ -3631,14 +3678,18 @@ fn observed_actor_template_expr_for_entry(
 }
 
 fn observed_template_spec_for_input(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
-    if let Some(output) = first_observed_output_for_actor(observe, &input.actor) {
+    if let Some(output) = first_observed_output_for_actor(observe, &input.actor)
+        && !observed_reuses_input_template(observe, output)
+    {
         return observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
     }
     observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor)
 }
 
 fn observed_input_lens_source_for_input(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
-    if let Some(output) = first_observed_output_for_actor(observe, &input.actor) {
+    if let Some(output) = first_observed_output_for_actor(observe, &input.actor)
+        && !observed_reuses_input_template(observe, output)
+    {
         return observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
     }
     observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor)
@@ -3666,12 +3717,16 @@ fn observed_actor_spec(observe: &ObserveDecl, side: ObservedActorSideArtifact, h
     ObservedActorWitnessSpec { observe: observe.name.clone(), side, handle: handle.to_string(), actor: actor.to_string() }
 }
 
-fn observe_has_output_actor(observe: &ObserveDecl, actor: &str) -> bool {
-    observe.outputs.iter().any(|output| output.actor == actor)
+fn observed_reuses_input_template(observe: &ObserveDecl, output: &ObservedActorDecl) -> bool {
+    !observed_is_dynamic_binding(observe, output) && observe.inputs.iter().any(|input| input.actor == output.actor)
 }
 
 fn first_observed_output_for_actor<'a>(observe: &'a ObserveDecl, actor: &str) -> Option<&'a ObservedActorDecl> {
     observe.outputs.iter().find(|output| output.actor == actor)
+}
+
+fn first_observed_input_for_actor<'a>(observe: &'a ObserveDecl, actor: &str) -> Option<&'a ObservedActorDecl> {
+    observe.inputs.iter().find(|input| input.actor == actor)
 }
 
 fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
@@ -4581,7 +4636,7 @@ fn planned_terminal_path_artifact(
         routes.iter().filter_map(|route| selectors.get(&route.actor).map(|selector| selector.name.clone())).collect::<BTreeSet<_>>();
 
     let mut witness_recipe_ids =
-        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors, byte_actors));
+        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors.clone(), byte_actors));
     for selector_name in &selector_names {
         witness_recipe_ids.extend(template_selector_witness_recipe_ids(selector_name));
     }
@@ -4613,10 +4668,12 @@ fn planned_terminal_path_artifact(
             template_id: template_receipt_id(&route.actor),
             state_expr: compact_expr(&route.state),
             witness_recipe_ids: if route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate {
+                let route_read_actors =
+                    if read_actors.contains(&route.actor) { [route.actor.clone()].into_iter().collect() } else { BTreeSet::new() };
                 witness_recipe_ids_for_specs(template_witness_specs_for_actor(
                     actor,
                     model,
-                    BTreeSet::new(),
+                    route_read_actors,
                     [route.actor.clone()].into_iter().collect(),
                 ))
             } else {
@@ -6276,24 +6333,24 @@ mod tests {
             mint.hidden_params.iter().map(|param| (param.name.as_str(), &param.subject, param.purpose)).collect::<Vec<_>>(),
             vec![
                 (
-                    "gen__asset_minter_proxy_prefix",
+                    "gen__asset_minter_proxy_prefix_len",
                     &HiddenParamSubjectArtifact::ObservedActor {
                         observe: "asset".to_string(),
-                        side: ObservedActorSideArtifact::Output,
+                        side: ObservedActorSideArtifact::Input,
                         handle: "proxy".to_string(),
                         actor: "MinterProxy".to_string(),
                     },
-                    HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                    HiddenParamPurposeArtifact::TemplatePrefixLen,
                 ),
                 (
-                    "gen__asset_minter_proxy_suffix",
+                    "gen__asset_minter_proxy_suffix_len",
                     &HiddenParamSubjectArtifact::ObservedActor {
                         observe: "asset".to_string(),
-                        side: ObservedActorSideArtifact::Output,
+                        side: ObservedActorSideArtifact::Input,
                         handle: "proxy".to_string(),
                         actor: "MinterProxy".to_string(),
                     },
-                    HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                    HiddenParamPurposeArtifact::TemplateSuffixLen,
                 ),
                 (
                     "gen__asset_kcc20_prefix",
@@ -6320,8 +6377,8 @@ mod tests {
         assert_eq!(
             mint.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
             vec![
-                "witness/observed/asset/output/minter_proxy/template_prefix_bytes",
-                "witness/observed/asset/output/minter_proxy/template_suffix_bytes",
+                "witness/observed/asset/input/minter_proxy/template_prefix_len",
+                "witness/observed/asset/input/minter_proxy/template_suffix_len",
                 "witness/observed/asset/output/kcc20/template_prefix_bytes",
                 "witness/observed/asset/output/kcc20/template_suffix_bytes",
             ]
@@ -6338,7 +6395,7 @@ mod tests {
                     "gen__asset_minter_proxy_template",
                     RuntimeFieldRoleArtifact::ObservedTemplate {
                         observe: "asset".to_string(),
-                        side: ObservedActorSideArtifact::Output,
+                        side: ObservedActorSideArtifact::Input,
                         handle: "proxy".to_string(),
                         contract: "MinterProxy".to_string(),
                     },
@@ -6369,7 +6426,7 @@ mod tests {
         assert!(minter_sil.contains("entrypoint function mint(\n"), "{minter_sil}");
         assert!(minter_sil.contains("sig owner_sig,"), "{minter_sil}");
         assert!(minter_sil.contains("byte[32] recipient_owner,"), "{minter_sil}");
-        assert!(minter_sil.contains("byte[] gen__asset_minter_proxy_prefix,"), "{minter_sil}");
+        assert!(minter_sil.contains("int gen__asset_minter_proxy_prefix_len,"), "{minter_sil}");
         assert!(minter_sil.contains("byte[] gen__asset_kcc20_suffix"), "{minter_sil}");
         assert!(
             minter_sil.contains("byte[32] gen__asset_minter_proxy_template = gen__init_asset_minter_proxy_template;"),
@@ -6380,14 +6437,8 @@ mod tests {
         assert!(minter_sil.contains("byte[32] gen__asset_cov_id = kcc20_covid; // observe asset"), "{minter_sil}");
         assert!(minter_sil.contains("require(OpCovInputCount(gen__asset_cov_id) == 1);"), "{minter_sil}");
         assert!(minter_sil.contains("require(OpCovOutputCount(gen__asset_cov_id) == 2);"), "{minter_sil}");
-        assert!(
-            minter_sil.contains("int gen__asset_minter_proxy_prefix_len = gen__asset_minter_proxy_prefix.length;"),
-            "{minter_sil}"
-        );
-        assert!(
-            minter_sil.contains("int gen__asset_minter_proxy_suffix_len = gen__asset_minter_proxy_suffix.length;"),
-            "{minter_sil}"
-        );
+        assert!(!minter_sil.contains("gen__asset_minter_proxy_prefix.length"), "{minter_sil}");
+        assert!(!minter_sil.contains("gen__asset_minter_proxy_suffix.length"), "{minter_sil}");
         assert!(minter_sil.contains("MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate("), "{minter_sil}");
         assert!(minter_sil.contains("gen__asset_proxy_input_idx,"), "{minter_sil}");
         assert!(minter_sil.contains("gen__asset_minter_proxy_template"), "{minter_sil}");
@@ -6395,8 +6446,11 @@ mod tests {
         assert!(minter_sil.contains("int gen__asset_proxy_output_idx = OpCovOutputIdx(gen__asset_cov_id, 0);"), "{minter_sil}");
         assert!(minter_sil.contains("// :: observed output asset.recipient: KCC20"), "{minter_sil}");
         assert!(minter_sil.contains("int gen__asset_recipient_output_idx = OpCovOutputIdx(gen__asset_cov_id, 1);"), "{minter_sil}");
-        assert!(minter_sil.contains("validateOutputStateWithTemplate(\n            gen__asset_proxy_output_idx,"), "{minter_sil}");
-        assert!(minter_sil.contains("gen__asset_minter_proxy_prefix,"), "{minter_sil}");
+        assert!(
+            minter_sil.contains("validateOutputStateWithInputTemplate(\n            gen__asset_proxy_output_idx,"),
+            "{minter_sil}"
+        );
+        assert!(minter_sil.contains("gen__asset_proxy_input_idx,"), "{minter_sil}");
         assert!(minter_sil.contains("validateOutputStateWithTemplate(\n            gen__asset_recipient_output_idx,"), "{minter_sil}");
         assert!(minter_sil.contains("gen__asset_kcc20_template"), "{minter_sil}");
         assert!(minter_sil.contains("MinterProxyState prev_proxy = gen__asset_proxy_state;"), "{minter_sil}");
@@ -6564,8 +6618,8 @@ mod tests {
                 "gen__asset_foreign_template",
                 RuntimeFieldRoleArtifact::ObservedTemplate {
                     observe: "asset".to_string(),
-                    side: ObservedActorSideArtifact::Output,
-                    handle: "dst".to_string(),
+                    side: ObservedActorSideArtifact::Input,
+                    handle: "src".to_string(),
                     contract: "Foreign".to_string(),
                 },
             )]
@@ -6575,14 +6629,35 @@ mod tests {
         let step = local_actor.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
         assert_eq!(
             step.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
-            vec!["gen__asset_foreign_prefix", "gen__asset_foreign_suffix"]
+            vec!["gen__asset_foreign_prefix_len", "gen__asset_foreign_suffix_len"]
         );
         assert_eq!(
             step.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
             vec![
-                "witness/observed/asset/output/foreign/template_prefix_bytes",
-                "witness/observed/asset/output/foreign/template_suffix_bytes",
+                "witness/observed/asset/input/foreign/template_prefix_len",
+                "witness/observed/asset/input/foreign/template_suffix_len",
             ]
+        );
+    }
+
+    #[test]
+    fn consumed_route_reuses_input_template() {
+        let (sil, artifact) = emit_fixture("input_template_route_reuse", "Controller");
+
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/input_template_route_reuse/Controller.sil"));
+
+        let controller = artifact.argent.actors.iter().find(|actor| actor.name == "Controller").expect("Controller actor exists");
+        let step = controller.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
+        assert_eq!(
+            step.hidden_params.iter().map(|param| (param.name.as_str(), param.purpose)).collect::<Vec<_>>(),
+            vec![
+                ("gen__peer_prefix_len", HiddenParamPurposeArtifact::TemplatePrefixLen),
+                ("gen__peer_suffix_len", HiddenParamPurposeArtifact::TemplateSuffixLen),
+            ]
+        );
+        assert_eq!(
+            step.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["witness/peer/template_prefix_len", "witness/peer/template_suffix_len"]
         );
     }
 
@@ -6622,7 +6697,7 @@ mod tests {
         assert_eq!(observe.outputs[0].open_state.as_deref(), Some("AgentCapsule"));
         assert_eq!(
             advance.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
-            vec!["gen__remote_agent_type_prefix", "gen__remote_agent_type_suffix"]
+            vec!["gen__remote_agent_type_prefix_len", "gen__remote_agent_type_suffix_len"]
         );
     }
 
