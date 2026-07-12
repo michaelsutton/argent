@@ -25,8 +25,8 @@ contract Cell(
 
     // :: entrypoints
     entrypoint function advance(
-        byte[] gen__remote_agent_type_prefix,
-        byte[] gen__remote_agent_type_suffix
+        int gen__remote_agent_type_prefix_len,
+        int gen__remote_agent_type_suffix_len
     ) {
         // :: observed covenants
         byte[32] gen__remote_cov_id = agent_covid; // observe remote
@@ -34,8 +34,6 @@ contract Cell(
         require(OpCovOutputCount(gen__remote_cov_id) == 1);
         // :: observed input remote.agent: self.agent_type
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
-        int gen__remote_agent_type_prefix_len = gen__remote_agent_type_prefix.length;
-        int gen__remote_agent_type_suffix_len = gen__remote_agent_type_suffix.length;
         AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_agent_type_prefix_len,
@@ -57,11 +55,12 @@ contract Cell(
             energy: prev_state.energy - 1,
         };
         // :: observed become remote.agent -> self.agent_type
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__remote_agent_output_idx,
             next_state,
-            gen__remote_agent_type_prefix,
-            gen__remote_agent_type_suffix,
+            gen__remote_agent_input_idx,
+            gen__remote_agent_type_prefix_len,
+            gen__remote_agent_type_suffix_len,
             agent_type
         );
         State next_cell = {

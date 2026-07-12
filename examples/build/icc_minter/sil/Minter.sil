@@ -44,8 +44,8 @@ contract Minter(
         sig owner_sig,
         byte[32] recipient_owner,
         int minted_amount,
-        byte[] gen__asset_minter_proxy_prefix,
-        byte[] gen__asset_minter_proxy_suffix,
+        int gen__asset_minter_proxy_prefix_len,
+        int gen__asset_minter_proxy_suffix_len,
         byte[] gen__asset_kcc20_prefix,
         byte[] gen__asset_kcc20_suffix
     ) {
@@ -55,8 +55,6 @@ contract Minter(
         require(OpCovOutputCount(gen__asset_cov_id) == 2);
         // :: observed input asset.proxy: MinterProxy
         int gen__asset_proxy_input_idx = OpCovInputIdx(gen__asset_cov_id, 0);
-        int gen__asset_minter_proxy_prefix_len = gen__asset_minter_proxy_prefix.length;
-        int gen__asset_minter_proxy_suffix_len = gen__asset_minter_proxy_suffix.length;
         MinterProxyState gen__asset_proxy_state = readInputStateWithTemplate(
             gen__asset_proxy_input_idx,
             gen__asset_minter_proxy_prefix_len,
@@ -91,11 +89,12 @@ contract Minter(
             amount: minted_amount,
         };
         // :: observed become asset.proxy -> MinterProxy
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__asset_proxy_output_idx,
             next_proxy,
-            gen__asset_minter_proxy_prefix,
-            gen__asset_minter_proxy_suffix,
+            gen__asset_proxy_input_idx,
+            gen__asset_minter_proxy_prefix_len,
+            gen__asset_minter_proxy_suffix_len,
             gen__asset_minter_proxy_template
         );
         // :: observed become asset.recipient -> KCC20

@@ -50,8 +50,8 @@ contract Cell(
 
     // :: entrypoints
     entrypoint function advance(
-        byte[] gen__remote_occupant_agent_type_prefix,
-        byte[] gen__remote_occupant_agent_type_suffix,
+        int gen__remote_occupant_agent_type_prefix_len,
+        int gen__remote_occupant_agent_type_suffix_len,
         byte[32] gen__remote_agent_next_strategy
     ) {
         // :: observed covenants
@@ -60,8 +60,6 @@ contract Cell(
         require(OpCovOutputCount(gen__remote_cov_id) == 1);
         // :: observed input remote.agent: self.occupant_agent_type
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
-        int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
-        int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
         AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_occupant_agent_type_prefix_len,
@@ -91,11 +89,12 @@ contract Cell(
             generation: prev_state.generation,
         };
         // :: observed become remote.agent -> self.occupant_agent_type
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__remote_agent_output_idx,
             next_state,
-            gen__remote_occupant_agent_type_prefix,
-            gen__remote_occupant_agent_type_suffix,
+            gen__remote_agent_input_idx,
+            gen__remote_occupant_agent_type_prefix_len,
+            gen__remote_occupant_agent_type_suffix_len,
             occupant_agent_type
         );
         State next_cell = {
@@ -121,8 +120,8 @@ contract Cell(
         byte[32] empty_caps_digest,
         int gen__cell_prefix_len,
         int gen__cell_suffix_len,
-        byte[] gen__remote_occupant_agent_type_prefix,
-        byte[] gen__remote_occupant_agent_type_suffix,
+        int gen__remote_occupant_agent_type_prefix_len,
+        int gen__remote_occupant_agent_type_suffix_len,
         byte[32] gen__remote_agent_next_strategy
     ) {
         // :: cov inputs
@@ -143,8 +142,6 @@ contract Cell(
         require(OpCovOutputCount(gen__remote_cov_id) == 1);
         // :: observed input remote.agent: self.occupant_agent_type
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
-        int gen__remote_occupant_agent_type_prefix_len = gen__remote_occupant_agent_type_prefix.length;
-        int gen__remote_occupant_agent_type_suffix_len = gen__remote_occupant_agent_type_suffix.length;
         AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_occupant_agent_type_prefix_len,
@@ -210,11 +207,12 @@ contract Cell(
             occupant_caps_digest: occupant_caps_digest,
         };
         // :: observed become remote.agent -> self.occupant_agent_type
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__remote_agent_output_idx,
             next_agent,
-            gen__remote_occupant_agent_type_prefix,
-            gen__remote_occupant_agent_type_suffix,
+            gen__remote_agent_input_idx,
+            gen__remote_occupant_agent_type_prefix_len,
+            gen__remote_occupant_agent_type_suffix_len,
             occupant_agent_type
         );
         // :: become Cell

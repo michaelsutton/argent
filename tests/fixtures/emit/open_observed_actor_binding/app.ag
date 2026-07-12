@@ -1,5 +1,5 @@
 state AgentCapsule {
-    byte[32] controller_id;
+    covid controller_id;
     byte[32] caps_digest;
     int energy;
 }

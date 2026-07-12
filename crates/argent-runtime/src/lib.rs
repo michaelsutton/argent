@@ -805,6 +805,11 @@ impl<'a> TxBuilder<'a> {
                         self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?.len() as i64)
                 }
+                HiddenParamPurposeArtifact::TemplateHash => {
+                    let contract_ref =
+                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.hash_hex)?)
+                }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
                     let actor = hidden_actor_subject(hidden)?;
                     ArtifactValue::Bytes(decode_hex(

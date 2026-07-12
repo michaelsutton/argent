@@ -19,15 +19,13 @@ contract Local(
     byte[32] target_id = init_target_id;
 
     // :: entrypoints
-    entrypoint function step(byte[] gen__asset_foreign_prefix, byte[] gen__asset_foreign_suffix) {
+    entrypoint function step(int gen__asset_foreign_prefix_len, int gen__asset_foreign_suffix_len) {
         // :: observed covenants
         byte[32] gen__asset_cov_id = target_id; // observe asset
         require(OpCovInputCount(gen__asset_cov_id) == 1);
         require(OpCovOutputCount(gen__asset_cov_id) == 1);
         // :: observed input asset.src: Foreign
         int gen__asset_src_input_idx = OpCovInputIdx(gen__asset_cov_id, 0);
-        int gen__asset_foreign_prefix_len = gen__asset_foreign_prefix.length;
-        int gen__asset_foreign_suffix_len = gen__asset_foreign_suffix.length;
         ForeignState gen__asset_src_state = readInputStateWithTemplate(
             gen__asset_src_input_idx,
             gen__asset_foreign_prefix_len,
@@ -45,11 +43,12 @@ contract Local(
             count: prev.count + 1,
         };
         // :: observed become asset.dst -> Foreign
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__asset_dst_output_idx,
             next,
-            gen__asset_foreign_prefix,
-            gen__asset_foreign_suffix,
+            gen__asset_src_input_idx,
+            gen__asset_foreign_prefix_len,
+            gen__asset_foreign_suffix_len,
             gen__asset_foreign_template
         );
     }

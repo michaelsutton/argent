@@ -25,21 +25,17 @@ contract Cell(
 
     // :: entrypoints
     entrypoint function advance(
-        byte[] gen__remote_observed_agent_prefix,
-        byte[] gen__remote_observed_agent_suffix
+        int gen__remote_observed_agent_prefix_len,
+        int gen__remote_observed_agent_suffix_len,
+        byte[32] gen__remote_observed_agent_template
     ) {
         // :: observed covenants
         byte[32] gen__remote_cov_id = agent_covid; // observe remote
         require(OpCovInputCount(gen__remote_cov_id) == 1);
         require(OpCovOutputCount(gen__remote_cov_id) == 1);
-        byte[32] observed_agent = templateHash(
-            gen__remote_observed_agent_prefix,
-            gen__remote_observed_agent_suffix
-        );
+        byte[32] observed_agent = gen__remote_observed_agent_template;
         // :: observed input remote.agent: observed_agent
         int gen__remote_agent_input_idx = OpCovInputIdx(gen__remote_cov_id, 0);
-        int gen__remote_observed_agent_prefix_len = gen__remote_observed_agent_prefix.length;
-        int gen__remote_observed_agent_suffix_len = gen__remote_observed_agent_suffix.length;
         AgentCapsule gen__remote_agent_state = readInputStateWithTemplate(
             gen__remote_agent_input_idx,
             gen__remote_observed_agent_prefix_len,
@@ -62,11 +58,12 @@ contract Cell(
             energy: prev_state.energy - 1,
         };
         // :: observed become remote.agent -> observed_agent
-        validateOutputStateWithTemplate(
+        validateOutputStateWithInputTemplate(
             gen__remote_agent_output_idx,
             next_state,
-            gen__remote_observed_agent_prefix,
-            gen__remote_observed_agent_suffix,
+            gen__remote_agent_input_idx,
+            gen__remote_observed_agent_prefix_len,
+            gen__remote_observed_agent_suffix_len,
             observed_agent
         );
         State next_cell = {
