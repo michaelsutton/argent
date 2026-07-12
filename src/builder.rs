@@ -188,6 +188,8 @@ mod tests {
 
         assert_eq!(built.transaction.inputs.len(), 1);
         assert_eq!(built.transaction.outputs.len(), 1);
+        assert_eq!(built.transaction.version, 1);
+        assert!(built.transaction.inputs[0].compute_commit.compute_budget().is_some());
         assert_eq!(built.transaction.outputs[0].value, input_value);
         assert_eq!(built.transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
 

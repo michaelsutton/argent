@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 
 use argent_artifact::{EmitArtifact, EntryKindArtifact};
-use kaspa_consensus_core::tx::{Transaction, TransactionOutpoint, UtxoEntry};
+use kaspa_consensus_core::{
+    mass::ComputeBudget,
+    tx::{Transaction, TransactionOutpoint, UtxoEntry},
+};
 
-use crate::{ArgValue, ArtifactValue, BuilderError, BuilderResult, TxBuilder, execute_input_with_covenants};
+use crate::{ArgValue, ArtifactValue, BuilderError, BuilderResult, TxBuilder, measure_input_script_units_with_covenants};
 
 /// A transaction produced and verified by [`TransitionBuilder`].
 #[derive(Debug)]
@@ -111,8 +114,12 @@ impl TransitionBuilder<'_, '_> {
 
         let output = self.builder.covenant_output(&output_actor, expected_state.clone(), output_value, 0, covenant_id)?;
         let sigscript = self.builder.p2sh_signature_script(&self.actor_name, &self.entry_name, input.state.clone(), self.user_args)?;
-        let transaction = TxBuilder::transaction(vec![TxBuilder::transaction_input(input.outpoint, sigscript)], vec![output]);
-        execute_input_with_covenants(&transaction, vec![input.utxo.clone()], 0)?;
+        let mut transaction = TxBuilder::transaction(vec![TxBuilder::transaction_input(input.outpoint, sigscript)], vec![output]);
+        // Measure without a limit, then commit the smallest covering v1 budget.
+        let used_script_units = measure_input_script_units_with_covenants(&transaction, vec![input.utxo.clone()], 0)?;
+        let compute_budget = ComputeBudget::checked_covering_script_units(used_script_units)
+            .ok_or(BuilderError::ComputeBudgetOverflow { input_index: 0, script_units: used_script_units.0 })?;
+        transaction.inputs[0].compute_commit = compute_budget.into();
         Ok(BuiltTransition { transaction })
     }
 

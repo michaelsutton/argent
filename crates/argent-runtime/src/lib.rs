@@ -28,6 +28,7 @@ use kaspa_consensus_core::{
     Hash,
     errors::tx::PopulateGenesisCovenantsError,
     hashing::sighash::SigHashReusedValuesUnsync,
+    mass::ScriptUnits,
     tx::{
         CovenantBinding, GenesisCovenantGroup, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint,
         TransactionOutput, UtxoEntry, VerifiableTransaction,
@@ -301,6 +302,8 @@ pub enum BuilderError {
     UnknownEntry { actor: String, entry: String },
     #[error("cannot build transition `{actor}::{entry}`: {message}")]
     InvalidTransition { actor: String, entry: String, message: String },
+    #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
+    ComputeBudgetOverflow { input_index: usize, script_units: u64 },
     #[error("missing output `{0}`")]
     MissingOutput(String),
     #[error("genesis covenant output {0} was not populated")]
@@ -1768,22 +1771,32 @@ fn blake2b32(data: &[u8]) -> Vec<u8> {
 }
 
 pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
+    measure_input_script_units_with_covenants(tx, entries, input_idx).map(|_| ())
+}
+
+pub(crate) fn measure_input_script_units_with_covenants(
+    tx: &Transaction,
+    entries: Vec<UtxoEntry>,
+    input_idx: usize,
+) -> Result<ScriptUnits, TxScriptError> {
     let reused_values = SigHashReusedValuesUnsync::new();
-    let sig_cache = Cache::new(10_000);
+    let sig_cache = Cache::new(100);
     let input = tx.inputs[input_idx].clone();
     let populated = PopulatedTransaction::new(tx, entries);
     let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
     let utxo = populated.utxo(input_idx).expect("selected input utxo");
 
-    TxScriptEngine::from_transaction_input(
+    let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
         &populated,
         &input,
         input_idx,
         utxo,
         EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
         covenant_engine_flags(),
-    )
-    .execute()
+        ScriptUnits(u64::MAX),
+    );
+    vm.execute()?;
+    Ok(vm.used_script_units())
 }
 
 pub fn covenant_engine_flags() -> EngineFlags {
