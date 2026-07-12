@@ -25,7 +25,7 @@ mod tests {
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
             sighash_type::SIG_HASH_ALL,
         },
-        tx::{MutableTransaction, Transaction, TransactionId, TransactionOutpoint, UtxoEntry},
+        tx::{CovenantBinding, MutableTransaction, Transaction, TransactionId, TransactionOutpoint, UtxoEntry},
     };
     use kaspa_txscript::pay_to_script_hash_signature_script_with_flags;
     use secp256k1::{Keypair, Secp256k1, SecretKey};
@@ -143,6 +143,62 @@ mod tests {
             .expect_err("user must not provide hidden prefix/suffix witnesses");
 
         assert!(matches!(err, BuilderError::Codec(CodecError::WrongArgumentCount { .. })));
+    }
+
+    #[test]
+    fn fluent_transition_builds_and_verifies_static_single_output() {
+        let artifact = inline_artifact(
+            "fluent-counter",
+            r#"
+            state CounterState {
+                int count;
+            }
+
+            actor Counter owns CounterState {
+                entry bump(delta: int) emits one Counter {
+                    CounterState next = {
+                        count: count + delta,
+                    };
+
+                    become Counter(next);
+                }
+            }
+
+            app CounterApp {
+                actor Counter;
+            }
+            "#,
+        );
+        let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
+        let initial = state! { count: 2 };
+        let next = state! { count: 5 };
+        let input_value = 1_000;
+        let covenant_id = Hash::from_bytes([0x42; 32]);
+        let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 0 };
+        let input_utxo =
+            builder.covenant_utxo("Counter", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+
+        let built = builder
+            .transition("Counter", "bump", args![3])
+            .input(outpoint, input_utxo.clone(), initial.clone())
+            .expect(next)
+            .preserve_value()
+            .build()
+            .expect("fluent transition builds");
+
+        assert_eq!(built.transaction.inputs.len(), 1);
+        assert_eq!(built.transaction.outputs.len(), 1);
+        assert_eq!(built.transaction.outputs[0].value, input_value);
+        assert_eq!(built.transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
+
+        let err = builder
+            .transition("Counter", "bump", args![3])
+            .input(outpoint, input_utxo, initial.clone())
+            .expect(initial)
+            .preserve_value()
+            .build()
+            .expect_err("incorrect expected state must fail contract execution");
+        assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
     }
 
     #[test]

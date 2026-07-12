@@ -10,10 +10,13 @@
 //! Argent-specific for now; lower-level Silverscript runtime abstractions can
 //! split out later if the artifact model becomes generic enough.
 
+mod transition;
+
 use std::collections::BTreeMap;
 
 pub use argent_artifact::Artifact;
 pub use silverscript_abi::ArtifactValue;
+pub use transition::{BuiltTransition, TransitionBuilder};
 
 use argent_artifact::{
     ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, EntryArtifact, HiddenParamArtifact,
@@ -296,6 +299,8 @@ pub enum BuilderError {
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
+    #[error("cannot build transition `{actor}::{entry}`: {message}")]
+    InvalidTransition { actor: String, entry: String, message: String },
     #[error("missing output `{0}`")]
     MissingOutput(String),
     #[error("genesis covenant output {0} was not populated")]
