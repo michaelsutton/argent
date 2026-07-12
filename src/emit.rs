@@ -1733,8 +1733,7 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
             out.push_str(&format!("        byte[32] {} = {};\n", output.actor, hidden_observed_actor_template_name(&spec)));
         }
         for (idx, input) in observe.inputs.iter().enumerate() {
-            let lens_spec = observed_input_lens_source_for_input(observe, input);
-            let template_spec = observed_template_spec_for_input(observe, input);
+            let input_spec = observed_input_spec(observe, input);
             let input_idx = hidden_observed_input_idx_name(&observe.name, &input.name);
             let state_name = hidden_observed_input_state_name(&observe.name, &input.name);
             let state_struct = contract_state_type_for_observed_actor(actor, entry, observe, input, model)?;
@@ -1744,18 +1743,6 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
                 &format!("int {input_idx} = OpCovInputIdx({cov_id}, {idx})"),
                 &format!("observed input {}.{}: {}", observe.name, input.name, input.actor),
             );
-            if lens_spec.side == ObservedActorSideArtifact::Output {
-                out.push_str(&format!(
-                    "        int {} = {}.length;\n",
-                    hidden_observed_actor_prefix_len_name(&observed_input_spec(observe, input)),
-                    hidden_observed_actor_prefix_name(&lens_spec)
-                ));
-                out.push_str(&format!(
-                    "        int {} = {}.length;\n",
-                    hidden_observed_actor_suffix_len_name(&observed_input_spec(observe, input)),
-                    hidden_observed_actor_suffix_name(&lens_spec)
-                ));
-            }
             push_generated_call(
                 out,
                 8,
@@ -1763,9 +1750,9 @@ fn emit_observed_inputs(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, 
                 "readInputStateWithTemplate",
                 &[
                     input_idx,
-                    hidden_observed_actor_prefix_len_name(&observed_input_spec(observe, input)),
-                    hidden_observed_actor_suffix_len_name(&observed_input_spec(observe, input)),
-                    observed_actor_template_expr_for_entry(actor, entry, model, observe, input, &template_spec)?,
+                    hidden_observed_actor_prefix_len_name(&input_spec),
+                    hidden_observed_actor_suffix_len_name(&input_spec),
+                    observed_actor_template_expr_for_entry(actor, entry, model, observe, input, &input_spec)?,
                 ],
             );
         }
@@ -3348,14 +3335,14 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
             variants: selector.variants,
         })
         .collect::<Vec<_>>();
-    let byte_actors = entry
+    let write_actors = entry
         .routes
         .iter()
         .filter(|route| !selectors.contains_key(&route.actor))
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
-    let mut specs = template_witness_specs_for_actor(actor, model, read_actors, byte_actors);
+    let mut specs = template_witness_specs_for_actor(actor, model, read_actors, write_actors);
     specs.selectors = selector_specs;
     specs.observed_actors = observed_actor_witness_specs(actor, entry, model);
     specs.state_expansions = state_expansion_witness_specs_for_actor(actor, model);
@@ -3405,9 +3392,9 @@ fn template_witness_specs_for_actor(
     actor: &ActorDecl,
     model: &Model<'_>,
     read_actors: BTreeSet<String>,
-    byte_actors: BTreeSet<String>,
+    write_actors: BTreeSet<String>,
 ) -> EntryWitnessSpecs {
-    let mut specs = template_witness_specs(model, read_actors, byte_actors);
+    let mut specs = template_witness_specs(model, read_actors, write_actors);
     let mut family_specs = BTreeMap::<String, RouteFamilyWitnessSpec>::new();
     for spec in &mut specs {
         spec.source = template_source_for_actor(&actor.state, &spec.actor, model);
@@ -3461,28 +3448,28 @@ fn state_expansion_digest_fields_for_state(state_name: &str, model: &Model<'_>) 
 fn template_witness_specs(
     model: &Model<'_>,
     read_actors: BTreeSet<String>,
-    byte_actors: BTreeSet<String>,
+    write_actors: BTreeSet<String>,
 ) -> Vec<TemplateWitnessSpec> {
-    let mut required = read_actors.union(&byte_actors).cloned().collect::<BTreeSet<_>>();
+    let mut required = read_actors.union(&write_actors).cloned().collect::<BTreeSet<_>>();
     let mut ordered = Vec::new();
     for actor in &model.template_actors {
         if required.remove(actor) {
             ordered.push(TemplateWitnessSpec {
                 actor: actor.clone(),
-                form: witness_form(actor, &read_actors, &byte_actors),
+                form: witness_form(actor, &read_actors, &write_actors),
                 source: TemplateWitnessSource::Field,
             });
         }
     }
     ordered.extend(required.into_iter().map(|actor| {
-        let form = witness_form(&actor, &read_actors, &byte_actors);
+        let form = witness_form(&actor, &read_actors, &write_actors);
         TemplateWitnessSpec { actor, form, source: TemplateWitnessSource::Field }
     }));
     ordered
 }
 
-fn witness_form(actor: &str, read_actors: &BTreeSet<String>, byte_actors: &BTreeSet<String>) -> TemplateWitnessForm {
-    if byte_actors.contains(actor) && !read_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
+fn witness_form(actor: &str, read_actors: &BTreeSet<String>, write_actors: &BTreeSet<String>) -> TemplateWitnessForm {
+    if write_actors.contains(actor) && !read_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
 }
 
 fn template_source_for_actor(state: &str, actor: &str, model: &Model<'_>) -> TemplateWitnessSource {
@@ -3678,24 +3665,6 @@ fn observed_actor_template_expr_for_entry(
         return lower_entry_expr(actor, entry, model, &observed.actor, Some("byte[32]"));
     }
     Ok(hidden_observed_actor_template_name(spec))
-}
-
-fn observed_template_spec_for_input(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
-    if let Some(output) = first_observed_output_for_actor(observe, &input.actor)
-        && !observed_reuses_input_template(observe, output)
-    {
-        return observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
-    }
-    observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor)
-}
-
-fn observed_input_lens_source_for_input(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
-    if let Some(output) = first_observed_output_for_actor(observe, &input.actor)
-        && !observed_reuses_input_template(observe, output)
-    {
-        return observed_actor_spec(observe, ObservedActorSideArtifact::Output, &output.name, &output.actor);
-    }
-    observed_actor_spec(observe, ObservedActorSideArtifact::Input, &input.name, &input.actor)
 }
 
 fn observed_input_spec(observe: &ObserveDecl, input: &ObservedActorDecl) -> ObservedActorWitnessSpec {
@@ -4646,7 +4615,7 @@ fn planned_terminal_path_artifact(
     selectors: &BTreeMap<String, TemplateSelector>,
 ) -> Result<PlannedTerminalPathArtifact> {
     let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
-    let byte_actors = routes
+    let write_actors = routes
         .iter()
         .filter(|route| !selectors.contains_key(&route.actor))
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
@@ -4656,7 +4625,7 @@ fn planned_terminal_path_artifact(
         routes.iter().filter_map(|route| selectors.get(&route.actor).map(|selector| selector.name.clone())).collect::<BTreeSet<_>>();
 
     let mut witness_recipe_ids =
-        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors.clone(), byte_actors));
+        witness_recipe_ids_for_specs(template_witness_specs_for_actor(actor, model, read_actors.clone(), write_actors));
     for selector_name in &selector_names {
         witness_recipe_ids.extend(template_selector_witness_recipe_ids(selector_name));
     }
