@@ -60,7 +60,7 @@ contract Agent(
         // :: output agent: Agent
         int gen__agent_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
-        // :: authorized by controller_id (via co-spend)
+        // :: co-spent with controller_id
         require(OpCovInputCount(controller_id) > 0);
         require(next_agent.world_id == world_id);
         require(next_agent.agent_id == agent_id);

@@ -28,7 +28,7 @@ same transaction
 
 Argent uses two complementary language features for this:
 
-- `id.authorized()` proves that a covenant id participates in the transaction.
+- `id.co_spent()` proves that a covenant id participates in the transaction.
 - `observes` lets one actor name the foreign covenant inputs and outputs it
   expects to inspect or constrain.
 
@@ -99,20 +99,20 @@ At the source level, this means:
 The source program should describe the relationship between the covenants, not
 the implementation details needed to enforce that relationship.
 
-## Authorized
+## Co-spend presence
 
-`.authorized()` is the source-level way to require a covenant id to be present
+`.co_spent()` is the source-level way to require a covenant id to be present
 in the transaction.
 
 ```rust
-require(controller_id.authorized());
+require(controller_id.co_spent());
 ```
 
 This is useful on the delegated side. For example, an asset-side proxy can store
 the controller covenant id and require that the controller is co-spent before
 the proxy accepts a mint transition.
 
-`.authorized()` is only a presence check. It should be read as "the covenant id
+`.co_spent()` is only a presence check. It should be read as "the covenant id
 appears as a valid input in this transaction." The rest of the ICC design must
 make sure the present covenant is the right authority for the transition.
 
@@ -330,7 +330,7 @@ should not accidentally become a closed dependency on one implementation.
 Current and expected source-level ICC features:
 
 - `covid`: covenant id value type
-- `id.authorized()`: require the covenant id to be present in the transaction
+- `id.co_spent()`: require the covenant id to be present in the transaction
 - `observes <name> by <covid_expr>`: declare an observed covenant view
 - `inputs { handle: Actor; }`: name observed inputs
 - `outputs { handle: Actor; }`: name observed outputs

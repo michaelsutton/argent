@@ -54,7 +54,7 @@ Things to make explicit in docs/tests:
 
 Open question: should Argent eventually have source syntax for declaring a
 paired entry relation, or should this remain expressed through `observes`,
-`authorized()`, consumed inputs, and output checks?
+`co_spent()`, consumed inputs, and output checks?
 
 ## Genesis launch roots
 
@@ -103,7 +103,7 @@ controller by covenant-id co-spend.
 
 The delicate case:
 
-- the asset accepts `controller_id.authorized()` or an equivalent covenant-id
+- the asset accepts `controller_id.co_spent()` or an equivalent covenant-id
   co-spend check
 - the controller is not yet bound to the asset covenant id
 - a controller init transaction can accidentally authorize unrelated asset

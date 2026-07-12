@@ -2070,9 +2070,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
 
         if let Some(require_expr) = parse_require_statement(&statement) {
-            for covenant_id in authorized_covenant_ids(require_expr, &self.source_types)? {
+            for covenant_id in co_spent_covenant_ids(require_expr, &self.source_types)? {
                 push_indent(out, indent);
-                out.push_str(&format!("// :: authorized by {} (via co-spend)\n", covenant_id.trim()));
+                out.push_str(&format!("// :: co-spent with {}\n", covenant_id.trim()));
             }
         }
 
@@ -2741,7 +2741,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for field in &self.model.storage_state(&self.actor.state)?.fields {
             out = out.replace(&format!("self.{}", field.name), &field.name);
         }
-        out = lower_authorized_calls(&out, &self.source_types)?;
+        out = lower_co_spent_calls(&out, &self.source_types)?;
         for (source, lowered) in &self.observed_input_state_refs {
             out = out.replace(source, lowered);
         }
@@ -4845,18 +4845,18 @@ fn actor_enum_variant_const_expr(actor_enum: &ActorEnumInfo, variant: &str) -> O
     actor_enum_variant_index(actor_enum, variant).map(|index| format!("{index} /*{}*/", to_snake(variant).to_ascii_uppercase()))
 }
 
-fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -> Result<String> {
-    if !expr.contains(".authorized") {
+fn lower_co_spent_calls(expr: &str, source_types: &BTreeMap<String, String>) -> Result<String> {
+    if !expr.contains(".co_spent") {
         return Ok(expr.to_string());
     }
     let tokens =
-        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex covenant co-spend expression `{expr}`: {}", err.message)))?;
     let mut out = String::new();
     let mut cursor = 0usize;
     let mut pos = 0usize;
     while pos < tokens.len() {
         if let Some((replacement_start, replacement_end, next_pos, covenant_id)) =
-            parse_authorized_call(expr, &tokens, pos, source_types)?
+            parse_co_spent_call(expr, &tokens, pos, source_types)?
         {
             out.push_str(&expr[cursor..replacement_start]);
             out.push_str(&format!("OpCovInputCount({}) > 0", covenant_id.trim()));
@@ -4870,23 +4870,23 @@ fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -
         pos += 1;
     }
     out.push_str(&expr[cursor..]);
-    if out.contains(".authorized") {
-        return Err(ArgentError::new("`.authorized()` is only available on `covid` values or explicit `covid(expr)` casts"));
+    if out.contains(".co_spent") {
+        return Err(ArgentError::new("`.co_spent()` is only available on `covid` values or explicit `covid(expr)` casts"));
     }
     Ok(out)
 }
 
-fn authorized_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
-    if !expr.contains(".authorized") {
+fn co_spent_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
+    if !expr.contains(".co_spent") {
         return Ok(Vec::new());
     }
     let tokens =
-        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex covenant co-spend expression `{expr}`: {}", err.message)))?;
     let mut ids = Vec::new();
     let mut pos = 0usize;
     while pos < tokens.len() {
         if let Some((_replacement_start, _replacement_end, next_pos, covenant_id)) =
-            parse_authorized_call(expr, &tokens, pos, source_types)?
+            parse_co_spent_call(expr, &tokens, pos, source_types)?
         {
             ids.push(covenant_id.trim().to_string());
             pos = next_pos;
@@ -4906,7 +4906,7 @@ fn parse_require_statement(statement: &str) -> Option<&str> {
     Some(inner)
 }
 
-fn parse_authorized_call(
+fn parse_co_spent_call(
     expr: &str,
     tokens: &[Token],
     pos: usize,
@@ -4914,9 +4914,9 @@ fn parse_authorized_call(
 ) -> Result<Option<(usize, usize, usize, String)>> {
     if is_ident(tokens, pos, "covid") && is_symbol(tokens, pos + 1, '(') {
         let close = matching_symbol(tokens, pos + 1, '(', ')')
-            .ok_or_else(|| ArgentError::new(format!("unterminated covid(...) authorization expression `{expr}`")))?;
+            .ok_or_else(|| ArgentError::new(format!("unterminated covid(...) co-spend expression `{expr}`")))?;
         if is_symbol(tokens, close + 1, '.')
-            && is_ident(tokens, close + 2, "authorized")
+            && is_ident(tokens, close + 2, "co_spent")
             && is_symbol(tokens, close + 3, '(')
             && is_symbol(tokens, close + 4, ')')
         {
@@ -4932,13 +4932,13 @@ fn parse_authorized_call(
 
     if matches!(tokens.get(pos).map(|token| &token.kind), Some(TokenKind::Ident(_)))
         && is_symbol(tokens, pos + 1, '.')
-        && is_ident(tokens, pos + 2, "authorized")
+        && is_ident(tokens, pos + 2, "co_spent")
         && is_symbol(tokens, pos + 3, '(')
         && is_symbol(tokens, pos + 4, ')')
     {
         let ident = expr[tokens[pos].span.start..tokens[pos].span.end].to_string();
         if source_types.get(&ident).is_none_or(|ty| ty != "covid") {
-            return Err(ArgentError::new(format!("`.authorized()` is only available on `covid` values, found `{ident}`")));
+            return Err(ArgentError::new(format!("`.co_spent()` is only available on `covid` values, found `{ident}`")));
         }
         return Ok(Some((tokens[pos].span.start, tokens[pos + 4].span.end, pos + 5, ident)));
     }
@@ -6453,7 +6453,7 @@ mod tests {
     }
 
     #[test]
-    fn icc_asset_lowers_covid_authorization_and_else_if() {
+    fn icc_asset_lowers_covid_co_spend_and_else_if() {
         let out_dir = std::env::temp_dir().join(format!("argent-icc-asset-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
 
@@ -6463,14 +6463,14 @@ mod tests {
         let kcc20_sil = fs::read_to_string(out_dir.join("sil/KCC20.sil")).expect("KCC20.sil exists");
         assert!(kcc20_sil.contains("} else if (identifier_type == IDENTIFIER_COVENANT_ID) {"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(checkSig(owner_sig, owner_identifier));"), "{kcc20_sil}");
-        assert!(kcc20_sil.contains("// :: authorized by owner_identifier (via co-spend)"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("// :: co-spent with owner_identifier"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(OpCovInputCount(owner_identifier) > 0);"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("State next_state = {"), "{kcc20_sil}");
 
         let proxy_sil = fs::read_to_string(out_dir.join("sil/MinterProxy.sil")).expect("MinterProxy.sil exists");
         assert!(proxy_sil.contains("byte[32] controller_id = init_controller_id;"), "{proxy_sil}");
         assert!(proxy_sil.contains("entrypoint function mint(\n        State next_proxy,"), "{proxy_sil}");
-        assert!(proxy_sil.contains("// :: authorized by controller_id (via co-spend)"), "{proxy_sil}");
+        assert!(proxy_sil.contains("// :: co-spent with controller_id"), "{proxy_sil}");
         assert!(proxy_sil.contains("require(OpCovInputCount(controller_id) > 0);"), "{proxy_sil}");
 
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
@@ -6484,8 +6484,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_authorized_on_non_covid_value() {
-        let out_dir = std::env::temp_dir().join(format!("argent-authorized-type-test-{}", std::process::id()));
+    fn rejects_co_spent_on_non_covid_value() {
+        let out_dir = std::env::temp_dir().join(format!("argent-co-spent-type-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
         let module = crate::parser::parse_module(
             PathBuf::from("test.ag"),
@@ -6496,7 +6496,7 @@ mod tests {
 
             actor Foo owns FooState {
                 entry hold() emits none {
-                    require(id.authorized());
+                    require(id.co_spent());
                 }
             }
 
@@ -6509,7 +6509,7 @@ mod tests {
         .expect("source parses");
         let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
 
-        let err = emit_build(&program, &out_dir).expect_err("non-covid authorization must be rejected");
+        let err = emit_build(&program, &out_dir).expect_err("non-covid co-spend must be rejected");
         assert!(err.to_string().contains("only available on `covid` values"), "unexpected error: {err}");
 
         let _ = fs::remove_dir_all(out_dir);

@@ -44,7 +44,7 @@ contract MinterProxy(
         // :: output recipient: KCC20
         int gen__recipient_output_idx = OpAuthOutputIdx(this.activeInputIndex, 1);
 
-        // :: authorized by controller_id (via co-spend)
+        // :: co-spent with controller_id
         require(OpCovInputCount(controller_id) > 0);
         require(next_proxy.controller_id == controller_id);
         // :: become MinterProxy

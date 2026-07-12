@@ -1309,7 +1309,7 @@ mod tests {
         );
         let wrong_agent_sigscript = builder
             .p2sh_signature_script_in_app("open_agent", "Agent", "step", agent_initial.clone(), args![wrong_agent_next])
-            .expect("agent accepts controller-authorized non-physics state");
+            .expect("agent accepts controller-co-spent non-physics state");
         let wrong_cell_sigscript = builder
             .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
             .expect("cell sigscript builds for wrong-output tx");
@@ -1324,7 +1324,7 @@ mod tests {
             execute_input_with_covenants(&wrong_tx, entries.clone(), 0).is_err(),
             "core physics rejects an agent output that does not spend one energy"
         );
-        execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts authorized header-preserving output");
+        execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts co-spent header-preserving output");
     }
 
     #[test]
@@ -1341,7 +1341,7 @@ mod tests {
 
             actor Agent owns AgentCapsule {
                 entry step(next_state: AgentCapsule) emits one Agent {
-                    require(controller_id.authorized());
+                    require(controller_id.co_spent());
                     become Agent(next_state);
                 }
             }
@@ -1498,7 +1498,7 @@ mod tests {
                 entry step() emits {
                     agent: Forager;
                 } {
-                    require(controller_id.authorized());
+                    require(controller_id.co_spent());
 
                     ForagerState next_agent = {
                         world_id: world_id,
