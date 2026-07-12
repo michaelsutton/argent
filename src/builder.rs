@@ -146,17 +146,21 @@ mod tests {
     }
 
     #[test]
-    fn fluent_transition_builds_and_verifies_static_single_output() {
+    fn fluent_transition_builds_and_verifies_signed_single_output() {
         let artifact = inline_artifact(
             "fluent-counter",
             r#"
             state CounterState {
+                pubkey owner;
                 int count;
             }
 
             actor Counter owns CounterState {
-                entry bump(delta: int) emits one Counter {
+                entry bump(owner_sig: sig, delta: int) emits one Counter {
+                    require(checkSig(owner_sig, owner));
+
                     CounterState next = {
+                        owner: owner,
                         count: count + delta,
                     };
 
@@ -170,8 +174,10 @@ mod tests {
             "#,
         );
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let initial = state! { count: 2 };
-        let next = state! { count: 5 };
+        let owner = keypair_from_byte(1);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let initial = state! { owner: owner_pk.clone(), count: 2 };
+        let next = state! { owner: owner_pk, count: 5 };
         let input_value = 1_000;
         let covenant_id = Hash::from_bytes([0x42; 32]);
         let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 0 };
@@ -179,10 +185,11 @@ mod tests {
             builder.covenant_utxo("Counter", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("counter UTXO builds");
 
         let built = builder
-            .transition("Counter", "bump", args![3])
+            .transition("Counter", "bump")
             .input(outpoint, input_utxo.clone(), initial.clone())
             .expect(next)
             .preserve_value()
+            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
             .build()
             .expect("fluent transition builds");
 
@@ -194,10 +201,11 @@ mod tests {
         assert_eq!(built.transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
 
         let err = builder
-            .transition("Counter", "bump", args![3])
+            .transition("Counter", "bump")
             .input(outpoint, input_utxo, initial.clone())
             .expect(initial)
             .preserve_value()
+            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
             .build()
             .expect_err("incorrect expected state must fail contract execution");
         assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
@@ -1877,6 +1885,10 @@ mod tests {
 
     fn sign_input(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {
         let tx = MutableTransaction::with_entries(tx.clone(), entries);
+        sign_mutable_input(&tx, input_idx, keypair)
+    }
+
+    fn sign_mutable_input<T: AsRef<Transaction>>(tx: &MutableTransaction<T>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {
         let reused_values = SigHashReusedValuesUnsync::new();
         let sig_hash = calc_schnorr_signature_hash(&tx.as_verifiable(), input_idx, SIG_HASH_ALL, &reused_values);
         let msg = secp256k1::Message::from_digest_slice(sig_hash.as_bytes().as_slice()).expect("valid sighash message");
