@@ -6,7 +6,7 @@ state AgentCapsule {
 
 state CellState {
     covid agent_covid;
-    actor<AgentCapsule> agent_type;
+    actor_type<AgentCapsule> agent_type;
     int tick;
 }
 
@@ -14,7 +14,7 @@ actor Cell owns CellState {
     entry advance()
     observes remote by self.agent_covid {
         inputs {
-            agent: actor<AgentCapsule> as observed_agent;
+            agent: actor_type<AgentCapsule> as observed_agent;
         }
 
         outputs {

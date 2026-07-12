@@ -1,5 +1,6 @@
 use crate::ast::RouteCall;
 use crate::error::{ArgentError, Result};
+use crate::language::word;
 use crate::lexer::{Token, TokenKind, lex};
 
 #[derive(Debug, Clone)]
@@ -78,18 +79,18 @@ impl TerminalParser<'_> {
     }
 
     fn parse_statement(&mut self) -> Result<TerminalResult> {
-        if self.consume_ident("if") {
+        if self.consume_ident(word::IF) {
             self.expect_symbol('(')?;
             self.skip_balanced('(', ')')?;
             let then_info = self.parse_block_or_statement()?;
-            let else_info = if self.consume_ident("else") { self.parse_block_or_statement()? } else { TerminalResult::empty() };
+            let else_info = if self.consume_ident(word::ELSE) { self.parse_block_or_statement()? } else { TerminalResult::empty() };
             let contains_become = then_info.info.contains_become || else_info.info.contains_become;
             let all_paths_terminal = then_info.info.all_paths_terminal && else_info.info.all_paths_terminal;
             let mut terminal_route_sets = then_info.terminal_route_sets;
             terminal_route_sets.extend(else_info.terminal_route_sets);
 
             Ok(TerminalResult { info: TerminalInfo { contains_become, all_paths_terminal }, terminal_route_sets })
-        } else if self.consume_ident("become") {
+        } else if self.consume_ident(word::BECOME) {
             let routes = self.parse_become_tail()?;
             Ok(TerminalInfo::terminal(routes))
         } else if self.consume_symbol('{') {
@@ -116,7 +117,7 @@ impl TerminalParser<'_> {
         if self.consume_symbol('{') {
             let mut routes = Vec::new();
             while !self.check_symbol('}') && !self.is_eof() {
-                if self.check_ident("become") {
+                if self.check_ident(word::BECOME) {
                     return Err(self.error("nested `become` blocks are not supported yet"));
                 }
                 routes.push(self.parse_route()?);

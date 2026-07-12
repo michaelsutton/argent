@@ -24,7 +24,7 @@ actor KCC20 owns KCC20State {
         if (identifier_type == IDENTIFIER_PUBKEY) {
             require(checkSig(owner_sig, owner_identifier));
         } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
-            require(covid(owner_identifier).authorized());
+            require(covid(owner_identifier).co_spent());
         } else {
             require(false);
         }
@@ -47,7 +47,7 @@ actor MinterProxy owns MinterProxyState {
         proxy: MinterProxy;
         recipient: KCC20;
     } {
-        require(controller_id.authorized());
+        require(controller_id.co_spent());
         require(next_proxy.controller_id == controller_id);
 
         become {

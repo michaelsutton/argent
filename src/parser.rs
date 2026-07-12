@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::ast::*;
 use crate::error::{ArgentError, Result};
+use crate::language::word;
 use crate::lexer::{Token, TokenKind, lex};
 use crate::routes::analyze_routes;
 
@@ -31,21 +32,21 @@ impl Parser {
         };
 
         while !self.is_eof() {
-            if self.check_ident("import") {
+            if self.check_ident(word::IMPORT) {
                 module.imports.push(self.parse_import()?);
-            } else if self.check_ident("const") {
+            } else if self.check_ident(word::CONST) {
                 module.consts.push(self.parse_const()?);
-            } else if self.check_ident("state") {
+            } else if self.check_ident(word::STATE) {
                 module.states.push(self.parse_state()?);
-            } else if self.check_ident("fn") {
+            } else if self.check_ident(word::FN) {
                 module.functions.push(self.parse_function()?);
-            } else if self.check_ident("actor") {
-                if self.peek_ident(1, "enum") {
+            } else if self.check_ident(word::ACTOR) {
+                if self.peek_ident(1, word::ENUM) {
                     module.actor_enums.push(self.parse_actor_enum()?);
                 } else {
                     module.actors.push(self.parse_actor()?);
                 }
-            } else if self.check_ident("app") {
+            } else if self.check_ident(word::APP) {
                 module.apps.push(self.parse_app()?);
             } else {
                 return Err(self.error(format!("expected top-level declaration, found {}", self.describe_current())));
@@ -56,10 +57,10 @@ impl Parser {
     }
 
     fn parse_import(&mut self) -> Result<Import> {
-        self.expect_ident("import")?;
-        if self.consume_ident("actor") {
+        self.expect_ident(word::IMPORT)?;
+        if self.consume_ident(word::ACTOR) {
             let name = self.expect_any_ident()?;
-            self.expect_ident("from")?;
+            self.expect_ident(word::FROM)?;
             let path = self.expect_string()?;
             self.expect_symbol(';')?;
             Ok(Import::Actor { name, path })
@@ -71,7 +72,7 @@ impl Parser {
     }
 
     fn parse_const(&mut self) -> Result<ConstDecl> {
-        self.expect_ident("const")?;
+        self.expect_ident(word::CONST)?;
         let ty = self.parse_type()?;
         let name = self.expect_any_ident()?;
         self.expect_symbol('=')?;
@@ -85,9 +86,9 @@ impl Parser {
     }
 
     fn parse_state(&mut self) -> Result<StateDecl> {
-        self.expect_ident("state")?;
+        self.expect_ident(word::STATE)?;
         let name = self.expect_any_ident()?;
-        let expands = if self.consume_ident("expands") { Some(self.expect_any_ident()?) } else { None };
+        let expands = if self.consume_ident(word::EXPANDS) { Some(self.expect_any_ident()?) } else { None };
         self.expect_symbol('{')?;
         let mut fields = Vec::new();
         let mut digest_expansions = Vec::new();
@@ -98,7 +99,7 @@ impl Parser {
                 let state = self.expect_any_ident()?;
                 self.expect_symbol(';')?;
                 digest_expansions.push(StateDigestExpansionDecl { field, state });
-            } else if self.consume_ident("virtual") {
+            } else if self.consume_ident(word::VIRTUAL) {
                 let name = self.expect_any_ident()?;
                 self.expect_symbol(';')?;
                 fields.push(FieldDecl { ty: TypeRef::array("byte", 32), name, virtual_slot: true });
@@ -115,7 +116,7 @@ impl Parser {
     }
 
     fn parse_function(&mut self) -> Result<FunctionDecl> {
-        self.expect_ident("fn")?;
+        self.expect_ident(word::FN)?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
         self.expect_arrow()?;
@@ -125,9 +126,9 @@ impl Parser {
     }
 
     fn parse_actor(&mut self) -> Result<ActorDecl> {
-        self.expect_ident("actor")?;
+        self.expect_ident(word::ACTOR)?;
         let name = self.expect_any_ident()?;
-        self.expect_ident("owns")?;
+        self.expect_ident(word::OWNS)?;
         let state = self.expect_any_ident()?;
         self.expect_symbol('{')?;
         let mut entries = Vec::new();
@@ -139,8 +140,8 @@ impl Parser {
     }
 
     fn parse_actor_enum(&mut self) -> Result<ActorEnumDecl> {
-        self.expect_ident("actor")?;
-        self.expect_ident("enum")?;
+        self.expect_ident(word::ACTOR)?;
+        self.expect_ident(word::ENUM)?;
         let name = self.expect_any_ident()?;
         self.expect_symbol('{')?;
         let mut variants = Vec::new();
@@ -158,9 +159,9 @@ impl Parser {
     }
 
     fn parse_actor_item(&mut self) -> Result<EntryDecl> {
-        if self.check_ident("entry") {
+        if self.check_ident(word::ENTRY) {
             self.parse_entry()
-        } else if self.check_ident("delegate") {
+        } else if self.check_ident(word::DELEGATE) {
             self.parse_delegate()
         } else {
             Err(self.error(format!("expected `entry` or `delegate`, found {}", self.describe_current())))
@@ -168,11 +169,11 @@ impl Parser {
     }
 
     fn parse_entry(&mut self) -> Result<EntryDecl> {
-        self.expect_ident("entry")?;
+        self.expect_ident(word::ENTRY)?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
         let (observes, consumes) = self.parse_entry_clauses()?;
-        self.expect_ident("emits")?;
+        self.expect_ident(word::EMITS)?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
         let route_analysis = analyze_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
@@ -190,7 +191,7 @@ impl Parser {
     }
 
     fn parse_delegate(&mut self) -> Result<EntryDecl> {
-        self.expect_ident("delegate")?;
+        self.expect_ident(word::DELEGATE)?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
         let (observes, consumes) = self.parse_entry_clauses()?;
@@ -210,12 +211,12 @@ impl Parser {
     }
 
     fn parse_app(&mut self) -> Result<AppDecl> {
-        self.expect_ident("app")?;
+        self.expect_ident(word::APP)?;
         let name = self.expect_any_ident()?;
         self.expect_symbol('{')?;
         let mut actors = Vec::new();
         while !self.check_symbol('}') {
-            if self.consume_ident("actor") {
+            if self.consume_ident(word::ACTOR) {
                 actors.push(self.expect_any_ident()?);
                 self.expect_symbol(';')?;
             } else {
@@ -244,7 +245,7 @@ impl Parser {
     }
 
     fn parse_consumes(&mut self) -> Result<Vec<ConsumeDecl>> {
-        self.expect_ident("consumes")?;
+        self.expect_ident(word::CONSUMES)?;
         self.expect_symbol('{')?;
         let mut consumes = Vec::new();
         while !self.check_symbol('}') {
@@ -263,9 +264,9 @@ impl Parser {
         let mut consumes = Vec::new();
         let mut parsed_consumes = false;
         loop {
-            if self.check_ident("observes") {
+            if self.check_ident(word::OBSERVES) {
                 observes.push(self.parse_observes()?);
-            } else if self.check_ident("consumes") {
+            } else if self.check_ident(word::CONSUMES) {
                 if parsed_consumes {
                     return Err(self.error("entry declares `consumes` more than once"));
                 }
@@ -279,9 +280,9 @@ impl Parser {
     }
 
     fn parse_observes(&mut self) -> Result<ObserveDecl> {
-        self.expect_ident("observes")?;
+        self.expect_ident(word::OBSERVES)?;
         let name = self.expect_any_ident()?;
-        self.expect_ident("by")?;
+        self.expect_ident(word::BY)?;
         let covenant_expr_start = self.current().span.start;
         while !self.check_symbol('{') && !self.is_eof() {
             self.advance();
@@ -295,16 +296,16 @@ impl Parser {
         let mut inputs = None;
         let mut outputs = None;
         while !self.check_symbol('}') {
-            if self.check_ident("inputs") {
+            if self.check_ident(word::INPUTS) {
                 if inputs.is_some() {
                     return Err(self.error("observes clause declares `inputs` more than once"));
                 }
-                inputs = Some(self.parse_observed_actor_list("inputs")?);
-            } else if self.check_ident("outputs") {
+                inputs = Some(self.parse_observed_actor_list(word::INPUTS)?);
+            } else if self.check_ident(word::OUTPUTS) {
                 if outputs.is_some() {
                     return Err(self.error("observes clause declares `outputs` more than once"));
                 }
-                outputs = Some(self.parse_observed_actor_list("outputs")?);
+                outputs = Some(self.parse_observed_actor_list(word::OUTPUTS)?);
             } else {
                 return Err(self.error(format!("expected `inputs` or `outputs`, found {}", self.describe_current())));
             }
@@ -321,14 +322,14 @@ impl Parser {
         while !self.check_symbol('}') {
             let name = self.expect_any_ident()?;
             self.expect_symbol(':')?;
-            let (actor, open_state) = if self.consume_ident("actor") {
-                if section != "inputs" {
+            let (actor, open_state) = if self.consume_ident(word::ACTOR_TYPE) {
+                if section != word::INPUTS {
                     return Err(self.error("open observed actor bindings are only declared in `inputs`"));
                 }
                 self.expect_symbol('<')?;
                 let state = self.expect_any_ident()?;
                 self.expect_symbol('>')?;
-                self.expect_ident("as")?;
+                self.expect_ident(word::AS)?;
                 (self.expect_any_ident()?, Some(state))
             } else {
                 (self.take_observed_actor_target()?, None)
@@ -377,10 +378,10 @@ impl Parser {
     }
 
     fn parse_type_tail(&mut self, name: String) -> Result<TypeRef> {
-        if name == "actor" && self.consume_symbol('<') {
+        if name == word::ACTOR_TYPE && self.consume_symbol('<') {
             let state = self.expect_any_ident()?;
             self.expect_symbol('>')?;
-            Ok(TypeRef::actor_handle(state))
+            Ok(TypeRef::actor_type(state))
         } else if self.consume_symbol('[') {
             let len = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid array length"))?;
             self.expect_symbol(']')?;
@@ -391,9 +392,9 @@ impl Parser {
     }
 
     fn parse_emits(&mut self) -> Result<EmitSpec> {
-        if self.consume_ident("none") {
+        if self.consume_ident(word::NONE) {
             Ok(EmitSpec::None)
-        } else if self.consume_ident("one") {
+        } else if self.consume_ident(word::ONE) {
             let actors = self.parse_actor_union_until_body()?;
             Ok(EmitSpec::One { actors })
         } else if self.check_symbol('{') {

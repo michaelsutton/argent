@@ -6,7 +6,7 @@ state AgentCapsule {
 
 state CellState {
     covid agent_covid;
-    actor<AgentCapsule> agent_type;
+    actor_type<AgentCapsule> agent_type;
     int tick;
 }
 

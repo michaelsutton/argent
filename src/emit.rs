@@ -6,6 +6,7 @@ use crate::artifact::*;
 use crate::ast::*;
 use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
+use crate::language::word;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
@@ -311,7 +312,7 @@ impl<'a> Model<'a> {
     }
 
     fn validate_reserved_identifiers(&self) -> Result<()> {
-        reject_reserved_identifier("app", &self.app_name)?;
+        reject_reserved_identifier(word::APP, &self.app_name)?;
         for konst in &self.consts {
             reject_reserved_identifier("constant", &konst.name)?;
         }
@@ -322,7 +323,7 @@ impl<'a> Model<'a> {
             }
         }
         for state in self.states.values() {
-            reject_reserved_identifier("state", &state.name)?;
+            reject_reserved_identifier(word::STATE, &state.name)?;
             for field in &state.fields {
                 reject_reserved_identifier(&format!("state `{}` field", state.name), &field.name)?;
             }
@@ -336,7 +337,7 @@ impl<'a> Model<'a> {
             reject_reserved_identifier("actor enum", &actor_enum.name)?;
         }
         for actor in self.actors_by_name.values() {
-            reject_reserved_identifier("actor", &actor.name)?;
+            reject_reserved_identifier(word::ACTOR, &actor.name)?;
             for entry in &actor.entries {
                 reject_reserved_identifier(&format!("entry `{}::{}`", actor.name, entry.name), &entry.name)?;
                 for param in &entry.params {
@@ -491,8 +492,8 @@ impl<'a> Model<'a> {
                 )));
             }
             self.validate_observed_open_bindings(actor, entry, observe)?;
-            self.validate_observed_actor_handles(actor, entry, observe, "input", &observe.inputs)?;
-            self.validate_observed_actor_handles(actor, entry, observe, "output", &observe.outputs)?;
+            self.validate_observed_actor_types(actor, entry, observe, "input", &observe.inputs)?;
+            self.validate_observed_actor_types(actor, entry, observe, "output", &observe.outputs)?;
         }
         Ok(())
     }
@@ -534,7 +535,7 @@ impl<'a> Model<'a> {
         Ok(())
     }
 
-    fn validate_observed_actor_handles(
+    fn validate_observed_actor_types(
         &self,
         actor: &ActorDecl,
         entry: &EntryDecl,
@@ -734,7 +735,7 @@ fn collect_consts(program: &Program) -> Result<Vec<&ConstDecl>> {
     let mut consts = Vec::new();
     for module in &program.modules {
         for konst in &module.consts {
-            reject_duplicate_top_level("const", &konst.name, &module.path, &mut seen)?;
+            reject_duplicate_top_level(word::CONST, &konst.name, &module.path, &mut seen)?;
             consts.push(konst);
         }
     }
@@ -746,7 +747,7 @@ fn collect_functions(program: &Program) -> Result<Vec<&FunctionDecl>> {
     let mut functions = Vec::new();
     for module in &program.modules {
         for function in &module.functions {
-            reject_duplicate_top_level("fn", &function.name, &module.path, &mut seen)?;
+            reject_duplicate_top_level(word::FN, &function.name, &module.path, &mut seen)?;
             functions.push(function);
         }
     }
@@ -758,7 +759,7 @@ fn collect_states(program: &Program) -> Result<BTreeMap<String, &StateDecl>> {
     let mut states = BTreeMap::new();
     for module in &program.modules {
         for state in &module.states {
-            reject_duplicate_top_level("state", &state.name, &module.path, &mut seen)?;
+            reject_duplicate_top_level(word::STATE, &state.name, &module.path, &mut seen)?;
             states.insert(state.name.clone(), state);
         }
     }
@@ -770,7 +771,7 @@ fn collect_actors(program: &Program) -> Result<BTreeMap<String, &ActorDecl>> {
     let mut actors = BTreeMap::new();
     for module in &program.modules {
         for actor in &module.actors {
-            reject_duplicate_top_level("actor", &actor.name, &module.path, &mut seen)?;
+            reject_duplicate_top_level(word::ACTOR, &actor.name, &module.path, &mut seen)?;
             actors.insert(actor.name.clone(), actor);
         }
     }
@@ -872,12 +873,12 @@ fn template_selectors_for_entry(
         .map_err(|err| ArgentError::new(format!("failed to lex body for `{}::{}`: {}", actor.name, entry.name, err.message)))?;
     let mut pos = 0usize;
     while pos + 3 < tokens.len() {
-        let is_actor_handle = matches!(&tokens[pos].kind, TokenKind::Ident(word) if word == "actor")
+        let is_actor_type = matches!(&tokens[pos].kind, TokenKind::Ident(name) if name == word::ACTOR_TYPE)
             && matches!(tokens[pos + 1].kind, TokenKind::Symbol('<'))
             && matches!(tokens[pos + 3].kind, TokenKind::Symbol('>'))
             && matches!(tokens.get(pos + 4).map(|token| &token.kind), Some(TokenKind::Ident(_)))
             && matches!(tokens.get(pos + 5).map(|token| &token.kind), Some(TokenKind::Symbol('=')));
-        if is_actor_handle {
+        if is_actor_type {
             let state = match &tokens[pos + 2].kind {
                 TokenKind::Ident(state) => state.clone(),
                 _ => {
@@ -1061,17 +1062,18 @@ fn template_selector_from_actor_enum_value(
         && actor_enum.state != expected_state
     {
         return Err(ArgentError::new(format!(
-            "entry `{}::{}` declares actor handle `{name}` as actor<{expected_state}>, but `{actor_enum_name}` contains actor<{}>",
+            "entry `{}::{}` declares actor handle `{name}` as {actor_type}<{expected_state}>, but `{actor_enum_name}` contains {actor_type}<{}>",
             ctx.actor.name,
             ctx.entry.name,
             actor_enum.state,
+            actor_type = word::ACTOR_TYPE,
             name = request.name,
             actor_enum_name = request.actor_enum_name
         )));
     }
     if ctx.actor.state != actor_enum.state {
         return Err(ArgentError::new(format!(
-            "entry `{}::{}` uses actor enum `{actor_enum_name}` for state `{}`, but the entry actor owns `{}`; selector handles currently require the same state",
+            "entry `{}::{}` uses actor enum `{actor_enum_name}` for state `{}`, but the entry actor owns `{}`; selector values currently require the same state",
             ctx.actor.name,
             ctx.entry.name,
             actor_enum.state,
@@ -1155,7 +1157,7 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
     let mut seen = BTreeMap::new();
     for module in &program.modules {
         for app in &module.apps {
-            reject_duplicate_top_level("app", &app.name, &module.path, &mut seen)?;
+            reject_duplicate_top_level(word::APP, &app.name, &module.path, &mut seen)?;
         }
     }
     Ok(())
@@ -1802,13 +1804,15 @@ fn state_packed_len(state_name: &str, model: &Model<'_>) -> Result<usize> {
 }
 
 fn packed_field_expr(ty: &TypeRef, expr: &str) -> Result<String> {
-    if ty.is_actor_handle() {
+    if ty.is_actor_type() {
         return Ok(format!("byte[]({expr})"));
     }
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(format!("byte[8]({expr})")),
         ("bool", None) | ("byte", None) => Ok(format!("byte[1]({expr})")),
-        ("byte", Some(_)) | ("pubkey", None) | ("covid", None) | ("sig", None) | ("datasig", None) => Ok(format!("byte[]({expr})")),
+        ("byte", Some(_)) | ("pubkey", None) | (word::COVENANT_ID, None) | ("sig", None) | ("datasig", None) => {
+            Ok(format!("byte[]({expr})"))
+        }
         ("bytes", None) | ("string", None) | (_, Some(_)) => {
             Err(ArgentError::new(format!("cannot pack field `{expr}` with unsupported variable or array type")))
         }
@@ -1817,7 +1821,7 @@ fn packed_field_expr(ty: &TypeRef, expr: &str) -> Result<String> {
 }
 
 fn unpack_packed_field_expr(ty: &TypeRef, slice_expr: &str) -> Result<String> {
-    if ty.is_actor_handle() {
+    if ty.is_actor_type() {
         return Ok(format!("byte[32]({slice_expr})"));
     }
     match (ty.name.as_str(), ty.array) {
@@ -1825,7 +1829,7 @@ fn unpack_packed_field_expr(ty: &TypeRef, slice_expr: &str) -> Result<String> {
         ("bool", None) => Ok(format!("OpBin2Num({slice_expr}) != 0")),
         ("byte", None) => Ok(format!("byte({slice_expr})")),
         ("byte", Some(len)) => Ok(format!("byte[{len}]({slice_expr})")),
-        ("pubkey", None) | ("covid", None) => Ok(format!("byte[32]({slice_expr})")),
+        ("pubkey", None) | (word::COVENANT_ID, None) => Ok(format!("byte[32]({slice_expr})")),
         ("sig", None) => Ok(format!("byte[65]({slice_expr})")),
         ("datasig", None) => Ok(format!("byte[64]({slice_expr})")),
         ("bytes", None) | ("string", None) | (_, Some(_)) => {
@@ -1836,14 +1840,14 @@ fn unpack_packed_field_expr(ty: &TypeRef, slice_expr: &str) -> Result<String> {
 }
 
 fn packed_field_len(ty: &TypeRef) -> Result<usize> {
-    if ty.is_actor_handle() {
+    if ty.is_actor_type() {
         return Ok(32);
     }
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(8),
         ("bool", None) | ("byte", None) => Ok(1),
         ("byte", Some(len)) => Ok(len),
-        ("pubkey", None) | ("covid", None) => Ok(32),
+        ("pubkey", None) | (word::COVENANT_ID, None) => Ok(32),
         ("sig", None) => Ok(65),
         ("datasig", None) => Ok(64),
         ("bytes", None) | ("string", None) | (_, Some(_)) => Err(ArgentError::new("only fixed-width scalar fields are supported")),
@@ -1936,7 +1940,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for observe in &entry.observes {
             for (binding, state) in observed_open_bindings(observe) {
                 types.insert(binding.to_string(), "byte[32]".to_string());
-                source_types.insert(binding.to_string(), format!("actor<{state}>"));
+                source_types.insert(binding.to_string(), format!("{}<{state}>", word::ACTOR_TYPE));
             }
         }
 
@@ -2002,9 +2006,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_statements(&mut self, out: &mut String, indent: usize, end: Option<char>) -> Result<()> {
         while !self.is_eof() && !end.is_some_and(|symbol| self.check_symbol(symbol)) {
-            if self.consume_ident("if") {
+            if self.consume_ident(word::IF) {
                 self.lower_if(out, indent)?;
-            } else if self.consume_ident("become") {
+            } else if self.consume_ident(word::BECOME) {
                 self.lower_become(out, indent)?;
             } else if self.check_observed_outputs_become_start() {
                 self.lower_observed_outputs_become(out, indent)?;
@@ -2035,8 +2039,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         push_indent(out, indent);
         out.push('}');
 
-        if self.consume_ident("else") {
-            if self.consume_ident("if") {
+        if self.consume_ident(word::ELSE) {
+            if self.consume_ident(word::IF) {
                 out.push_str(" else ");
                 self.lower_if_inner(out, indent, false)?;
                 return Ok(());
@@ -2055,8 +2059,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     fn lower_plain_statement(&mut self, out: &mut String, indent: usize) -> Result<()> {
         let statement = self.take_until_semicolon()?;
         if let Some((source_ty, name, expr)) = parse_typed_local_statement(&statement) {
-            if let Some(state) = parse_actor_handle_type(source_ty) {
-                self.lower_actor_handle_statement(out, indent, state, name, expr)?;
+            if let Some(state) = parse_actor_type(source_ty) {
+                self.lower_actor_type_statement(out, indent, state, name, expr)?;
                 return Ok(());
             }
             let ty = self.lower_local_type(source_ty);
@@ -2070,9 +2074,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
 
         if let Some(require_expr) = parse_require_statement(&statement) {
-            for covenant_id in authorized_covenant_ids(require_expr, &self.source_types)? {
+            for covenant_id in co_spent_covenant_ids(require_expr, &self.source_types)? {
                 push_indent(out, indent);
-                out.push_str(&format!("// :: authorized by {} (via co-spend)\n", covenant_id.trim()));
+                out.push_str(&format!("// :: co-spent with {}\n", covenant_id.trim()));
             }
         }
 
@@ -2082,7 +2086,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(())
     }
 
-    fn lower_actor_handle_statement(&mut self, out: &mut String, indent: usize, state: &str, name: &str, expr: &str) -> Result<()> {
+    fn lower_actor_type_statement(&mut self, out: &mut String, indent: usize, state: &str, name: &str, expr: &str) -> Result<()> {
         let selector = self
             .selectors
             .get(name)
@@ -2090,16 +2094,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .clone();
         if selector.state != state {
             return Err(ArgentError::new(format!(
-                "actor handle `{name}` is declared as actor<{state}>, but `{}` contains actor<{}>",
-                selector.actor_enum, selector.state
+                "actor handle `{name}` is declared as {actor_type}<{state}>, but `{}` contains {actor_type}<{}>",
+                selector.actor_enum,
+                selector.state,
+                actor_type = word::ACTOR_TYPE,
             )));
         }
-        self.validate_actor_handle_initializer(name, expr, &selector)?;
+        self.validate_actor_type_initializer(name, expr, &selector)?;
         self.ensure_selector_template(out, indent, name)?;
         Ok(())
     }
 
-    fn validate_actor_handle_initializer(&self, name: &str, expr: &str, selector: &TemplateSelector) -> Result<()> {
+    fn validate_actor_type_initializer(&self, name: &str, expr: &str, selector: &TemplateSelector) -> Result<()> {
         if let Some((actor_enum, _)) = parse_actor_enum_selector(expr) {
             if actor_enum != selector.actor_enum {
                 return Err(ArgentError::new(format!(
@@ -2228,11 +2234,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn lower_observed_outputs_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
-        self.expect_ident("require")?;
+        self.expect_ident(word::REQUIRE)?;
         let observe_name = self.expect_any_ident()?;
         self.expect_symbol('.')?;
-        self.expect_ident("outputs")?;
-        self.expect_ident("become")?;
+        self.expect_ident(word::OUTPUTS)?;
+        self.expect_ident(word::BECOME)?;
         let routes = self.parse_become_routes()?;
 
         let observe = self
@@ -2343,7 +2349,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if observed_is_dynamic_binding(observe, observed) {
             return Ok(observed.actor.clone());
         }
-        if observed_is_source_actor_handle(self.actor, self.entry, observed, self.model)? {
+        if observed_is_source_actor_type(self.actor, self.entry, observed, self.model)? {
             return self.lower_expr(&observed.actor, Some("byte[32]"), indent);
         }
         Ok(hidden_observed_actor_template_name(spec))
@@ -2579,7 +2585,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         if self.model.actor_enums.contains_key(source_ty) {
             return "int".to_string();
         }
-        if source_ty == "covid" {
+        if source_ty == word::COVENANT_ID {
             return "byte[32]".to_string();
         }
         let same_storage = match (self.model.storage_state_name(&self.actor.state), self.model.storage_state_name(source_ty)) {
@@ -2741,7 +2747,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for field in &self.model.storage_state(&self.actor.state)?.fields {
             out = out.replace(&format!("self.{}", field.name), &field.name);
         }
-        out = lower_authorized_calls(&out, &self.source_types)?;
+        out = lower_co_spent_calls(&out, &self.source_types)?;
         for (source, lowered) in &self.observed_input_state_refs {
             out = out.replace(source, lowered);
         }
@@ -2874,11 +2880,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn check_observed_outputs_become_start(&self) -> bool {
-        matches!(&self.current().kind, TokenKind::Ident(actual) if actual == "require")
+        matches!(&self.current().kind, TokenKind::Ident(actual) if actual == word::REQUIRE)
             && matches!(self.peek_kind(1), Some(TokenKind::Ident(_)))
             && matches!(self.peek_kind(2), Some(TokenKind::Symbol('.')))
-            && matches!(self.peek_kind(3), Some(TokenKind::Ident(actual)) if actual == "outputs")
-            && matches!(self.peek_kind(4), Some(TokenKind::Ident(actual)) if actual == "become")
+            && matches!(self.peek_kind(3), Some(TokenKind::Ident(actual)) if actual == word::OUTPUTS)
+            && matches!(self.peek_kind(4), Some(TokenKind::Ident(actual)) if actual == word::BECOME)
     }
 
     fn current(&self) -> &Token {
@@ -3039,9 +3045,9 @@ fn parse_typed_local_statement(statement: &str) -> Option<(&str, &str, &str)> {
     Some((source_ty, name, expr.trim()))
 }
 
-fn parse_actor_handle_type(ty: &str) -> Option<&str> {
+fn parse_actor_type(ty: &str) -> Option<&str> {
     let ty = ty.trim();
-    ty.strip_prefix("actor<")?.strip_suffix('>').map(str::trim).filter(|state| is_identifier(state))
+    ty.strip_prefix(word::ACTOR_TYPE)?.strip_prefix('<')?.strip_suffix('>').map(str::trim).filter(|state| is_identifier(state))
 }
 
 fn parse_actor_enum_selector(expr: &str) -> Option<(&str, &str)> {
@@ -3587,7 +3593,7 @@ fn observed_witness_key(
     if observed_is_dynamic_binding(observe, observed) {
         return Ok(format!("binding:{}", observed.actor));
     }
-    if observed_is_source_actor_handle(actor, entry, observed, model)? {
+    if observed_is_source_actor_type(actor, entry, observed, model)? {
         return Ok(format!("expr:{}", compact_expr(&observed.actor)));
     }
     Ok(format!("actor:{}", observed.actor))
@@ -3612,23 +3618,23 @@ fn observed_open_state_for_decl(
         model.state(state)?;
         return Ok(Some(state.to_string()));
     }
-    source_actor_handle_state_for_expr(&observed.actor, actor, entry, model)
+    source_actor_type_state_for_expr(&observed.actor, actor, entry, model)
 }
 
 fn observed_is_dynamic_binding(observe: &ObserveDecl, observed: &ObservedActorDecl) -> bool {
     observed_dynamic_binding_state(observe, observed).is_some()
 }
 
-fn observed_is_source_actor_handle(
+fn observed_is_source_actor_type(
     actor: &ActorDecl,
     entry: &EntryDecl,
     observed: &ObservedActorDecl,
     model: &Model<'_>,
 ) -> Result<bool> {
-    Ok(source_actor_handle_state_for_expr(&observed.actor, actor, entry, model)?.is_some())
+    Ok(source_actor_type_state_for_expr(&observed.actor, actor, entry, model)?.is_some())
 }
 
-fn source_actor_handle_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
+fn source_actor_type_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
     let expr = expr.trim();
     let current_state = model.storage_state(&actor.state)?;
     let source_ty = if let Some(field_name) = expr.strip_prefix("self.") {
@@ -3661,7 +3667,7 @@ fn observed_actor_template_expr_for_entry(
     if observed_is_dynamic_binding(observe, observed) {
         return Ok(observed.actor.clone());
     }
-    if observed_is_source_actor_handle(actor, entry, observed, model)? {
+    if observed_is_source_actor_type(actor, entry, observed, model)? {
         return lower_entry_expr(actor, entry, model, &observed.actor, Some("byte[32]"));
     }
     Ok(hidden_observed_actor_template_name(spec))
@@ -3755,8 +3761,8 @@ fn emit_manifest(program: &Program, model: &Model<'_>) -> String {
             out.push_str(&format!(
                 "          \"kind\": \"{}\",\n",
                 match entry.kind {
-                    EntryKind::Leader => "leader",
-                    EntryKind::Delegate => "delegate",
+                    EntryKind::Leader => word::LEADER,
+                    EntryKind::Delegate => word::DELEGATE,
                 }
             ));
             out.push_str("          \"emits\": ");
@@ -4163,7 +4169,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
 }
 
 fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
-    if ty.is_actor_handle() {
+    if ty.is_actor_type() {
         return Ok(zero_byte_array_expr(32));
     }
     match (&ty.name[..], ty.array) {
@@ -4178,7 +4184,7 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
         ("byte", None) => Ok(SilExpr::byte(0)),
         ("string", None) => Ok(SilExpr::string("")),
         ("pubkey", None) => Ok(zero_byte_array_expr(32)),
-        ("covid", None) => Ok(zero_byte_array_expr(32)),
+        (word::COVENANT_ID, None) => Ok(zero_byte_array_expr(32)),
         ("sig", None) => Ok(zero_byte_array_expr(65)),
         ("datasig", None) => Ok(zero_byte_array_expr(64)),
         (name, None) => Err(ArgentError::new(format!("unsupported constructor placeholder type `{name}`"))),
@@ -4788,7 +4794,7 @@ fn route_artifact(route: &RouteCall) -> RouteArtifact {
 fn lower_type_ref(ty: &TypeRef, model: &Model<'_>) -> String {
     if model.is_actor_enum_type(ty) {
         "int".to_string()
-    } else if ty.name == "covid" && ty.array.is_none() {
+    } else if ty.name == word::COVENANT_ID && ty.array.is_none() {
         "byte[32]".to_string()
     } else {
         ty.to_sil()
@@ -4810,12 +4816,17 @@ fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) ->
 }
 
 fn source_type_ref(ty: &TypeRef) -> String {
-    if let Some(state) = &ty.actor_state { format!("actor<{state}>") } else { ty.to_sil() }
+    if let Some(state) = &ty.actor_state { format!("{}<{state}>", word::ACTOR_TYPE) } else { ty.to_sil() }
 }
 
 fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
-    if ty.is_actor_handle() {
+    if ty.is_actor_type() {
         TypeArtifact::FixedBytes { len: 32 }
+    } else if ty.name == word::COVENANT_ID {
+        match ty.array {
+            Some(len) => TypeArtifact::FixedArray { item: Box::new(TypeArtifact::FixedBytes { len: 32 }), len },
+            None => TypeArtifact::FixedBytes { len: 32 },
+        }
     } else if model.is_actor_enum_type(ty) {
         TypeArtifact::Int
     } else {
@@ -4845,18 +4856,19 @@ fn actor_enum_variant_const_expr(actor_enum: &ActorEnumInfo, variant: &str) -> O
     actor_enum_variant_index(actor_enum, variant).map(|index| format!("{index} /*{}*/", to_snake(variant).to_ascii_uppercase()))
 }
 
-fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -> Result<String> {
-    if !expr.contains(".authorized") {
+fn lower_co_spent_calls(expr: &str, source_types: &BTreeMap<String, String>) -> Result<String> {
+    let method = format!(".{}", word::CO_SPENT);
+    if !expr.contains(&method) {
         return Ok(expr.to_string());
     }
     let tokens =
-        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex covenant co-spend expression `{expr}`: {}", err.message)))?;
     let mut out = String::new();
     let mut cursor = 0usize;
     let mut pos = 0usize;
     while pos < tokens.len() {
         if let Some((replacement_start, replacement_end, next_pos, covenant_id)) =
-            parse_authorized_call(expr, &tokens, pos, source_types)?
+            parse_co_spent_call(expr, &tokens, pos, source_types)?
         {
             out.push_str(&expr[cursor..replacement_start]);
             out.push_str(&format!("OpCovInputCount({}) > 0", covenant_id.trim()));
@@ -4870,23 +4882,28 @@ fn lower_authorized_calls(expr: &str, source_types: &BTreeMap<String, String>) -
         pos += 1;
     }
     out.push_str(&expr[cursor..]);
-    if out.contains(".authorized") {
-        return Err(ArgentError::new("`.authorized()` is only available on `covid` values or explicit `covid(expr)` casts"));
+    if out.contains(&method) {
+        return Err(ArgentError::new(format!(
+            "`.{}()` is only available on `{}` values or explicit `{}(expr)` casts",
+            word::CO_SPENT,
+            word::COVENANT_ID,
+            word::COVENANT_ID,
+        )));
     }
     Ok(out)
 }
 
-fn authorized_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
-    if !expr.contains(".authorized") {
+fn co_spent_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) -> Result<Vec<String>> {
+    if !expr.contains(&format!(".{}", word::CO_SPENT)) {
         return Ok(Vec::new());
     }
     let tokens =
-        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex authorization expression `{expr}`: {}", err.message)))?;
+        lex(expr).map_err(|err| ArgentError::new(format!("failed to lex covenant co-spend expression `{expr}`: {}", err.message)))?;
     let mut ids = Vec::new();
     let mut pos = 0usize;
     while pos < tokens.len() {
         if let Some((_replacement_start, _replacement_end, next_pos, covenant_id)) =
-            parse_authorized_call(expr, &tokens, pos, source_types)?
+            parse_co_spent_call(expr, &tokens, pos, source_types)?
         {
             ids.push(covenant_id.trim().to_string());
             pos = next_pos;
@@ -4902,21 +4919,21 @@ fn authorized_covenant_ids(expr: &str, source_types: &BTreeMap<String, String>) 
 
 fn parse_require_statement(statement: &str) -> Option<&str> {
     let statement = statement.trim();
-    let inner = statement.strip_prefix("require(")?.strip_suffix(')')?;
+    let inner = statement.strip_prefix(&format!("{}(", word::REQUIRE))?.strip_suffix(')')?;
     Some(inner)
 }
 
-fn parse_authorized_call(
+fn parse_co_spent_call(
     expr: &str,
     tokens: &[Token],
     pos: usize,
     source_types: &BTreeMap<String, String>,
 ) -> Result<Option<(usize, usize, usize, String)>> {
-    if is_ident(tokens, pos, "covid") && is_symbol(tokens, pos + 1, '(') {
+    if is_ident(tokens, pos, word::COVENANT_ID) && is_symbol(tokens, pos + 1, '(') {
         let close = matching_symbol(tokens, pos + 1, '(', ')')
-            .ok_or_else(|| ArgentError::new(format!("unterminated covid(...) authorization expression `{expr}`")))?;
+            .ok_or_else(|| ArgentError::new(format!("unterminated {}(...) co-spend expression `{expr}`", word::COVENANT_ID)))?;
         if is_symbol(tokens, close + 1, '.')
-            && is_ident(tokens, close + 2, "authorized")
+            && is_ident(tokens, close + 2, word::CO_SPENT)
             && is_symbol(tokens, close + 3, '(')
             && is_symbol(tokens, close + 4, ')')
         {
@@ -4932,13 +4949,17 @@ fn parse_authorized_call(
 
     if matches!(tokens.get(pos).map(|token| &token.kind), Some(TokenKind::Ident(_)))
         && is_symbol(tokens, pos + 1, '.')
-        && is_ident(tokens, pos + 2, "authorized")
+        && is_ident(tokens, pos + 2, word::CO_SPENT)
         && is_symbol(tokens, pos + 3, '(')
         && is_symbol(tokens, pos + 4, ')')
     {
         let ident = expr[tokens[pos].span.start..tokens[pos].span.end].to_string();
-        if source_types.get(&ident).is_none_or(|ty| ty != "covid") {
-            return Err(ArgentError::new(format!("`.authorized()` is only available on `covid` values, found `{ident}`")));
+        if source_types.get(&ident).is_none_or(|ty| ty != word::COVENANT_ID) {
+            return Err(ArgentError::new(format!(
+                "`.{}()` is only available on `{}` values, found `{ident}`",
+                word::CO_SPENT,
+                word::COVENANT_ID,
+            )));
         }
         return Ok(Some((tokens[pos].span.start, tokens[pos + 4].span.end, pos + 5, ident)));
     }
@@ -6453,7 +6474,7 @@ mod tests {
     }
 
     #[test]
-    fn icc_asset_lowers_covid_authorization_and_else_if() {
+    fn icc_asset_lowers_covid_co_spend_and_else_if() {
         let out_dir = std::env::temp_dir().join(format!("argent-icc-asset-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
 
@@ -6463,14 +6484,14 @@ mod tests {
         let kcc20_sil = fs::read_to_string(out_dir.join("sil/KCC20.sil")).expect("KCC20.sil exists");
         assert!(kcc20_sil.contains("} else if (identifier_type == IDENTIFIER_COVENANT_ID) {"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(checkSig(owner_sig, owner_identifier));"), "{kcc20_sil}");
-        assert!(kcc20_sil.contains("// :: authorized by owner_identifier (via co-spend)"), "{kcc20_sil}");
+        assert!(kcc20_sil.contains("// :: co-spent with owner_identifier"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("require(OpCovInputCount(owner_identifier) > 0);"), "{kcc20_sil}");
         assert!(kcc20_sil.contains("State next_state = {"), "{kcc20_sil}");
 
         let proxy_sil = fs::read_to_string(out_dir.join("sil/MinterProxy.sil")).expect("MinterProxy.sil exists");
         assert!(proxy_sil.contains("byte[32] controller_id = init_controller_id;"), "{proxy_sil}");
         assert!(proxy_sil.contains("entrypoint function mint(\n        State next_proxy,"), "{proxy_sil}");
-        assert!(proxy_sil.contains("// :: authorized by controller_id (via co-spend)"), "{proxy_sil}");
+        assert!(proxy_sil.contains("// :: co-spent with controller_id"), "{proxy_sil}");
         assert!(proxy_sil.contains("require(OpCovInputCount(controller_id) > 0);"), "{proxy_sil}");
 
         let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
@@ -6484,8 +6505,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_authorized_on_non_covid_value() {
-        let out_dir = std::env::temp_dir().join(format!("argent-authorized-type-test-{}", std::process::id()));
+    fn rejects_co_spent_on_non_covid_value() {
+        let out_dir = std::env::temp_dir().join(format!("argent-co-spent-type-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
         let module = crate::parser::parse_module(
             PathBuf::from("test.ag"),
@@ -6496,7 +6517,7 @@ mod tests {
 
             actor Foo owns FooState {
                 entry hold() emits none {
-                    require(id.authorized());
+                    require(id.co_spent());
                 }
             }
 
@@ -6509,8 +6530,8 @@ mod tests {
         .expect("source parses");
         let program = Program { root: PathBuf::from("test.ag"), modules: vec![module] };
 
-        let err = emit_build(&program, &out_dir).expect_err("non-covid authorization must be rejected");
-        assert!(err.to_string().contains("only available on `covid` values"), "unexpected error: {err}");
+        let err = emit_build(&program, &out_dir).expect_err("non-covenant-id co-spend must be rejected");
+        assert!(err.to_string().contains(&format!("only available on `{}` values", word::COVENANT_ID)), "unexpected error: {err}");
 
         let _ = fs::remove_dir_all(out_dir);
     }
@@ -6675,7 +6696,7 @@ mod tests {
     }
 
     #[test]
-    fn open_observed_state_handle_lowers_to_source_actor_handle() {
+    fn open_observed_state_handle_lowers_to_source_actor_type() {
         let (sil, artifact) = emit_fixture("open_observed_state_handle", "Cell");
 
         assert_eq!(sil, include_str!("../tests/fixtures/emit/open_observed_state_handle/Cell.sil"));
@@ -6711,7 +6732,7 @@ mod tests {
                 entry inspect()
                 observes remote by self.agent_covid {
                     inputs {
-                        agent: actor<AgentCapsule> as observed_agent;
+                        agent: actor_type<AgentCapsule> as observed_agent;
                     }
                 }
                 emits none {
@@ -7233,7 +7254,7 @@ mod tests {
                         ply: ply + 1,
                     };
 
-                    actor<BoardState> target = MoveActor::Knight;
+                    actor_type<BoardState> target = MoveActor::Knight;
                     become target(next_board);
                 }
             }
@@ -7806,7 +7827,7 @@ mod tests {
                         ply: ply + 1,
                     };
 
-                    actor<BoardState> target = MoveActor::Knight;
+                    actor_type<BoardState> target = MoveActor::Knight;
                     become target(next_board);
                 }
 

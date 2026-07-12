@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use crate::language::word;
+
 #[derive(Debug, Clone)]
 pub struct Program {
     pub root: PathBuf,
@@ -167,16 +169,16 @@ impl TypeRef {
         Self { name: name.into(), array: Some(len), actor_state: None }
     }
 
-    pub fn actor_handle(state: impl Into<String>) -> Self {
-        Self { name: "actor".to_string(), array: None, actor_state: Some(state.into()) }
+    pub fn actor_type(state: impl Into<String>) -> Self {
+        Self { name: word::ACTOR_TYPE.to_string(), array: None, actor_state: Some(state.into()) }
     }
 
-    pub fn is_actor_handle(&self) -> bool {
-        self.array.is_none() && self.actor_state.is_some()
+    pub fn is_actor_type(&self) -> bool {
+        self.name == word::ACTOR_TYPE && self.array.is_none() && self.actor_state.is_some()
     }
 
     pub fn to_sil(&self) -> String {
-        if self.is_actor_handle() {
+        if self.is_actor_type() {
             return "byte[32]".to_string();
         }
         match self.array {
@@ -201,5 +203,19 @@ impl Program {
 
     pub fn apps(&self) -> impl Iterator<Item = &AppDecl> {
         self.modules.iter().flat_map(|module| module.apps.iter())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TypeRef;
+
+    #[test]
+    fn actor_type_requires_the_canonical_type_name() {
+        let mut ty = TypeRef::actor_type("State");
+        assert!(ty.is_actor_type());
+
+        ty.name = "other".to_string();
+        assert!(!ty.is_actor_type());
     }
 }

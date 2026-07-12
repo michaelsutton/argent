@@ -48,11 +48,11 @@
       "patterns": [
         {
           "name": "support.function.argent",
-          "match": "\\b(Op[A-Za-z0-9_]+|op_[A-Za-z0-9_]+|authorized|blake2b|checkSig|sig_verify|unique)\\b"
+          "match": "\\b(Op[A-Za-z0-9_]+|op_[A-Za-z0-9_]+|co_spent|blake2b|checkSig|unique)\\b"
         },
         {
           "name": "storage.type.argent",
-          "match": "\\b(actor|bool|byte|bytes|covid|datasig|int|pubkey|sig|string)\\b"
+          "match": "\\b(actor_type|bool|byte|bytes|covid|datasig|int|pubkey|sig|string)\\b"
         }
       ]
     },

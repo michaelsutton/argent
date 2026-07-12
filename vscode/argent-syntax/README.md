@@ -10,7 +10,7 @@ It intentionally does only highlighting:
 - Current language words such as `delegate`, `actor enum`, `virtual`,
   `expands`, `const`, `inputs`, `outputs`, and `as` are highlighted.
 - Current primitive/source types such as `int`, `byte`, `bool`, `sig`, `pubkey`,
-  `covid`, `datasig`, and `actor<State>` are highlighted.
+  `covid`, `datasig`, and `actor_type<State>` are highlighted.
 - The rest of the file falls through to Rust TextMate highlighting.
 
 Install locally by symlinking the unpacked extension from the repo root, then reload VS Code:

@@ -15,7 +15,7 @@ Agents authorize their own strategy state.
 ```
 
 The cell does not know which concrete agent template it is controlling. It stores
-an `actor<AgentCapsule>` handle and uses it in the `observes` clause:
+an `actor_type<AgentCapsule>` handle and uses it in the `observes` clause:
 
 ```rust
 observes remote by self.occupant_agent_covid {
