@@ -1,0 +1,57 @@
+state AssetCapsule {
+    int owner_kind;
+    covid owner_id;
+    virtual policy;
+    int balance;
+}
+
+state ReservePolicy {
+    int nonce;
+}
+
+state ReserveAssetState expands AssetCapsule {
+    policy: ReservePolicy;
+}
+
+actor ReserveAsset owns ReserveAssetState {
+    entry settle(next_balance: int) emits one ReserveAsset {
+        require(owner_id.co_spent());
+
+        ReserveAssetState next_asset = {
+            owner_kind: owner_kind,
+            owner_id: owner_id,
+            policy: ReservePolicy {
+                nonce: policy.nonce + 1,
+            },
+            balance: next_balance,
+        };
+
+        become ReserveAsset(next_asset);
+    }
+
+    entry withdraw(next_balance: int) emits one WalletAsset {
+        require(owner_id.co_spent());
+
+        ReserveAssetState next_asset = {
+            owner_kind: owner_kind,
+            owner_id: owner_id,
+            policy: ReservePolicy {
+                nonce: policy.nonce + 1,
+            },
+            balance: next_balance,
+        };
+
+        become WalletAsset(next_asset);
+    }
+}
+
+actor WalletAsset owns ReserveAssetState {
+    entry hold() emits one WalletAsset {
+        become WalletAsset(self.state);
+    }
+}
+
+app Asset {
+    actor ReserveAsset;
+    actor WalletAsset;
+}

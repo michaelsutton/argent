@@ -3856,7 +3856,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         })
         .collect::<Vec<_>>();
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
-    let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts)?;
+    let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts, actor_sil)?;
     let interfaces = interface_set_artifact(model)?;
 
     let mut artifact = Artifact {
@@ -3928,6 +3928,7 @@ fn template_plan_artifact(
     templates: &[TemplateRefArtifact],
     actors: &[ActorArtifact],
     sil_contracts: &[SilContractArtifact],
+    actor_sil: &BTreeMap<String, String>,
 ) -> Result<TemplatePlanArtifact> {
     let sil_by_name = sil_contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
     let templates = templates
@@ -3941,7 +3942,8 @@ fn template_plan_artifact(
                 actor: template.actor.clone(),
                 contract: contract.name.clone(),
                 symbol: template.symbol.clone(),
-                hash_hex: contract.compiled.template.hash_hex.clone(),
+                canonical_template_hash: contract.compiled.template.hash_hex.clone(),
+                actor_type_handle: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -3982,7 +3984,103 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, runtime_states, route_tables, route_proofs, route_families, witness_recipes })
+    let mut plan = TemplatePlanArtifact { templates, runtime_states, route_tables, route_proofs, route_families, witness_recipes };
+    let handles = plan
+        .templates
+        .iter()
+        .map(|template| actor_type_handle_artifact(template, &plan, model, actor_sil))
+        .collect::<Result<Vec<_>>>()?;
+    for (template, handle) in plan.templates.iter_mut().zip(handles) {
+        template.actor_type_handle = handle;
+    }
+    Ok(plan)
+}
+
+fn actor_type_handle_artifact(
+    template: &TemplatePlanTemplateArtifact,
+    plan: &TemplatePlanArtifact,
+    model: &Model<'_>,
+    actor_sil: &BTreeMap<String, String>,
+) -> Result<Option<ActorTypeHandleArtifact>> {
+    let actor = model.actor(&template.actor)?;
+    let Some(expansion) = &model.state(&actor.state)?.expansion else {
+        return Ok(None);
+    };
+    let runtime_plan = plan.runtime_states.iter().find(|runtime_state| runtime_state.contract == actor.name);
+    let context_fields = runtime_plan
+        .map(|runtime_state| runtime_state.field_roles.iter().map(|field| field.name.clone()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let context_values = runtime_plan
+        .map(|runtime_state| {
+            runtime_state
+                .field_roles
+                .iter()
+                .map(|field| {
+                    fixed_runtime_context_value(plan, runtime_state, field)
+                        .map_err(|err| ArgentError::new(format!("cannot derive fixed capsule context: {err}")))
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let context_state = RuntimeStateArtifact {
+        source: expansion.base.clone(),
+        fields: runtime_fields.iter().take(context_fields.len()).cloned().collect(),
+    };
+    let context_state_values =
+        context_fields.iter().cloned().zip(context_values.iter().cloned().map(ArtifactValue::Bytes)).collect::<BTreeMap<_, _>>();
+    let context_script = crate::codec::encode_runtime_state_script(&context_state, &context_state_values)
+        .map_err(|err| ArgentError::new(format!("cannot encode actor_type<{}> context: {err}", expansion.base)))?;
+
+    let mut args = context_values.into_iter().map(SilExpr::from).collect::<Vec<_>>();
+    for field in &model.storage_state(&actor.state)?.fields {
+        args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
+            ArgentError::new(format!(
+                "cannot build actor_type<{}> placeholder for actor `{}` field `{}`: {err}",
+                expansion.base, actor.name, field.name
+            ))
+        })?);
+    }
+
+    let sil = actor_sil
+        .get(&actor.name)
+        .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
+    let compiled = compile_contract(sil, &args, CompileOptions::default()).map_err(|err| {
+        ArgentError::new(format!("generated Silverscript for actor `{}` failed to compile its capsule cut: {err}", actor.name))
+    })?;
+    if encode_hex(&compiled.template_hash()) != template.canonical_template_hash {
+        return Err(ArgentError::new(format!(
+            "actor `{}` canonical template changed while resolving its capsule context",
+            actor.name
+        )));
+    }
+    if compiled.ast.fields.len() != runtime_fields.len() {
+        return Err(ArgentError::new(format!("actor `{}` compiled state fields do not match its runtime state layout", actor.name)));
+    }
+
+    let state_start = compiled.state_layout.start;
+    let context_end = state_start
+        .checked_add(context_script.len())
+        .ok_or_else(|| ArgentError::new(format!("actor `{}` capsule context offset overflow", actor.name)))?;
+    let state_end = state_start
+        .checked_add(compiled.state_layout.len)
+        .ok_or_else(|| ArgentError::new(format!("actor `{}` state offset overflow", actor.name)))?;
+    if compiled.script.get(state_start..context_end) != Some(context_script.as_slice()) {
+        return Err(ArgentError::new(format!("actor `{}` compiled capsule context does not match its runtime state ABI", actor.name)));
+    }
+    let prefix = &compiled.script[..context_end];
+    let suffix = &compiled.script[state_end..];
+    let hash = silverscript_lang::template::template_hash(prefix, suffix);
+    Ok(Some(ActorTypeHandleArtifact {
+        state: expansion.base.clone(),
+        context_fields,
+        template: CompiledTemplateArtifact {
+            prefix_hex: encode_hex(prefix),
+            suffix_hex: encode_hex(suffix),
+            hash_hex: encode_hex(&hash),
+        },
+    }))
 }
 
 fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamilyArtifact> {
@@ -5917,7 +6015,7 @@ mod tests {
         assert_eq!(artifact.argent.templates[0].id, "template/foo");
         assert_eq!(artifact.argent.template_plan.templates[0].id, "template/foo");
         assert_eq!(
-            artifact.argent.template_plan.templates[0].hash_hex,
+            artifact.argent.template_plan.templates[0].canonical_template_hash,
             artifact.sil_abi.contract("Foo").unwrap().compiled.template.hash_hex
         );
         artifact.verify_template_plan().expect("template plan receipt verifies");
@@ -6018,6 +6116,50 @@ mod tests {
         assert_eq!(hold.hidden_params[0].name, "gen__strategy_forager_strategy_preimage");
         assert_eq!(hold.hidden_params[0].ty, TypeArtifact::FixedBytes { len: 8 });
         assert_eq!(hold.hidden_params[0].purpose, HiddenParamPurposeArtifact::StateExpansionPreimage);
+    }
+
+    #[test]
+    fn expanded_actor_records_canonical_and_capsule_template_cuts() {
+        let (sil, artifact) = emit_fixture("capsule_route_context", "ReserveAsset");
+        assert!(sil.contains("byte[32] gen__wallet_asset_template"), "{sil}");
+
+        let contract = artifact.sil_abi.contract("ReserveAsset").expect("ReserveAsset Sil ABI exists");
+        let runtime_plan = runtime_state_plan(&artifact, "ReserveAsset").expect("route context is recorded");
+        assert!(!runtime_plan.field_roles.is_empty());
+        let receipt = artifact
+            .argent
+            .template_plan
+            .templates
+            .iter()
+            .find(|template| template.actor == "ReserveAsset")
+            .expect("ReserveAsset template receipt exists");
+        assert_eq!(receipt.canonical_template_hash, contract.compiled.template.hash_hex);
+        let handle = receipt.actor_type_handle.as_ref().expect("expanded actor exposes a capsule handle");
+        assert_eq!(handle.state, "AssetCapsule");
+        assert_eq!(handle.context_fields, runtime_plan.field_roles.iter().map(|field| field.name.clone()).collect::<Vec<_>>());
+        assert_ne!(handle.template.hash_hex, receipt.canonical_template_hash);
+
+        let canonical_prefix = crate::codec::decode_hex(&contract.compiled.template.prefix_hex).expect("canonical prefix decodes");
+        let capsule_prefix = crate::codec::decode_hex(&handle.template.prefix_hex).expect("capsule prefix decodes");
+        assert!(capsule_prefix.starts_with(&canonical_prefix));
+        assert!(capsule_prefix.len() > canonical_prefix.len());
+        assert_eq!(handle.template.suffix_hex, contract.compiled.template.suffix_hex);
+        artifact.verify_template_plan().expect("capsule template receipt verifies");
+
+        let mut corrupted = artifact.clone();
+        let receipt = corrupted
+            .argent
+            .template_plan
+            .templates
+            .iter_mut()
+            .find(|template| template.actor == "ReserveAsset")
+            .expect("ReserveAsset template receipt exists");
+        let handle = receipt.actor_type_handle.as_mut().expect("expanded actor exposes a capsule handle");
+        let mut prefix = crate::codec::decode_hex(&handle.template.prefix_hex).expect("capsule prefix decodes");
+        *prefix.last_mut().expect("capsule prefix contains context") ^= 1;
+        handle.template.prefix_hex = encode_hex(&prefix);
+        let err = corrupted.verify_template_plan().expect_err("corrupted capsule context is rejected");
+        assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
     }
 
     #[test]

@@ -19,10 +19,10 @@ pub use silverscript_abi::ArtifactValue;
 pub use transition::{BuiltTransition, TransitionBuilder};
 
 use argent_artifact::{
-    ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, EntryArtifact, HiddenParamArtifact,
-    HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact,
-    RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact,
-    SilEntryArtifact, StateArtifact, TemplatePlanError, route_template_proof_receipt_id,
+    ActorArtifact, ActorInterfaceArtifact, ArtifactIdentityError, ArtifactVersionError, CompiledTemplateArtifact, EntryArtifact,
+    HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, ObserveArtifact, ObservedActorArtifact,
+    ObservedActorSideArtifact, RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact,
+    RuntimeStatePlanArtifact, SilContractArtifact, SilEntryArtifact, StateArtifact, TemplatePlanError, fixed_runtime_context_value,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -296,6 +296,8 @@ pub enum BuilderError {
     ObservedActorMismatch { observe: String, side: &'static str, handle: String, expected: String, found: String },
     #[error("observed {side} `{observe}.{handle}` state `{state}` layout does not match attached actor `{actor}`")]
     ObservedStateLayoutMismatch { observe: String, side: &'static str, handle: String, state: String, actor: String },
+    #[error("attached actor `{actor}` does not expose actor_type<{state}>")]
+    MissingActorTypeHandle { actor: String, state: String },
     #[error("artifact `{app}` has no state `{state}`")]
     UnknownState { app: String, state: String },
     #[error("observed input `{observe}.{handle}` UTXO does not match actor `{actor}` and state")]
@@ -761,29 +763,24 @@ impl<'a> TxBuilder<'a> {
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
-                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?)
+                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Bytes(decode_hex(&template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
-                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?)
+                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Bytes(decode_hex(&template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
-                    ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.prefix_hex)?.len() as i64)
+                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Int(decode_hex(&template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
-                    ArtifactValue::Int(decode_hex(&contract_ref.contract.compiled.template.suffix_hex)?.len() as i64)
+                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Int(decode_hex(&template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateHash => {
-                    let contract_ref =
-                        self.hidden_template_contract_ref(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
-                    ArtifactValue::Bytes(decode_hex(&contract_ref.contract.compiled.template.hash_hex)?)
+                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    ArtifactValue::Bytes(decode_hex(&template.hash_hex)?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
                     let actor = hidden_actor_subject(hidden)?;
@@ -1023,6 +1020,40 @@ impl<'a> TxBuilder<'a> {
         Ok(self.contract_ref_in_app(app, name)?.contract)
     }
 
+    /// Return the template handle by which an external app observes `actor` as
+    /// `actor_type<state>`.
+    pub fn actor_type_handle(&self, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
+        self.actor_type_handle_in_artifact(self.bundle.primary, actor, state)
+    }
+
+    /// Return an attached app actor's external `actor_type<state>` handle.
+    pub fn actor_type_handle_in_app(&self, app: &str, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
+        self.actor_type_handle_in_artifact(self.bundle.app(app)?, actor, state)
+    }
+
+    fn actor_type_handle_in_artifact(&self, artifact: &'a Artifact, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
+        let contract = self.contract_in_artifact(artifact, actor)?;
+        let expanded_base = artifact
+            .argent
+            .state_expansions
+            .iter()
+            .find(|expansion| expansion.state == contract.runtime_state.source)
+            .map(|expansion| expansion.base.as_str());
+        if expanded_base.is_none() && contract.runtime_state.source == state {
+            return Ok(decode_hex(&contract.compiled.template.hash_hex)?);
+        }
+        let handle = artifact
+            .argent
+            .template_plan
+            .templates
+            .iter()
+            .find(|template| template.actor == actor)
+            .and_then(|template| template.actor_type_handle.as_ref())
+            .filter(|handle| handle.state == state)
+            .ok_or_else(|| BuilderError::MissingActorTypeHandle { actor: actor.to_string(), state: state.to_string() })?;
+        Ok(decode_hex(&handle.template.hash_hex)?)
+    }
+
     fn validate_actor_interface(&self, app: &str, actor: &str) -> BuilderResult<()> {
         let artifact = self.bundle.app(app)?;
         let expected = find_interface(&self.bundle.primary.argent.interfaces.imports, actor).ok_or_else(|| {
@@ -1096,6 +1127,50 @@ impl<'a> TxBuilder<'a> {
 
     fn contract_ref_in_app(&self, app: &str, name: &str) -> BuilderResult<ContractRef<'a>> {
         self.contract_ref_in_artifact(self.bundle.app(app)?, name)
+    }
+
+    fn hidden_template(
+        &self,
+        primary_artifact: &'a Artifact,
+        hidden: &HiddenParamArtifact,
+        entry: &'a EntryArtifact,
+        template_selectors: &BTreeMap<String, String>,
+        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+    ) -> BuilderResult<&'a CompiledTemplateArtifact> {
+        let contract_ref = self.hidden_template_contract_ref(primary_artifact, hidden, entry, template_selectors, observed)?;
+        let open_state = match &hidden.subject {
+            HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, .. } => {
+                self.observed_actor(entry, observe, *side, handle)?.open_state.as_deref()
+            }
+            _ => None,
+        };
+        let Some(open_state) = open_state else {
+            return Ok(&contract_ref.contract.compiled.template);
+        };
+        let expanded_base = contract_ref
+            .artifact
+            .argent
+            .state_expansions
+            .iter()
+            .find(|expansion| expansion.state == contract_ref.contract.runtime_state.source)
+            .map(|expansion| expansion.base.as_str());
+        if expanded_base.is_none() && contract_ref.contract.runtime_state.source == open_state {
+            return Ok(&contract_ref.contract.compiled.template);
+        }
+        let template = contract_ref
+            .artifact
+            .argent
+            .template_plan
+            .templates
+            .iter()
+            .find(|template| template.actor == contract_ref.contract.name)
+            .and_then(|template| template.actor_type_handle.as_ref())
+            .filter(|handle| handle.state == open_state)
+            .ok_or_else(|| BuilderError::MissingActorTypeHandle {
+                actor: contract_ref.contract.name.clone(),
+                state: open_state.to_string(),
+            })?;
+        Ok(&template.template)
     }
 
     fn hidden_template_contract_ref(
@@ -1385,7 +1460,7 @@ impl<'a> TxBuilder<'a> {
                         message: format!("field role `{}` does not match any Sil ABI runtime field", field_role.name),
                     });
                 }
-                if role_by_field.insert(field_role.name.as_str(), &field_role.role).is_some() {
+                if role_by_field.insert(field_role.name.as_str(), field_role).is_some() {
                     return Err(BuilderError::RuntimeStatePlanMismatch {
                         contract: contract.name.clone(),
                         message: format!("field role `{}` is duplicated", field_role.name),
@@ -1409,22 +1484,14 @@ impl<'a> TxBuilder<'a> {
                     };
                     values.insert(field.name.clone(), value);
                 }
-                Some(role) => {
+                Some(field_role) => {
                     if source_state.contains_key(&field.name) {
                         return Err(BuilderError::HiddenRuntimeFieldProvided {
                             contract: contract.name.clone(),
                             field: field.name.clone(),
                         });
                     }
-                    match role {
-                        RuntimeFieldRoleArtifact::Template { contract } => {
-                            values.insert(
-                                field.name.clone(),
-                                ArtifactValue::Bytes(decode_hex(
-                                    &self.contract_in_artifact(artifact, contract)?.compiled.template.hash_hex,
-                                )?),
-                            );
-                        }
+                    match &field_role.role {
                         RuntimeFieldRoleArtifact::ObservedTemplate { observe, contract, .. } => {
                             values.insert(
                                 field.name.clone(),
@@ -1433,23 +1500,21 @@ impl<'a> TxBuilder<'a> {
                                 )?),
                             );
                         }
-                        RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
-                            let mut table = Vec::with_capacity(contracts.len() * 32);
-                            for contract in contracts {
-                                table.extend_from_slice(&decode_hex(
-                                    &self.contract_in_artifact(artifact, contract)?.compiled.template.hash_hex,
-                                )?);
-                            }
-                            values.insert(field.name.clone(), ArtifactValue::Bytes(table));
-                        }
-                        RuntimeFieldRoleArtifact::TemplateDigest { id } => {
-                            let table = self.route_family_table_bytes_in_artifact(artifact, id)?;
-                            values.insert(field.name.clone(), ArtifactValue::Bytes(blake2b32(&table)));
-                        }
-                        RuntimeFieldRoleArtifact::TemplateRoot { .. } => {
-                            let proof_id = route_template_proof_receipt_id(&contract.runtime_state.source, &field.name);
-                            let proof = self.route_template_proof_in_artifact(artifact, &proof_id)?;
-                            values.insert(field.name.clone(), ArtifactValue::Bytes(decode_hex(&proof.root_hex)?));
+                        RuntimeFieldRoleArtifact::Template { .. }
+                        | RuntimeFieldRoleArtifact::TemplateTable { .. }
+                        | RuntimeFieldRoleArtifact::TemplateDigest { .. }
+                        | RuntimeFieldRoleArtifact::TemplateRoot { .. } => {
+                            let runtime_plan = self
+                                .runtime_state_plan(artifact, &contract.name)
+                                .expect("generated field roles come from a runtime state plan");
+                            values.insert(
+                                field.name.clone(),
+                                ArtifactValue::Bytes(fixed_runtime_context_value(
+                                    &artifact.argent.template_plan,
+                                    runtime_plan,
+                                    field_role,
+                                )?),
+                            );
                         }
                     }
                 }

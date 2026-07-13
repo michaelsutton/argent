@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "c13347316d4699c8b0a64b0acea671210c224f105be09cd95b64a75464a4656f",
+  "id": "921d4f29b6e2df512887db5381486cb78971639494d3d1a296fc2b26b84515d6",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -26,7 +26,7 @@
           "actor": "Minter",
           "contract": "Minter",
           "symbol": "gen__minter_template",
-          "hash_hex": "b07f92b1bb28807709abd5764c44da140e544b3004d51fb9a912d8483099afbb"
+          "canonical_template_hash": "b07f92b1bb28807709abd5764c44da140e544b3004d51fb9a912d8483099afbb"
         }
       ],
       "runtime_states": [

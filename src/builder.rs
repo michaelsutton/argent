@@ -134,6 +134,44 @@ mod tests {
     }
 
     #[test]
+    fn expanded_actor_redeem_script_matches_capsule_template_cut() {
+        let artifact = capsule_route_context_artifact();
+        let builder = TxBuilder::new(&artifact).expect("builder accepts capsule route artifact");
+        let state = state! {
+            owner_kind: 1,
+            owner_id: Hash::from_bytes([0x31; 32]),
+            policy: state! {
+                nonce: 4,
+            },
+            balance: 100,
+        };
+        let redeem_script = builder.redeem_script("ReserveAsset", state).expect("expanded redeem script builds");
+        let receipt = artifact
+            .argent
+            .template_plan
+            .templates
+            .iter()
+            .find(|template| template.actor == "ReserveAsset")
+            .expect("ReserveAsset template receipt exists");
+        let handle = receipt.actor_type_handle.as_ref().expect("ReserveAsset capsule handle exists");
+        let prefix = decode_hex(&handle.template.prefix_hex).expect("capsule prefix decodes");
+        let suffix = decode_hex(&handle.template.suffix_hex).expect("capsule suffix decodes");
+
+        assert!(redeem_script.starts_with(&prefix));
+        assert!(redeem_script.ends_with(&suffix));
+        assert_eq!(
+            builder.actor_type_handle("ReserveAsset", "AssetCapsule").expect("capsule handle resolves"),
+            decode_hex(&handle.template.hash_hex).expect("capsule hash decodes")
+        );
+        assert_ne!(handle.template.hash_hex, receipt.canonical_template_hash);
+        assert!(matches!(
+            builder.actor_type_handle("ReserveAsset", "ReserveAssetState"),
+            Err(BuilderError::MissingActorTypeHandle { actor, state })
+                if actor == "ReserveAsset" && state == "ReserveAssetState"
+        ));
+    }
+
+    #[test]
     fn p2sh_signature_script_accepts_user_args_only() {
         let artifact = tickets_artifact();
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
@@ -695,7 +733,7 @@ mod tests {
             .iter_mut()
             .find(|template| template.actor == "Ticket")
             .expect("Ticket template receipt exists");
-        ticket_receipt.hash_hex = "00".repeat(32);
+        ticket_receipt.canonical_template_hash = "00".repeat(32);
 
         let err = match TxBuilder::new(&artifact) {
             Ok(_) => panic!("builder must reject a corrupted template plan receipt"),
@@ -1382,14 +1420,14 @@ mod tests {
         );
 
         let expanded_agent_artifact = open_icc_expanded_agent_artifact();
-        let expanded_agent_type =
-            decode_hex(&expanded_agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
-                .expect("Forager template hash decodes");
         let expanded_bundle = ArtifactBundle::new(&core_artifact)
             .expect("core artifact is valid")
             .with_app("open_agent", &expanded_agent_artifact)
             .expect("expanded agent artifact attaches under the same app alias");
         let expanded_builder = TxBuilder::from_bundle(&expanded_bundle).expect("builder accepts expanded agent bundle");
+        let expanded_agent_type = expanded_builder
+            .actor_type_handle_in_app("open_agent", "Forager", "AgentCapsule")
+            .expect("Forager exposes its AgentCapsule handle");
         let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
         let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
         let expanded_agent_next = expanded_open_agent_state(controller_covenant_id, 3, 4);
@@ -1726,6 +1764,10 @@ mod tests {
             }
             "#,
         )
+    }
+
+    fn capsule_route_context_artifact() -> Artifact {
+        example_artifact("tests/fixtures/emit/capsule_route_context/app.ag", "capsule-route-context")
     }
 
     fn inline_artifact(name: &str, source: &str) -> Artifact {

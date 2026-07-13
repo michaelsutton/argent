@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "c08057ffdd49874791a08e8ea5e6e39e859edce294ec85d86c17bf33c709fe28",
+  "id": "82c5cb9acb18904160500fc072180e7313da5656bde3647399745e7a70cb81e4",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -25,7 +25,7 @@
           "actor": "Cell",
           "contract": "Cell",
           "symbol": "gen__cell_template",
-          "hash_hex": "30dfb22e76354ead00c35aeee234171d57d6e75d7ff10f7a4b1a44423bed0a69"
+          "canonical_template_hash": "30dfb22e76354ead00c35aeee234171d57d6e75d7ff10f7a4b1a44423bed0a69"
         }
       ],
       "runtime_states": [

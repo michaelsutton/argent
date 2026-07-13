@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "64beb6fe8049acab2639fb87ddc1258f592c2ffda34e5bdc5ec3e92e9ec1b52d",
+  "id": "21ef4e4936988262f58c751faaf7a5fdb82521ad7c2789cba0a81a54859c8a2a",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -31,14 +31,23 @@
           "actor": "Agent",
           "contract": "Agent",
           "symbol": "gen__agent_template",
-          "hash_hex": "3e9a48214bd0f125224d922e171ea49c2d5e533cca89115b2454fab554c0310c"
+          "canonical_template_hash": "3e9a48214bd0f125224d922e171ea49c2d5e533cca89115b2454fab554c0310c"
         },
         {
           "id": "template/forager",
           "actor": "Forager",
           "contract": "Forager",
           "symbol": "gen__forager_template",
-          "hash_hex": "f1a1d40fa3a3e0127c1f64c3e56c7c170c70699fc5bd37c35a28d6637ff1be6b"
+          "canonical_template_hash": "f1a1d40fa3a3e0127c1f64c3e56c7c170c70699fc5bd37c35a28d6637ff1be6b",
+          "actor_type_handle": {
+            "state": "AgentCapsule",
+            "context_fields": [],
+            "template": {
+              "prefix_hex": "",
+              "suffix_hex": "5a79aa55798769b9cb519c695679d000a0695b79527951949c695b7900a269597901207c7e597901207c7e597901207c7e597901207c7e597901207c7e5f7900587fce519358cd607958607fce58cd7e60796001307f7eaa01207c7e01137958cd01087c7e01137958cd01087c7e01137958cd01087c7e597958cd01087c7e7e7e7e7e7e7e7e7e7eb976c97602a5019402ea00937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757575757575757551",
+              "hash_hex": "f1a1d40fa3a3e0127c1f64c3e56c7c170c70699fc5bd37c35a28d6637ff1be6b"
+            }
+          }
         }
       ],
       "runtime_states": [],
