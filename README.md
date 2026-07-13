@@ -101,6 +101,12 @@ Core terms:
 - [examples/open_icc](examples/open_icc): open observed actors and virtual-slot
   agent state
 
+For client-side examples, see
+[argent-playground](https://github.com/michaelsutton/argent-playground). It is a
+separate Rust project that depends on a neighboring Argent checkout and shows
+complete app compilation and transaction-building flows through
+`argent-runtime`.
+
 ## Runtime
 
 `argent-runtime` is the artifact-only consumer surface. It has no compiler
