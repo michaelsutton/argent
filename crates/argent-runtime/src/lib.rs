@@ -1166,6 +1166,11 @@ impl<'a> TxBuilder<'a> {
         Ok(self.entry_ref(actor_name, entry_name)?.entry)
     }
 
+    /// Look up an entry in an attached app artifact.
+    pub fn entry_in_app(&self, app: &str, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {
+        Ok(self.entry_ref_in_artifact(self.bundle.app(app)?, actor_name, entry_name)?.entry)
+    }
+
     fn entry_ref(&self, actor_name: &str, entry_name: &str) -> BuilderResult<EntryRef<'a>> {
         let actor_ref = self.argent_actor_ref(actor_name)?;
         self.entry_ref_for_actor(actor_ref, actor_name, entry_name)

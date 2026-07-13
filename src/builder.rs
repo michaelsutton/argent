@@ -297,6 +297,57 @@ mod tests {
     }
 
     #[test]
+    fn fluent_transition_builds_closed_icc_without_observed_context() {
+        let controller_artifact =
+            example_artifact("tests/fixtures/runtime/fluent_closed_icc/controller.ag", "fluent-closed-icc-controller");
+        let asset_artifact = example_artifact("tests/fixtures/runtime/fluent_closed_icc/asset.ag", "fluent-closed-icc-asset");
+        let bundle = ArtifactBundle::new(&controller_artifact)
+            .expect("controller artifact is valid")
+            .with_app("badge_asset", &asset_artifact)
+            .expect("asset artifact attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
+        let controller_covenant_id = Hash::from_bytes([0x70; 32]);
+        let asset_covenant_id = Hash::from_bytes([0x71; 32]);
+        let controller_initial = state! { minted: 0 };
+        let badge_initial = state! { controller_id: controller_covenant_id, balance: 10 };
+        let controller_utxo = builder
+            .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
+            .expect("controller UTXO builds");
+        let badge_utxo = builder
+            .covenant_utxo_in_app("badge_asset", "Badge", badge_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
+            .expect("badge UTXO builds");
+
+        let built = builder
+            .transition("Controller", "mint")
+            .args(args![asset_covenant_id, 7])
+            .input(
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x72; 32]), index: 0 },
+                controller_utxo,
+                controller_initial,
+            )
+            .output("controller", state! { minted: 7 }, 4_000)
+            .co_spend_in_app(
+                "badge_asset",
+                "Badge",
+                "apply",
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x73; 32]), index: 0 },
+                badge_utxo,
+                badge_initial,
+                args![17],
+                state! { controller_id: controller_covenant_id, balance: 17 },
+                2_000,
+            )
+            .build()
+            .expect("closed ICC transition builds without observed context");
+
+        assert_eq!(built.transaction.inputs.len(), 2);
+        assert_eq!(built.transaction.outputs.len(), 2);
+        assert_eq!(built.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
+        assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
+        assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+    }
+
+    #[test]
     fn route_plan_builds_stones_start_game_and_rejects_bad_routes() {
         let artifact = example_artifact("examples/stones/app.ag", "stones-route-plan");
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
@@ -1254,6 +1305,23 @@ mod tests {
             .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("agent utxo builds");
         let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
+        let fluent_cell_utxo = builder
+            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("fluent cell UTXO builds");
+        let fluent = builder
+            .transition("Cell", "advance")
+            .input(cell_outpoint, fluent_cell_utxo, cell_initial.clone())
+            .observe("remote", observed.get("remote").expect("remote context exists").clone())
+            .output("cell", cell_next.clone(), cell_value)
+            .co_spend_observed("remote", "agent", "step", agent_outpoint, args![agent_next.clone()], agent_value)
+            .build()
+            .expect("open ICC transition builds from explicit observed context");
+        assert_eq!(fluent.transaction.inputs.len(), 2);
+        assert_eq!(fluent.transaction.outputs.len(), 2);
+        assert_eq!(fluent.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
+        assert_eq!(fluent.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
+        assert!(fluent.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+
         let mut observed_keyed_by_app = BTreeMap::new();
         observed_keyed_by_app
             .insert("open_agent".to_string(), observed.get("remote").expect("remote observed context exists").clone());
