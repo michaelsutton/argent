@@ -25,7 +25,10 @@ mod tests {
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
             sighash_type::SIG_HASH_ALL,
         },
-        tx::{CovenantBinding, MutableTransaction, Transaction, TransactionId, TransactionOutpoint, UtxoEntry},
+        tx::{
+            CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionOutpoint, TransactionOutput,
+            UtxoEntry,
+        },
     };
     use kaspa_txscript::pay_to_script_hash_signature_script_with_flags;
     use secp256k1::{Keypair, Secp256k1, SecretKey};
@@ -209,6 +212,88 @@ mod tests {
             .build()
             .expect_err("incorrect expected state must fail contract execution");
         assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn fluent_transition_builds_paired_transfer_and_enforces_compute_mass() {
+        let artifact = inline_artifact(
+            "fluent-paired-transfer",
+            r#"
+            state BoxState {
+                int units;
+            }
+
+            actor Left owns BoxState {
+                entry shift(amount: int) consumes {
+                    peer: Right;
+                } emits {
+                    left_out: Left;
+                    peer_out: Right;
+                } {
+                    BoxState next_left = { units: units - amount, };
+                    BoxState next_peer = { units: peer.units + amount, };
+
+                    become {
+                        left_out <- Left(next_left);
+                        peer_out <- Right(next_peer);
+                    };
+                }
+            }
+
+            actor Right owns BoxState {
+                delegate accept_shift() consumes {
+                    leader: Left;
+                } {}
+            }
+
+            app PairApp {
+                actor Left;
+                actor Right;
+            }
+            "#,
+        );
+        let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
+        let covenant_id = Hash::from_bytes([0x66; 32]);
+        let left_initial = state! { units: 10 };
+        let right_initial = state! { units: 1 };
+        let left_utxo =
+            builder.covenant_utxo("Left", left_initial.clone(), 3_000, 0, false, Some(covenant_id)).expect("left UTXO builds");
+        let right_utxo =
+            builder.covenant_utxo("Right", right_initial.clone(), 2_000, 0, false, Some(covenant_id)).expect("right UTXO builds");
+        let entries = vec![left_utxo.clone(), right_utxo.clone()];
+
+        let built = builder
+            .transition("Left", "shift")
+            .args(args![3])
+            .input(TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x61; 32]), index: 0 }, left_utxo, left_initial)
+            .consume(
+                "peer",
+                "accept_shift",
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x62; 32]), index: 0 },
+                right_utxo,
+                right_initial,
+                args![],
+            )
+            .output("left_out", state! { units: 7 }, 3_000)
+            .output("peer_out", state! { units: 4 }, 2_000)
+            .build()
+            .expect("paired transition builds");
+
+        assert_eq!(built.transaction.inputs.len(), 2);
+        assert_eq!(built.transaction.outputs.len(), 2);
+        assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+        assert!(
+            built
+                .transaction
+                .outputs
+                .iter()
+                .all(|output| { output.covenant == Some(CovenantBinding { authorizing_input: 0, covenant_id }) })
+        );
+
+        let mut oversized = built.transaction;
+        oversized.outputs.extend((0..5).map(|_| TransactionOutput::new(1, ScriptPublicKey::from_vec(0, vec![0; 10_000]))));
+        let err = execute_transaction_with_covenants(&mut oversized, entries).expect_err("oversized compute mass must fail");
+        assert!(matches!(err, BuilderError::ComputeMassLimitExceeded { limit: 500_000, .. }), "unexpected error: {err}");
     }
 
     #[test]

@@ -26,16 +26,18 @@ use argent_artifact::{
 };
 use kaspa_consensus_core::{
     Hash,
+    config::params::MAINNET_PARAMS,
+    constants::TX_VERSION_TOCCATA,
     errors::tx::PopulateGenesisCovenantsError,
     hashing::sighash::SigHashReusedValuesUnsync,
-    mass::ScriptUnits,
+    mass::{ComputeBudget, MassCalculator, ScriptUnits},
     tx::{
         CovenantBinding, GenesisCovenantGroup, PopulatedTransaction, Transaction, TransactionInput, TransactionOutpoint,
         TransactionOutput, UtxoEntry, VerifiableTransaction,
     },
 };
 use kaspa_txscript::{
-    EngineCtx, EngineFlags, TxScriptEngine, caches::Cache, covenants::CovenantsContext, pay_to_script_hash_script,
+    EngineCtx, EngineFlags, SigCacheKey, TxScriptEngine, caches::Cache, covenants::CovenantsContext, pay_to_script_hash_script,
     pay_to_script_hash_signature_script_with_flags, script_builder::ScriptBuilderError,
 };
 use kaspa_txscript_errors::TxScriptError;
@@ -304,6 +306,12 @@ pub enum BuilderError {
     InvalidTransition { actor: String, entry: String, message: String },
     #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
     ComputeBudgetOverflow { input_index: usize, script_units: u64 },
+    #[error("transaction has {input_count} inputs but {entry_count} UTXO entries")]
+    InputEntryCountMismatch { input_count: usize, entry_count: usize },
+    #[error("transaction version {found} is not supported; expected {expected}")]
+    UnsupportedTransactionVersion { expected: u16, found: u16 },
+    #[error("transaction compute mass {compute_mass} exceeds limit {limit}")]
+    ComputeMassLimitExceeded { compute_mass: u64, limit: u64 },
     #[error("missing output `{0}`")]
     MissingOutput(String),
     #[error("genesis covenant output {0} was not populated")]
@@ -1771,27 +1779,64 @@ fn blake2b32(data: &[u8]) -> Vec<u8> {
 }
 
 pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
-    measure_input_script_units_with_covenants(tx, entries, input_idx).map(|_| ())
-}
-
-pub(crate) fn measure_input_script_units_with_covenants(
-    tx: &Transaction,
-    entries: Vec<UtxoEntry>,
-    input_idx: usize,
-) -> Result<ScriptUnits, TxScriptError> {
     let reused_values = SigHashReusedValuesUnsync::new();
     let sig_cache = Cache::new(100);
-    let input = tx.inputs[input_idx].clone();
     let populated = PopulatedTransaction::new(tx, entries);
     let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
+    measure_input_script_units_with_covenants(&populated, input_idx, &sig_cache, &reused_values, &cov_ctx).map(|_| ())
+}
+
+/// Execute every covenant input, commit its measured compute budget, and check
+/// the finalized transaction against the consensus compute-mass limit.
+pub fn execute_transaction_with_covenants(tx: &mut Transaction, entries: Vec<UtxoEntry>) -> BuilderResult<()> {
+    if tx.version != TX_VERSION_TOCCATA {
+        return Err(BuilderError::UnsupportedTransactionVersion { expected: TX_VERSION_TOCCATA, found: tx.version });
+    }
+    if tx.inputs.len() != entries.len() {
+        return Err(BuilderError::InputEntryCountMismatch { input_count: tx.inputs.len(), entry_count: entries.len() });
+    }
+
+    let used_script_units = {
+        let reused_values = SigHashReusedValuesUnsync::new();
+        let sig_cache = Cache::new(100);
+        let populated = PopulatedTransaction::new(tx, entries);
+        let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
+        (0..tx.inputs.len())
+            .map(|input_idx| measure_input_script_units_with_covenants(&populated, input_idx, &sig_cache, &reused_values, &cov_ctx))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    for (input_idx, script_units) in used_script_units.into_iter().enumerate() {
+        let compute_budget = ComputeBudget::checked_covering_script_units(script_units)
+            .ok_or(BuilderError::ComputeBudgetOverflow { input_index: input_idx, script_units: script_units.0 })?;
+        tx.inputs[input_idx].compute_commit = compute_budget.into();
+    }
+
+    let mass_calculator = MassCalculator::new_with_consensus_params(&MAINNET_PARAMS);
+    let compute_mass = mass_calculator.calc_non_contextual_masses(tx).compute_mass;
+    let limit = MAINNET_PARAMS.block_mass_limits().after().compute;
+    if compute_mass > limit {
+        return Err(BuilderError::ComputeMassLimitExceeded { compute_mass, limit });
+    }
+    Ok(())
+}
+
+fn measure_input_script_units_with_covenants(
+    populated: &PopulatedTransaction<'_>,
+    input_idx: usize,
+    sig_cache: &Cache<SigCacheKey, bool>,
+    reused_values: &SigHashReusedValuesUnsync,
+    cov_ctx: &CovenantsContext,
+) -> Result<ScriptUnits, TxScriptError> {
+    let input = populated.tx.inputs[input_idx].clone();
     let utxo = populated.utxo(input_idx).expect("selected input utxo");
 
     let mut vm = TxScriptEngine::from_transaction_input_with_script_units_limit(
-        &populated,
+        populated,
         &input,
         input_idx,
         utxo,
-        EngineCtx::new(&sig_cache).with_reused(&reused_values).with_covenants_ctx(&cov_ctx),
+        EngineCtx::new(sig_cache).with_reused(reused_values).with_covenants_ctx(cov_ctx),
         covenant_engine_flags(),
         ScriptUnits(u64::MAX),
     );
