@@ -1,15 +1,42 @@
 # Argent
 
-Argent is an actor-style language for writing Kaspa covenant applications that
-compile to plain Silverscript.
+Argent is an actor-based, multi-contract and multi-app language and compiler for
+building Kaspa covenant applications. It compiles `.ag` source to plain,
+auditable Silverscript contracts plus portable artifacts consumed by
+`argent-runtime`.
 
-Argent source describes the application state, actors, entrypoints, coordinated
-inputs and outputs, observed covenants, and successor actors. The compiler emits
-auditable `.sil` files plus a portable artifact consumed by `argent-runtime`.
+An Argent app describes transaction-wide state transitions over covenant UTXOs.
+Actors own typed state, entries consume and emit one or more actors, and
+`become` defines the successor actors created by the transaction.
+Inter-Covenant Communication (ICC) extends the same model across independently
+compiled apps, allowing several covenant actors to inspect and constrain one
+atomic transition.
+
+The compiler and runtime handle the underlying covenant plumbing: state
+layouts, template commitments, route families, output validation, observed
+covenants, virtual state expansion, and hidden witness material. Application
+code stays at the level of actors, state, and transitions.
 
 Argent is still evolving, but the main pieces are present: compiler, generated
-Silverscript, portable artifacts, runtime transaction building, route families,
-actor enums, ICC, open observed actors, and virtual-slot state expansion.
+Silverscript, portable artifacts, runtime transaction building, multi-actor
+routes, actor enums, closed and open ICC, and virtual-slot state expansion.
+
+```text
+.ag source
+    |
+    v
+Argent compiler
+    |
+    +-- plain .sil contracts
+    |
+    +-- portable artifact
+              |
+              v
+       argent-runtime
+              |
+              v
+   atomic multi-actor Kaspa tx
+```
 
 ## Quick start
 
@@ -145,16 +172,16 @@ single-artifact `TxBuilder::new`.
 
 ## Why Argent
 
-Kaspa covenants make it possible to build applications out of multiple
-coordinated UTXOs, but hand-written covenant systems quickly accumulate
-mechanical obligations: template hashes, state serialization, prefix/suffix
-witnesses, output ordering, route commitments, observed covenant ids, and
-cross-contract state reads.
+Kaspa covenants make it possible to build applications from several stateful
+UTXOs whose transitions compose atomically in one transaction. But hand-written
+multi-contract systems quickly accumulate mechanical obligations: state
+serialization, template hashes, route commitments, prefix/suffix witnesses,
+output ordering, observed covenant ids, and cross-contract state reads.
 
-Argent makes those relationships source-level. Actors own state. Entries name
-the peer inputs they consume, the outputs they emit, the foreign covenants they
-observe, and the actors those outputs become. The compiler checks that the
-declared state-machine edges are well formed, then emits the Silverscript that
+Argent makes the application graph source-level. Actors own state. Entries
+declare the peer actors they consume, the outputs they emit, the foreign
+covenants they observe, and the successor actors those outputs become. The
+compiler checks the declared state-machine edges and emits the Silverscript that
 performs the low-level validation.
 
 Generated contracts stay as plain `.sil` files, and the artifact records the
