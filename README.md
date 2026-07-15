@@ -231,6 +231,8 @@ What is still being built:
 
 Design notes can be found in [docs/argent-design.md](docs/argent-design.md).
 ICC semantics can be found in [docs/icc-semantics.md](docs/icc-semantics.md).
+Typed transaction sigscript resolution is sketched in
+[docs/tx-builder-sigscript-resolution.md](docs/tx-builder-sigscript-resolution.md).
 
 ## Contributing
 
