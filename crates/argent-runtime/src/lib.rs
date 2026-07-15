@@ -10,11 +10,16 @@
 //! Argent-specific for now; lower-level Silverscript runtime abstractions can
 //! split out later if the artifact model becomes generic enough.
 
+mod context;
 mod transition;
 
 use std::collections::BTreeMap;
 
 pub use argent_artifact::Artifact;
+pub use context::{
+    ActorPath, ArgentInput, ArgentOutput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput,
+    OrdinaryOutput, TxContext,
+};
 pub use silverscript_abi::ArtifactValue;
 pub use transition::{BuiltTransition, TransitionBuilder};
 
