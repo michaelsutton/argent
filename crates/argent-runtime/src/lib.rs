@@ -11,6 +11,7 @@
 //! split out later if the artifact model becomes generic enough.
 
 mod context;
+mod resolve;
 mod transition;
 
 use std::collections::BTreeMap;
@@ -309,6 +310,10 @@ pub enum BuilderError {
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
+    #[error("Argent input {input_index} `{actor}` has no covenant id")]
+    MissingArgentInputCovenantId { input_index: usize, actor: String },
+    #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
+    ArgentInputScriptMismatch { input_index: usize, actor: String },
     #[error("cannot build transition `{actor}::{entry}`: {message}")]
     InvalidTransition { actor: String, entry: String, message: String },
     #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
