@@ -1,0 +1,40 @@
+import "./capsule.ag";
+
+state ControllerState {
+    actor_type<AssetState> asset_type;
+    int swaps;
+}
+
+actor Controller owns ControllerState {
+    entry swap(asset_id: covid, next_owner: pubkey)
+    observes flow by asset_id {
+        inputs {
+            payment: self.asset_type;
+        }
+        outputs {
+            reserve: self.asset_type;
+        }
+    }
+    emits one Controller {
+        AssetState payment = flow.inputs.payment.state;
+        AssetState reserve = {
+            owner: next_owner,
+            amount: payment.amount,
+        };
+
+        require flow.outputs become {
+            reserve <- self.asset_type(reserve);
+        };
+
+        ControllerState next = {
+            asset_type: asset_type,
+            swaps: swaps + 1,
+        };
+
+        become Controller(next);
+    }
+}
+
+app ControllerApp {
+    actor Controller;
+}

@@ -25,7 +25,7 @@ pub struct TransitionBuilder<'builder, 'artifact> {
     args: TransitionArgs<'builder>,
     input: Option<TransitionInput>,
     consumed_inputs: Vec<ConsumedTransitionInput>,
-    co_spends: Vec<TransitionCoSpend>,
+    co_spends: Vec<TransitionCoSpend<'builder>>,
     observed: Vec<(String, ObservedCovenantContext)>,
     outputs: Vec<TransitionOutput>,
     expected_state: Option<BTreeMap<String, ArtifactValue>>,
@@ -59,13 +59,13 @@ struct TransitionOutput {
     value: u64,
 }
 
-enum TransitionCoSpend {
+enum TransitionCoSpend<'a> {
     InApp {
         app: String,
         actor: String,
         entry: String,
         input: TransitionInput,
-        args: Vec<ArgValue>,
+        args: TransitionArgs<'a>,
         output_state: BTreeMap<String, ArtifactValue>,
         output_value: u64,
     },
@@ -74,7 +74,7 @@ enum TransitionCoSpend {
         handle: String,
         entry: String,
         outpoint: TransactionOutpoint,
-        args: Vec<ArgValue>,
+        args: TransitionArgs<'a>,
         output_value: u64,
     },
 }
@@ -188,7 +188,36 @@ impl<'builder> TransitionBuilder<'builder, '_> {
             actor: actor.into(),
             entry: entry.into(),
             input: TransitionInput { outpoint, utxo, state },
-            args,
+            args: TransitionArgs::Static(args),
+            output_state,
+            output_value,
+        });
+        self
+    }
+
+    /// Add an attached-app co-spend whose arguments depend on the transaction.
+    ///
+    /// The callback receives the populated transaction and this co-spend's
+    /// input index.
+    #[allow(clippy::too_many_arguments)]
+    pub fn co_spend_in_app_with(
+        mut self,
+        app: impl Into<String>,
+        actor: impl Into<String>,
+        entry: impl Into<String>,
+        outpoint: TransactionOutpoint,
+        utxo: UtxoEntry,
+        state: BTreeMap<String, ArtifactValue>,
+        build: impl FnOnce(&MutableTransaction<Transaction>, usize) -> Vec<ArgValue> + 'builder,
+        output_state: BTreeMap<String, ArtifactValue>,
+        output_value: u64,
+    ) -> Self {
+        self.co_spends.push(TransitionCoSpend::InApp {
+            app: app.into(),
+            actor: actor.into(),
+            entry: entry.into(),
+            input: TransitionInput { outpoint, utxo, state },
+            args: TransitionArgs::WithTransaction(Box::new(build)),
             output_state,
             output_value,
         });
@@ -196,6 +225,9 @@ impl<'builder> TransitionBuilder<'builder, '_> {
     }
 
     /// Add the concrete transition bound by an open observed covenant context.
+    ///
+    /// `handle` selects the observed input. Its same-named output is used when
+    /// present; otherwise the context must have exactly one output.
     pub fn co_spend_observed(
         mut self,
         observe: impl Into<String>,
@@ -210,7 +242,31 @@ impl<'builder> TransitionBuilder<'builder, '_> {
             handle: handle.into(),
             entry: entry.into(),
             outpoint,
-            args,
+            args: TransitionArgs::Static(args),
+            output_value,
+        });
+        self
+    }
+
+    /// Add an observed co-spend whose arguments depend on the transaction.
+    ///
+    /// The callback receives the populated transaction and this co-spend's
+    /// input index. Output-handle resolution matches [`Self::co_spend_observed`].
+    pub fn co_spend_observed_with(
+        mut self,
+        observe: impl Into<String>,
+        handle: impl Into<String>,
+        entry: impl Into<String>,
+        outpoint: TransactionOutpoint,
+        build: impl FnOnce(&MutableTransaction<Transaction>, usize) -> Vec<ArgValue> + 'builder,
+        output_value: u64,
+    ) -> Self {
+        self.co_spends.push(TransitionCoSpend::Observed {
+            observe: observe.into(),
+            handle: handle.into(),
+            entry: entry.into(),
+            outpoint,
+            args: TransitionArgs::WithTransaction(Box::new(build)),
             output_value,
         });
         self
@@ -235,7 +291,7 @@ impl<'builder> TransitionBuilder<'builder, '_> {
     }
 
     /// Build the transaction, fill hidden witnesses, and execute all inputs.
-    pub fn build(self) -> BuilderResult<BuiltTransition> {
+    pub fn build(mut self) -> BuilderResult<BuiltTransition> {
         let entry = self.builder.entry(&self.actor_name, &self.entry_name)?;
         if entry.kind != EntryKindArtifact::Leader {
             return Err(self.error("the fluent builder currently supports leader entries only"));
@@ -379,7 +435,8 @@ impl<'builder> TransitionBuilder<'builder, '_> {
             _ => return Err(self.error("the fluent builder requires statically selected successor actors")),
         };
 
-        let prepared_co_spends = self.prepare_co_spends(&observed, input_count)?;
+        let co_spends = std::mem::take(&mut self.co_spends);
+        let prepared_co_spends = self.prepare_co_spends(&observed, input_count, co_spends)?;
         outputs.extend(prepared_co_spends.outputs);
 
         for (input_index, prepared) in prepared_inputs.iter().enumerate() {
@@ -438,18 +495,19 @@ impl<'builder> TransitionBuilder<'builder, '_> {
         &self,
         observed: &BTreeMap<String, ObservedCovenantContext>,
         first_input_index: usize,
+        co_spends: Vec<TransitionCoSpend<'builder>>,
     ) -> BuilderResult<PreparedCoSpends<'builder>> {
-        let mut prepared = PreparedCoSpends { inputs: Vec::with_capacity(self.co_spends.len()), outputs: Vec::new() };
-        for (offset, co_spend) in self.co_spends.iter().enumerate() {
+        let mut prepared = PreparedCoSpends { inputs: Vec::with_capacity(co_spends.len()), outputs: Vec::new() };
+        for (offset, co_spend) in co_spends.into_iter().enumerate() {
             let input_index = first_input_index + offset;
             let authorizing_input = u16::try_from(input_index)
                 .map_err(|_| self.error(format!("co-spend input index {input_index} does not fit the covenant binding")))?;
             match co_spend {
                 TransitionCoSpend::InApp { app, actor, entry, input, args, output_state, output_value } => {
-                    let co_spend_entry = self.builder.entry_in_app(app, actor, entry)?;
-                    self.validate_independent_co_spend(app, actor, entry, co_spend_entry)?;
-                    let output_actor = self.single_output_actor(app, actor, entry, co_spend_entry)?;
-                    let expected_script = self.builder.script_public_key_in_app(app, actor, input.state.clone())?;
+                    let co_spend_entry = self.builder.entry_in_app(&app, &actor, &entry)?;
+                    self.validate_independent_co_spend(&app, &actor, &entry, co_spend_entry)?;
+                    let output_actor = self.single_output_actor(&app, &actor, &entry, co_spend_entry)?;
+                    let expected_script = self.builder.script_public_key_in_app(&app, &actor, input.state.clone())?;
                     if input.utxo.script_public_key != expected_script {
                         return Err(
                             self.error(format!("co-spend `{app}:{actor}::{entry}` UTXO does not match actor and source state"))
@@ -460,35 +518,38 @@ impl<'builder> TransitionBuilder<'builder, '_> {
                         .covenant_id
                         .ok_or_else(|| self.error(format!("co-spend `{app}:{actor}::{entry}` UTXO has no covenant id")))?;
                     prepared.outputs.push(self.builder.covenant_output_in_app(
-                        app,
+                        &app,
                         &output_actor,
-                        output_state.clone(),
-                        *output_value,
+                        output_state,
+                        output_value,
                         authorizing_input,
                         covenant_id,
                     )?);
-                    prepared.inputs.push(PreparedInput {
-                        app: Some(app.clone()),
-                        actor: actor.clone(),
-                        entry: entry.clone(),
-                        input: input.clone(),
-                        args: TransitionArgs::Static(args.clone()),
-                    });
+                    prepared.inputs.push(PreparedInput { app: Some(app), actor, entry, input, args });
                 }
                 TransitionCoSpend::Observed { observe, handle, entry, outpoint, args, output_value } => {
-                    let context =
-                        observed.get(observe).ok_or_else(|| self.error(format!("co-spend references missing observe `{observe}`")))?;
+                    let context = observed
+                        .get(&observe)
+                        .ok_or_else(|| self.error(format!("co-spend references missing observe `{observe}`")))?;
                     let observed_input = context
                         .inputs
-                        .get(handle)
+                        .get(&handle)
                         .ok_or_else(|| self.error(format!("observe `{observe}` has no input handle `{handle}`")))?;
-                    let observed_output = context
-                        .outputs
-                        .get(handle)
-                        .ok_or_else(|| self.error(format!("observe `{observe}` has no output handle `{handle}`")))?;
-                    let co_spend_entry = self.builder.entry_in_app(&context.app, &observed_input.actor, entry)?;
-                    self.validate_independent_co_spend(&context.app, &observed_input.actor, entry, co_spend_entry)?;
-                    let output_actor = self.single_output_actor(&context.app, &observed_input.actor, entry, co_spend_entry)?;
+                    let observed_output = match context.outputs.get(&handle) {
+                        Some(output) => output,
+                        None if context.outputs.len() == 1 => context.outputs.values().next().expect("one observed output exists"),
+                        None if context.outputs.is_empty() => {
+                            return Err(self.error(format!("observe `{observe}` has no outputs")));
+                        }
+                        None => {
+                            return Err(
+                                self.error(format!("observe `{observe}` has no output handle `{handle}` and has multiple outputs"))
+                            );
+                        }
+                    };
+                    let co_spend_entry = self.builder.entry_in_app(&context.app, &observed_input.actor, &entry)?;
+                    self.validate_independent_co_spend(&context.app, &observed_input.actor, &entry, co_spend_entry)?;
+                    let output_actor = self.single_output_actor(&context.app, &observed_input.actor, &entry, co_spend_entry)?;
                     if output_actor != observed_output.actor {
                         return Err(self.error(format!(
                             "observed co-spend `{observe}.{handle}` emits `{output_actor}`, not `{}`",
@@ -503,20 +564,16 @@ impl<'builder> TransitionBuilder<'builder, '_> {
                         &context.app,
                         &output_actor,
                         observed_output.state.clone(),
-                        *output_value,
+                        output_value,
                         authorizing_input,
                         covenant_id,
                     )?);
                     prepared.inputs.push(PreparedInput {
                         app: Some(context.app.clone()),
                         actor: observed_input.actor.clone(),
-                        entry: entry.clone(),
-                        input: TransitionInput {
-                            outpoint: *outpoint,
-                            utxo: observed_input.utxo.clone(),
-                            state: observed_input.state.clone(),
-                        },
-                        args: TransitionArgs::Static(args.clone()),
+                        entry,
+                        input: TransitionInput { outpoint, utxo: observed_input.utxo.clone(), state: observed_input.state.clone() },
+                        args,
                     });
                 }
             }

@@ -1,0 +1,18 @@
+import "./capsule.ag";
+
+actor Asset owns AssetState {
+    entry transfer(next_owner: pubkey, owner_sig: sig) emits one Asset {
+        require(checkSig(owner_sig, owner));
+
+        AssetState next = {
+            owner: next_owner,
+            amount: amount,
+        };
+
+        become Asset(next);
+    }
+}
+
+app AssetApp {
+    actor Asset;
+}

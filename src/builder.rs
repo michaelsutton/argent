@@ -346,8 +346,10 @@ mod tests {
         let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
         let controller_covenant_id = Hash::from_bytes([0x70; 32]);
         let asset_covenant_id = Hash::from_bytes([0x71; 32]);
+        let badge_owner = keypair_from_byte(6);
+        let badge_owner_pk = badge_owner.x_only_public_key().0.serialize().to_vec();
         let controller_initial = state! { minted: 0 };
-        let badge_initial = state! { controller_id: controller_covenant_id, balance: 10 };
+        let badge_initial = state! { owner: badge_owner_pk.clone(), controller_id: controller_covenant_id, balance: 10 };
         let controller_utxo = builder
             .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
             .expect("controller UTXO builds");
@@ -364,15 +366,15 @@ mod tests {
                 controller_initial,
             )
             .output("controller", state! { minted: 7 }, 4_000)
-            .co_spend_in_app(
+            .co_spend_in_app_with(
                 "badge_asset",
                 "Badge",
                 "apply",
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x73; 32]), index: 0 },
                 badge_utxo,
                 badge_initial,
-                args![17],
-                state! { controller_id: controller_covenant_id, balance: 17 },
+                |tx, input_idx| args![17, sign_mutable_input(tx, input_idx, &badge_owner)],
+                state! { owner: badge_owner_pk, controller_id: controller_covenant_id, balance: 17 },
                 2_000,
             )
             .build()
@@ -383,6 +385,81 @@ mod tests {
         assert_eq!(built.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
         assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
         assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+    }
+
+    #[test]
+    fn fluent_observed_co_spend_builds_transaction_dependent_args() {
+        let controller_artifact =
+            example_artifact("tests/fixtures/runtime/fluent_signed_observed/controller.ag", "fluent-signed-observed-controller");
+        let asset_artifact =
+            example_artifact("tests/fixtures/runtime/fluent_signed_observed/asset.ag", "fluent-signed-observed-asset");
+        let bundle = ArtifactBundle::new(&controller_artifact)
+            .expect("controller artifact is valid")
+            .with_app("asset_app", &asset_artifact)
+            .expect("asset artifact attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
+        let controller_covenant_id = Hash::from_bytes([0x74; 32]);
+        let asset_covenant_id = Hash::from_bytes([0x75; 32]);
+        let owner = keypair_from_byte(7);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let next_owner_pk = keypair_from_byte(8).x_only_public_key().0.serialize().to_vec();
+        let asset_type = builder.actor_type_handle_in_app("asset_app", "Asset", "AssetState").expect("asset actor type resolves");
+        let controller_initial = state! { asset_type: asset_type.clone(), swaps: 0 };
+        let controller_next = state! { asset_type: asset_type, swaps: 1 };
+        let asset_initial = state! { owner: owner_pk, amount: 10 };
+        let asset_next = state! { owner: next_owner_pk.clone(), amount: 10 };
+        let controller_utxo = builder
+            .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
+            .expect("controller UTXO builds");
+        let asset_utxo = builder
+            .covenant_utxo_in_app("asset_app", "Asset", asset_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
+            .expect("asset UTXO builds");
+        let observed = ObservedCovenantContext::from_app("asset_app")
+            .input("payment", "Asset", asset_utxo.clone(), asset_initial.clone())
+            .output("reserve", "Asset", asset_next.clone());
+        let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x76; 32]), index: 0 };
+        let asset_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x77; 32]), index: 0 };
+
+        let built = builder
+            .transition("Controller", "swap")
+            .args(args![asset_covenant_id, next_owner_pk.clone()])
+            .input(controller_outpoint, controller_utxo.clone(), controller_initial.clone())
+            .observe("flow", observed.clone())
+            .expect(controller_next.clone())
+            .preserve_value()
+            .co_spend_observed_with(
+                "flow",
+                "payment",
+                "transfer",
+                asset_outpoint,
+                |tx, input_idx| args![next_owner_pk.clone(), sign_mutable_input(tx, input_idx, &owner)],
+                2_000,
+            )
+            .build()
+            .expect("signed observed co-spend builds");
+
+        assert_eq!(built.transaction.inputs.len(), 2);
+        assert_eq!(built.transaction.outputs.len(), 2);
+        assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
+
+        let err = builder
+            .transition("Controller", "swap")
+            .args(args![asset_covenant_id, next_owner_pk.clone()])
+            .input(controller_outpoint, controller_utxo, controller_initial)
+            .observe("flow", observed)
+            .expect(controller_next)
+            .preserve_value()
+            .co_spend_observed_with(
+                "flow",
+                "payment",
+                "transfer",
+                asset_outpoint,
+                move |_tx, _input_idx| args![next_owner_pk, vec![0; 65]],
+                2_000,
+            )
+            .build()
+            .expect_err("invalid observed co-spend signature must fail");
+        assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
     }
 
     #[test]
