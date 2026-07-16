@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use kaspa_consensus_core::{
     constants::TX_VERSION_TOCCATA,
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
@@ -5,8 +7,16 @@ use kaspa_consensus_core::{
 use kaspa_txscript::pay_to_script_hash_script;
 
 use crate::{
-    ActorPath, Artifact, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryRef, TxBuilder, TxContext,
+    ActorPath, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs, EntryRef,
+    TxBuilder, TxContext,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub(crate) struct ResolvedEntryArgs {
+    pub values: Vec<ArtifactValue>,
+    pub template_selectors: BTreeMap<String, String>,
+}
 
 // This internal pass is wired to the public transaction API in a later stage.
 #[allow(dead_code)]
@@ -76,6 +86,61 @@ impl<'artifact> TxBuilder<'artifact> {
         let transaction = Transaction::new(TX_VERSION_TOCCATA, inputs, outputs, 0, Default::default(), 0, Vec::new());
         Ok(MutableTransaction::with_entries(transaction, entries))
     }
+
+    /// Resolve user-visible entry arguments for every Argent input.
+    ///
+    /// Results remain aligned with transaction input order; ordinary inputs
+    /// occupy `None` slots. Hidden arguments are resolved by later passes.
+    pub(crate) fn resolve_context_args(
+        &self,
+        context: &TxContext<'_>,
+        unsigned: &MutableTransaction<Transaction>,
+    ) -> BuilderResult<Vec<Option<ResolvedEntryArgs>>> {
+        let mut resolved = Vec::with_capacity(context.inputs.len());
+
+        for (input_index, input) in context.inputs.iter().enumerate() {
+            let ContextInput::Argent(input) = input else {
+                resolved.push(None);
+                continue;
+            };
+
+            let contract_ref = self.context_contract_ref(&input.actor)?;
+            let entry_ref = self.context_entry_ref(&input.actor, &input.entry.name)?;
+            let sil_entry = contract_ref
+                .contract
+                .entry(&input.entry.name)
+                .ok_or_else(|| BuilderError::UnknownEntry { actor: input.actor.to_string(), entry: input.entry.name.clone() })?;
+            let expected_arg_count = sil_entry.params.len().checked_sub(entry_ref.entry.hidden_params.len()).ok_or_else(|| {
+                BuilderError::InvalidTransition {
+                    actor: input.actor.to_string(),
+                    entry: input.entry.name.clone(),
+                    message: format!(
+                        "artifact has {} hidden parameters but the Sil entry has {} total parameters",
+                        entry_ref.entry.hidden_params.len(),
+                        sil_entry.params.len()
+                    ),
+                }
+            })?;
+            let source_args = match &input.entry.args {
+                EntryArgs::Static(args) => args.clone(),
+                EntryArgs::WithTransaction(build) => build(unsigned, input_index),
+            };
+            if source_args.len() != expected_arg_count {
+                return Err(silverscript_abi::CodecError::WrongArgumentCount {
+                    entry: format!("{}::{}", input.actor, input.entry.name),
+                    expected: expected_arg_count,
+                    actual: source_args.len(),
+                }
+                .into());
+            }
+            let (values, template_selectors) =
+                self.lower_arg_values(&input.actor.actor, &input.entry.name, sil_entry, entry_ref.entry, source_args)?;
+            let values = self.runtime_entry_args(contract_ref.artifact, contract_ref.contract, sil_entry, values)?;
+            resolved.push(Some(ResolvedEntryArgs { values, template_selectors }));
+        }
+
+        Ok(resolved)
+    }
 }
 
 #[cfg(test)]
@@ -86,7 +151,7 @@ mod tests {
         ARTIFACT_SCHEMA_VERSION, ActorAbiRefArtifact, ActorArtifact, ArgentArtifact, CompiledContractArtifact,
         CompiledTemplateArtifact, EmitArtifact, EntryAbiRefArtifact, EntryArtifact, EntryKindArtifact, EntryRoutePlanArtifact,
         GeneratorArtifact, InterfaceSetArtifact, RuntimeFieldArtifact, RuntimeStateArtifact, SIL_ABI_SCHEMA_VERSION, SilAbiArtifact,
-        SilContractArtifact, SilEntryArtifact, StateSpanArtifact, TemplatePlanArtifact, TypeArtifact,
+        SilContractArtifact, SilEntryArtifact, StateSpanArtifact, TemplatePlanArtifact, TemplateSelectorArtifact, TypeArtifact,
     };
     use kaspa_consensus_core::{
         Hash,
@@ -94,9 +159,19 @@ mod tests {
     };
 
     use super::*;
-    use crate::{ArgValue, ArtifactValue, EntryCall, InputSigScript};
+    use crate::{ArgValue, ArtifactValue, EntryCall, InputSigScript, actor};
 
     fn artifact(app: &str, actor: &str, entry: &str) -> Artifact {
+        artifact_with_entry(app, actor, entry, Vec::new(), Vec::new())
+    }
+
+    fn artifact_with_entry(
+        app: &str,
+        actor: &str,
+        entry: &str,
+        params: Vec<argent_artifact::ParamArtifact>,
+        template_selectors: Vec<TemplateSelectorArtifact>,
+    ) -> Artifact {
         let state = format!("{actor}State");
         let mut artifact = Artifact {
             schema_version: ARTIFACT_SCHEMA_VERSION,
@@ -122,7 +197,7 @@ mod tests {
                         abi: EntryAbiRefArtifact { actor: actor.to_string(), entry: entry.to_string() },
                         route_plan: EntryRoutePlanArtifact::default(),
                         hidden_params: Vec::new(),
-                        template_selectors: Vec::new(),
+                        template_selectors,
                         observes: Vec::new(),
                         witnesses: Vec::new(),
                         consumes: Vec::new(),
@@ -141,7 +216,7 @@ mod tests {
                         source: state,
                         fields: vec![RuntimeFieldArtifact { name: "count".to_string(), ty: TypeArtifact::Int }],
                     },
-                    entries: vec![SilEntryArtifact { name: entry.to_string(), selector: None, params: Vec::new() }],
+                    entries: vec![SilEntryArtifact { name: entry.to_string(), selector: None, params }],
                     compiled: CompiledContractArtifact {
                         script_hex: String::new(),
                         template: CompiledTemplateArtifact {
@@ -269,6 +344,148 @@ mod tests {
         assert!(matches!(
             builder.unsigned_transaction(&unknown_entry),
             Err(BuilderError::UnknownEntry { actor, entry }) if actor == "Counter" && entry == "missing"
+        ));
+    }
+
+    #[test]
+    fn context_args_resolve_static_and_transaction_dependent_values_by_input_index() {
+        let artifact = artifact_with_entry(
+            "primary",
+            "Counter",
+            "bump",
+            vec![argent_artifact::ParamArtifact { name: "delta".to_string(), ty: TypeArtifact::Int }],
+            Vec::new(),
+        );
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x55; 32]);
+        let counter_utxo =
+            builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+        let ordinary_utxo = UtxoEntry::new(100, ScriptPublicKey::default(), 0, false, None);
+        let entry_callback_called = Cell::new(false);
+        let ordinary_callback_called = Cell::new(false);
+        let context = TxContext::new()
+            .argent_input(
+                "Counter",
+                state(2),
+                EntryCall::new("bump").args(vec![ArgValue::Value(ArtifactValue::Int(3))]),
+                outpoint(1),
+                counter_utxo.clone(),
+            )
+            .input(
+                outpoint(2),
+                ordinary_utxo,
+                InputSigScript::with_transaction(|_, _| {
+                    ordinary_callback_called.set(true);
+                    vec![0xaa]
+                }),
+            )
+            .argent_input(
+                "Counter",
+                state(2),
+                EntryCall::new("bump").args_with(|tx, input_index| {
+                    entry_callback_called.set(true);
+                    assert_eq!(input_index, 2);
+                    assert_eq!(tx.tx.inputs.len(), 3);
+                    assert_eq!(tx.tx.outputs.len(), 1);
+                    assert!(tx.entries.iter().all(Option::is_some));
+                    assert!(tx.tx.inputs.iter().all(|input| input.signature_script.is_empty()));
+                    vec![ArgValue::Value(ArtifactValue::Int(4))]
+                }),
+                outpoint(3),
+                counter_utxo,
+            )
+            .argent_output("Counter", state(3), CovenantBinding::new(0, covenant_id), 900);
+        let unsigned = builder.unsigned_transaction(&context).expect("context materializes");
+
+        let resolved = builder.resolve_context_args(&context, &unsigned).expect("arguments resolve");
+
+        assert_eq!(resolved[0].as_ref().expect("input 0 is Argent").values, vec![ArtifactValue::Int(3)]);
+        assert!(resolved[1].is_none());
+        assert_eq!(resolved[2].as_ref().expect("input 2 is Argent").values, vec![ArtifactValue::Int(4)]);
+        assert!(entry_callback_called.get());
+        assert!(!ordinary_callback_called.get());
+    }
+
+    #[test]
+    fn context_args_lower_actor_values_and_retain_template_selection() {
+        let artifact = artifact_with_entry(
+            "primary",
+            "Router",
+            "choose",
+            vec![argent_artifact::ParamArtifact { name: "target".to_string(), ty: TypeArtifact::Int }],
+            vec![TemplateSelectorArtifact {
+                name: "target".to_string(),
+                actor_enum: "Target".to_string(),
+                state: "TargetState".to_string(),
+                variants: vec!["Alpha".to_string(), "Beta".to_string()],
+                fixed_actor: None,
+            }],
+        );
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x66; 32]);
+        let router_utxo = builder.covenant_utxo("Router", state(2), 1_000, 0, false, Some(covenant_id)).expect("router UTXO builds");
+        let context = TxContext::new().argent_input(
+            "Router",
+            state(2),
+            EntryCall::new("choose").args(vec![actor("Beta")]),
+            outpoint(1),
+            router_utxo,
+        );
+        let unsigned = builder.unsigned_transaction(&context).expect("context materializes");
+
+        let resolved = builder.resolve_context_args(&context, &unsigned).expect("arguments resolve");
+        let resolved = resolved[0].as_ref().expect("input is Argent");
+
+        assert_eq!(resolved.values, vec![ArtifactValue::Int(1)]);
+        assert_eq!(resolved.template_selectors, BTreeMap::from([("target".to_string(), "Beta".to_string())]));
+    }
+
+    #[test]
+    fn context_args_lower_source_state_values_to_runtime_state() {
+        let artifact = artifact_with_entry(
+            "primary",
+            "Counter",
+            "replace",
+            vec![argent_artifact::ParamArtifact { name: "next".to_string(), ty: TypeArtifact::Struct { name: "State".to_string() } }],
+            Vec::new(),
+        );
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x76; 32]);
+        let counter_utxo =
+            builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+        let context = TxContext::new().argent_input(
+            "Counter",
+            state(2),
+            EntryCall::new("replace").args(vec![ArgValue::Value(ArtifactValue::Object(state(9)))]),
+            outpoint(1),
+            counter_utxo,
+        );
+        let unsigned = builder.unsigned_transaction(&context).expect("context materializes");
+
+        let resolved = builder.resolve_context_args(&context, &unsigned).expect("arguments resolve");
+
+        assert_eq!(resolved[0].as_ref().expect("input is Argent").values, vec![ArtifactValue::Object(state(9))]);
+    }
+
+    #[test]
+    fn context_args_reject_wrong_user_argument_count() {
+        let artifact = artifact_with_entry(
+            "primary",
+            "Counter",
+            "bump",
+            vec![argent_artifact::ParamArtifact { name: "delta".to_string(), ty: TypeArtifact::Int }],
+            Vec::new(),
+        );
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x77; 32]);
+        let counter_utxo =
+            builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+        let context = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), counter_utxo);
+        let unsigned = builder.unsigned_transaction(&context).expect("context materializes");
+
+        assert!(matches!(
+            builder.resolve_context_args(&context, &unsigned),
+            Err(BuilderError::Codec(silverscript_abi::CodecError::WrongArgumentCount { expected: 1, actual: 0, .. }))
         ));
     }
 }
