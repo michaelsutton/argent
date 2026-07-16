@@ -191,6 +191,9 @@ pub enum ContextOutput {
 /// Inputs and outputs appear in transaction order. The context records only
 /// concrete transaction metadata; a [`crate::TxBuilder`] later resolves actor
 /// paths and fills Argent-generated scripts from its artifact bundle.
+/// Callers provide only user-visible entry arguments and signature callbacks;
+/// the builder derives compiler-generated witness material from the context
+/// and artifact bundle.
 #[derive(Debug, Default)]
 pub struct TxContext<'a> {
     pub inputs: Vec<ContextInput<'a>>,

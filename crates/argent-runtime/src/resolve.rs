@@ -376,6 +376,8 @@ fn resolve_observation(
     let matching_outputs = matching_observed_outputs(context, covenant_id);
     require_observed_count(&observe.name, "output", observe.outputs.len(), matching_outputs.len())?;
 
+    // Pair both sides positionally: covenant members are indexed by transaction
+    // order, while emitted observe checks assign indexes in declaration order.
     let mut app = None;
     let mut inputs = BTreeMap::new();
     for (declaration, index) in observe.inputs.iter().zip(matching_inputs) {
