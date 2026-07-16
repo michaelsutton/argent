@@ -144,37 +144,49 @@ complete app compilation and transaction-building flows through
 
 `argent-runtime` is the artifact-only consumer surface. It has no compiler
 dependency. It loads compiled artifacts, fills hidden witness material, builds
-covenant UTXOs and outputs, composes artifact bundles, and constructs P2SH
-signature scripts for tests and client tooling.
+covenant UTXOs, composes artifact bundles, and builds complete transactions
+from concrete actor inputs and outputs.
 
 Classic single-app flow:
 
 ```rust
 let builder = TxBuilder::new(&artifact)?;
 
-let input_state = ticket_state(owner, value);
-let output_state = ticket_state(next_owner, value);
+let input_state = state! { count: 2 };
+let output_state = state! { count: 5 };
 
 // The covenant UTXO being spent.
-let input_utxo = builder.covenant_utxo("Ticket", input_state.clone(), value, 0, false, Some(covenant_id))?;
-
-// The successor covenant output this entry authorizes.
-let output = builder.covenant_output("Ticket", output_state, value, 0, covenant_id)?;
-
-let sigscript = builder.p2sh_signature_script(
-    "Ticket",
-    "transfer",
-    input_state,
-    args![next_owner],
+let input_utxo = builder.covenant_utxo(
+    "Counter",
+    input_state.clone(),
+    value,
+    0,
+    false,
+    Some(covenant_id),
 )?;
 
-// ... compose tx
+let context = TxContext::new()
+    .argent_input(
+        "Counter",
+        input_state,
+        EntryCall::new("bump").args(args![3]),
+        outpoint,
+        input_utxo,
+    )
+    .argent_output(
+        "Counter",
+        output_state,
+        CovenantBinding::new(0, covenant_id),
+        value,
+    );
+
+let tx = builder.build(&context)?;
 ```
 
 The runtime API is Argent-specific while the language settles. The lower-level
 Silverscript ABI and artifact boundaries are split into small crates so they can
-be kept portable. Multi-app ICC uses `ArtifactBundle`, while the basic path is
-single-artifact `TxBuilder::new`.
+be kept portable. Multi-app ICC uses `ArtifactBundle`; the transaction context
+is otherwise the same for single- and multi-app transactions.
 
 ## Why Argent
 

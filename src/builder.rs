@@ -26,11 +26,11 @@ mod tests {
             sighash_type::SIG_HASH_ALL,
         },
         tx::{
-            CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionOutpoint, TransactionOutput,
-            UtxoEntry,
+            CovenantBinding, MutableTransaction, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId,
+            TransactionOutpoint, TransactionOutput, UtxoEntry,
         },
     };
-    use kaspa_txscript::pay_to_script_hash_signature_script_with_flags;
+    use kaspa_txscript::{opcodes::codes::OpTrue, parse_script, pay_to_script_hash_signature_script_with_flags};
     use secp256k1::{Keypair, Secp256k1, SecretKey};
 
     static ARTIFACT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -44,6 +44,42 @@ mod tests {
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
             HiddenParamSubjectArtifact::StateExpansion { memory_state, .. } => memory_state,
         }
+    }
+
+    fn entry_artifact<'a>(artifact: &'a Artifact, actor: &str, entry: &str) -> &'a crate::artifact::EntryArtifact {
+        artifact
+            .argent
+            .actors
+            .iter()
+            .find(|candidate| candidate.name == actor)
+            .and_then(|actor| actor.entries.iter().find(|candidate| candidate.name == entry))
+            .unwrap_or_else(|| panic!("missing artifact entry `{actor}::{entry}`"))
+    }
+
+    fn route_family_table_bytes(artifact: &Artifact, family_id: &str) -> Vec<u8> {
+        let family = artifact
+            .argent
+            .template_plan
+            .route_families
+            .iter()
+            .find(|family| family.id == family_id)
+            .unwrap_or_else(|| panic!("missing route family `{family_id}`"));
+        let table = artifact
+            .argent
+            .template_plan
+            .route_tables
+            .iter()
+            .find(|table| table.id == family.table_id)
+            .unwrap_or_else(|| panic!("missing route table `{}`", family.table_id));
+        let mut bytes = Vec::with_capacity(table.byte_len);
+        for entry in &table.entries {
+            let crate::artifact::RouteTemplateLeafArtifact::Template { actor, .. } = &entry.leaf else {
+                panic!("test route table `{}` unexpectedly contains a nested family", table.id);
+            };
+            let contract = artifact.sil_abi.contract(actor).unwrap_or_else(|| panic!("missing contract `{actor}`"));
+            bytes.extend_from_slice(&decode_hex(&contract.compiled.template.hash_hex).expect("template hash decodes"));
+        }
+        bytes
     }
 
     #[test]
@@ -60,57 +96,66 @@ mod tests {
         let redeemed_state = ticket_state(owner_hash.clone(), 7, 1);
         let input_value = 1_500;
 
-        let output =
-            builder.covenant_output("Ticket", redeemed_state.clone(), input_value, 0, covenant_id).expect("redeemed output builds");
         let input_utxo = builder
             .covenant_utxo("Ticket", initial_state.clone(), input_value, 0, false, Some(covenant_id))
             .expect("ticket utxo builds");
-        let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], vec![output.clone()]);
-        let signature = sign_input(&unsigned_tx, vec![input_utxo.clone()], 0, &owner);
-        let sigscript = builder
-            .p2sh_signature_script("Ticket", "redeem", initial_state.clone(), args![signature, owner_pk.clone()])
-            .expect("sigscript builds");
-        let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript)], vec![output]);
-
-        execute_input_with_covenants(&tx, vec![input_utxo.clone()], 0).expect("valid redeem tx passes");
+        let context = TxContext::new()
+            .argent_input(
+                "Ticket",
+                initial_state.clone(),
+                EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                outpoint,
+                input_utxo.clone(),
+            )
+            .argent_output("Ticket", redeemed_state, CovenantBinding::new(0, covenant_id), input_value);
+        builder.build(&context).expect("valid redeem tx passes");
 
         let wrong_pk = keypair_from_byte(2).x_only_public_key().0.serialize().to_vec();
-        let bad_sigscript = builder
-            .p2sh_signature_script(
+        let bad_args = TxContext::new()
+            .argent_input(
                 "Ticket",
-                "redeem",
                 initial_state.clone(),
-                args![sign_input(&unsigned_tx, vec![input_utxo.clone()], 0, &owner), wrong_pk],
+                EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), wrong_pk.clone()]),
+                outpoint,
+                input_utxo.clone(),
             )
-            .expect("bad-arg sigscript still encodes");
-        let bad_arg_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, bad_sigscript)], vec![tx.outputs[0].clone()]);
-        assert!(execute_input_with_covenants(&bad_arg_tx, vec![input_utxo.clone()], 0).is_err());
+            .argent_output("Ticket", ticket_state(owner_hash.clone(), 7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        assert!(builder.build(&bad_args).is_err());
 
-        let stale_output =
-            builder.covenant_output("Ticket", initial_state.clone(), input_value, 0, covenant_id).expect("stale output builds");
-        let stale_unsigned_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], vec![stale_output.clone()]);
-        let stale_sigscript = builder
-            .p2sh_signature_script(
+        let stale_output = TxContext::new()
+            .argent_input(
                 "Ticket",
-                "redeem",
-                initial_state,
-                args![sign_input(&stale_unsigned_tx, vec![input_utxo.clone()], 0, &owner), owner_pk],
+                initial_state.clone(),
+                EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                outpoint,
+                input_utxo,
             )
-            .expect("stale-output sigscript builds");
-        let stale_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, stale_sigscript)], vec![stale_output]);
-        assert!(execute_input_with_covenants(&stale_tx, vec![input_utxo], 0).is_err());
+            .argent_output("Ticket", initial_state, CovenantBinding::new(0, covenant_id), input_value);
+        assert!(builder.build(&stale_output).is_err());
     }
 
     #[test]
     fn redeem_script_fills_hidden_template_state_from_artifact() {
         let artifact = tickets_artifact();
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let actor = builder.contract("Ticket").expect("ticket contract exists");
-        let source_state = ticket_state(vec![3; 32], 11, 0);
-
-        let redeem_script = builder.redeem_script("Ticket", source_state.clone()).expect("redeem script builds");
+        let actor = artifact.sil_abi.contract("Ticket").expect("ticket contract exists");
+        let owner = keypair_from_byte(3);
+        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
+        let source_state = ticket_state(blake2b32(&owner_pk), 11, 0);
+        let covenant_id = Hash::from_bytes([0x21; 32]);
+        let input_utxo =
+            builder.covenant_utxo("Ticket", source_state.clone(), 1_000, 0, false, Some(covenant_id)).expect("ticket UTXO builds");
+        let context = TxContext::new()
+            .argent_input(
+                "Ticket",
+                source_state.clone(),
+                EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                TransactionOutpoint::new(TransactionId::from_bytes([0x22; 32]), 0),
+                input_utxo,
+            )
+            .argent_output("Ticket", ticket_state(blake2b32(&owner_pk), 11, 1), CovenantBinding::new(0, covenant_id), 1_000);
+        let transaction = builder.build(&context).expect("ticket transaction builds");
+        let redeem_script = p2sh_redeem_script(&transaction.inputs[0].signature_script);
         let state_span = &actor.compiled.state_span;
         let state_script = &redeem_script[state_span.offset..state_span.offset + state_span.len];
         let decoded = crate::codec::decode_runtime_state_script(&actor.runtime_state, state_script).expect("state decodes");
@@ -118,15 +163,15 @@ mod tests {
         assert_eq!(decoded.get("owner"), source_state.get("owner"));
         assert_eq!(
             decoded.get("gen__ticket_template"),
-            Some(&ArtifactValue::Bytes(decode_hex(&builder.contract("Ticket").unwrap().compiled.template.hash_hex).unwrap()))
+            Some(&ArtifactValue::Bytes(decode_hex(&actor.compiled.template.hash_hex).unwrap()))
         );
         assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
 
         let mut explicit_hidden_state = source_state;
         explicit_hidden_state.insert("gen__ticket_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
-        let err = builder
-            .redeem_script("Ticket", explicit_hidden_state)
-            .expect_err("hidden runtime state fields must be filled by the runtime");
+        let explicit_hidden =
+            TxContext::new().argent_output("Ticket", explicit_hidden_state, CovenantBinding::new(0, covenant_id), 1_000);
+        let err = builder.build(&explicit_hidden).expect_err("hidden runtime state fields must be filled by the runtime");
         assert!(
             matches!(err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__ticket_template"),
             "unexpected error: {err}"
@@ -145,7 +190,32 @@ mod tests {
             },
             balance: 100,
         };
-        let redeem_script = builder.redeem_script("ReserveAsset", state).expect("expanded redeem script builds");
+        let next_state = state! {
+            owner_kind: 1,
+            owner_id: Hash::from_bytes([0x31; 32]),
+            policy: state! {
+                nonce: 5,
+            },
+            balance: 100,
+        };
+        let asset_covenant_id = Hash::from_bytes([0x32; 32]);
+        let owner_covenant_id = Hash::from_bytes([0x31; 32]);
+        let owner_utxo = UtxoEntry::new(1, ScriptPublicKey::new(0, vec![OpTrue].into()), 0, false, Some(owner_covenant_id));
+        let asset_utxo = builder
+            .covenant_utxo("ReserveAsset", state.clone(), 1_000, 0, false, Some(asset_covenant_id))
+            .expect("ReserveAsset UTXO builds");
+        let context = TxContext::new()
+            .input(TransactionOutpoint::new(TransactionId::from_bytes([0x33; 32]), 0), owner_utxo, Vec::new())
+            .argent_input(
+                "ReserveAsset",
+                state,
+                EntryCall::new("settle").args(args![100]),
+                TransactionOutpoint::new(TransactionId::from_bytes([0x34; 32]), 0),
+                asset_utxo,
+            )
+            .argent_output("ReserveAsset", next_state, CovenantBinding::new(1, asset_covenant_id), 1_000);
+        let transaction = builder.build(&context).expect("expanded actor transaction builds");
+        let redeem_script = p2sh_redeem_script(&transaction.inputs[1].signature_script);
         let receipt = artifact
             .argent
             .template_plan
@@ -172,24 +242,32 @@ mod tests {
     }
 
     #[test]
-    fn p2sh_signature_script_accepts_user_args_only() {
+    fn context_entry_call_accepts_user_args_only() {
         let artifact = tickets_artifact();
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
         let owner = keypair_from_byte(1);
         let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
         let source_state = ticket_state(blake2b32(&owner_pk), 7, 0);
 
-        let err = builder
-            .p2sh_signature_script("Ticket", "redeem", source_state, args![vec![1; 65], owner_pk, vec![2; 32], vec![3; 32]])
-            .expect_err("user must not provide hidden prefix/suffix witnesses");
+        let covenant_id = Hash::from_bytes([0x41; 32]);
+        let input_utxo =
+            builder.covenant_utxo("Ticket", source_state.clone(), 1_000, 0, false, Some(covenant_id)).expect("ticket UTXO builds");
+        let context = TxContext::new().argent_input(
+            "Ticket",
+            source_state,
+            EntryCall::new("redeem").args(args![vec![1; 65], owner_pk, vec![2; 32], vec![3; 32]]),
+            TransactionOutpoint::new(TransactionId::from_bytes([0x42; 32]), 0),
+            input_utxo,
+        );
+        let err = builder.build(&context).expect_err("user must not provide hidden prefix/suffix witnesses");
 
         assert!(matches!(err, BuilderError::Codec(CodecError::WrongArgumentCount { .. })));
     }
 
     #[test]
-    fn fluent_transition_builds_and_verifies_signed_single_output() {
+    fn context_builds_and_verifies_signed_single_output() {
         let artifact = inline_artifact(
-            "fluent-counter",
+            "context-counter",
             r#"
             state CounterState {
                 pubkey owner;
@@ -225,37 +303,41 @@ mod tests {
         let input_utxo =
             builder.covenant_utxo("Counter", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("counter UTXO builds");
 
-        let built = builder
-            .transition("Counter", "bump")
-            .input(outpoint, input_utxo.clone(), initial.clone())
-            .expect(next)
-            .preserve_value()
-            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
-            .build()
-            .expect("fluent transition builds");
+        let context = TxContext::new()
+            .argent_input(
+                "Counter",
+                initial.clone(),
+                EntryCall::new("bump").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3]),
+                outpoint,
+                input_utxo.clone(),
+            )
+            .argent_output("Counter", next, CovenantBinding::new(0, covenant_id), input_value);
+        let transaction = builder.build(&context).expect("context builds");
 
-        assert_eq!(built.transaction.inputs.len(), 1);
-        assert_eq!(built.transaction.outputs.len(), 1);
-        assert_eq!(built.transaction.version, 1);
-        assert!(built.transaction.inputs[0].compute_commit.compute_budget().is_some());
-        assert_eq!(built.transaction.outputs[0].value, input_value);
-        assert_eq!(built.transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
+        assert_eq!(transaction.inputs.len(), 1);
+        assert_eq!(transaction.outputs.len(), 1);
+        assert_eq!(transaction.version, 1);
+        assert!(transaction.inputs[0].compute_commit.compute_budget().is_some());
+        assert_eq!(transaction.outputs[0].value, input_value);
+        assert_eq!(transaction.outputs[0].covenant, Some(CovenantBinding { authorizing_input: 0, covenant_id }));
 
-        let err = builder
-            .transition("Counter", "bump")
-            .input(outpoint, input_utxo, initial.clone())
-            .expect(initial)
-            .preserve_value()
-            .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3])
-            .build()
-            .expect_err("incorrect expected state must fail contract execution");
+        let wrong_state = TxContext::new()
+            .argent_input(
+                "Counter",
+                initial.clone(),
+                EntryCall::new("bump").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3]),
+                outpoint,
+                input_utxo,
+            )
+            .argent_output("Counter", initial, CovenantBinding::new(0, covenant_id), input_value);
+        let err = builder.build(&wrong_state).expect_err("incorrect expected state must fail contract execution");
         assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
     }
 
     #[test]
-    fn fluent_transition_builds_paired_transfer_and_enforces_compute_mass() {
+    fn context_builds_paired_transfer_and_enforces_compute_mass() {
         let artifact = inline_artifact(
-            "fluent-paired-transfer",
+            "context-paired-transfer",
             r#"
             state BoxState {
                 int units;
@@ -300,45 +382,46 @@ mod tests {
             builder.covenant_utxo("Right", right_initial.clone(), 2_000, 0, false, Some(covenant_id)).expect("right UTXO builds");
         let entries = vec![left_utxo.clone(), right_utxo.clone()];
 
-        let built = builder
-            .transition("Left", "shift")
-            .args(args![3])
-            .input(TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x61; 32]), index: 0 }, left_utxo, left_initial)
-            .consume(
-                "peer",
+        let context = TxContext::new()
+            .argent_input(
+                "Left",
+                left_initial,
+                EntryCall::new("shift").args(args![3]),
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x61; 32]), index: 0 },
+                left_utxo,
+            )
+            .argent_input(
+                "Right",
+                right_initial,
                 "accept_shift",
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x62; 32]), index: 0 },
                 right_utxo,
-                right_initial,
-                args![],
             )
-            .output("left_out", state! { units: 7 }, 3_000)
-            .output("peer_out", state! { units: 4 }, 2_000)
-            .build()
-            .expect("paired transition builds");
+            .argent_output("Left", state! { units: 7 }, CovenantBinding::new(0, covenant_id), 3_000)
+            .argent_output("Right", state! { units: 4 }, CovenantBinding::new(0, covenant_id), 2_000);
+        let transaction = builder.build(&context).expect("paired transition builds");
 
-        assert_eq!(built.transaction.inputs.len(), 2);
-        assert_eq!(built.transaction.outputs.len(), 2);
-        assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+        assert_eq!(transaction.inputs.len(), 2);
+        assert_eq!(transaction.outputs.len(), 2);
+        assert!(transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
         assert!(
-            built
-                .transaction
+            transaction
                 .outputs
                 .iter()
                 .all(|output| { output.covenant == Some(CovenantBinding { authorizing_input: 0, covenant_id }) })
         );
 
-        let mut oversized = built.transaction;
+        let mut oversized = transaction;
         oversized.outputs.extend((0..5).map(|_| TransactionOutput::new(1, ScriptPublicKey::from_vec(0, vec![0; 10_000]))));
         let err = execute_transaction_with_covenants(&mut oversized, entries).expect_err("oversized compute mass must fail");
         assert!(matches!(err, BuilderError::ComputeMassLimitExceeded { limit: 500_000, .. }), "unexpected error: {err}");
     }
 
     #[test]
-    fn fluent_transition_builds_closed_icc_without_observed_context() {
+    fn context_builds_closed_icc_without_observed_context() {
         let controller_artifact =
-            example_artifact("tests/fixtures/runtime/fluent_closed_icc/controller.ag", "fluent-closed-icc-controller");
-        let asset_artifact = example_artifact("tests/fixtures/runtime/fluent_closed_icc/asset.ag", "fluent-closed-icc-asset");
+            example_artifact("tests/fixtures/runtime/context_closed_icc/controller.ag", "context-closed-icc-controller");
+        let asset_artifact = example_artifact("tests/fixtures/runtime/context_closed_icc/asset.ag", "context-closed-icc-asset");
         let bundle = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact is valid")
             .with_app("badge_asset", &asset_artifact)
@@ -361,31 +444,6 @@ mod tests {
             .covenant_utxo("badge_asset::Badge", badge_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
             .expect("badge UTXO builds");
 
-        let built = builder
-            .transition("Controller", "mint")
-            .args(args![asset_covenant_id, 7])
-            .input(controller_outpoint, controller_utxo.clone(), controller_initial.clone())
-            .output("controller", controller_next.clone(), 4_000)
-            .co_spend_in_app_with(
-                "badge_asset",
-                "Badge",
-                "apply",
-                badge_outpoint,
-                badge_utxo.clone(),
-                badge_initial.clone(),
-                |tx, input_idx| args![17, sign_mutable_input(tx, input_idx, &badge_owner)],
-                badge_next.clone(),
-                2_000,
-            )
-            .build()
-            .expect("closed ICC transition builds without observed context");
-
-        assert_eq!(built.transaction.inputs.len(), 2);
-        assert_eq!(built.transaction.outputs.len(), 2);
-        assert_eq!(built.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
-        assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
-        assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
-
         let context = TxContext::new()
             .argent_input(
                 "Controller",
@@ -404,6 +462,10 @@ mod tests {
             .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
             .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
         let context_tx = builder.build(&context).expect("context resolves the closed observed covenant");
+        assert_eq!(context_tx.inputs.len(), 2);
+        assert_eq!(context_tx.outputs.len(), 2);
+        assert_eq!(context_tx.outputs[0].covenant.unwrap().authorizing_input, 0);
+        assert_eq!(context_tx.outputs[1].covenant.unwrap().authorizing_input, 1);
         assert!(context_tx.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
 
         let extra_output = TxContext::new()
@@ -435,8 +497,9 @@ mod tests {
         );
 
         let ordinary_badge_script = builder
-            .script_public_key_in_app("badge_asset", "Badge", badge_next)
-            .expect("ordinary output can reproduce the Badge script");
+            .covenant_utxo("badge_asset::Badge", badge_next, 2_000, 0, false, Some(asset_covenant_id))
+            .expect("ordinary output can reproduce the Badge script")
+            .script_public_key;
         let missing_metadata = TxContext::new()
             .argent_input(
                 "Controller",
@@ -470,11 +533,11 @@ mod tests {
     }
 
     #[test]
-    fn fluent_observed_co_spend_builds_transaction_dependent_args() {
+    fn context_builds_observed_co_spend_with_transaction_dependent_args() {
         let controller_artifact =
-            example_artifact("tests/fixtures/runtime/fluent_signed_observed/controller.ag", "fluent-signed-observed-controller");
+            example_artifact("tests/fixtures/runtime/context_signed_observed/controller.ag", "context-signed-observed-controller");
         let asset_artifact =
-            example_artifact("tests/fixtures/runtime/fluent_signed_observed/asset.ag", "fluent-signed-observed-asset");
+            example_artifact("tests/fixtures/runtime/context_signed_observed/asset.ag", "context-signed-observed-asset");
         let bundle = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact is valid")
             .with_app("asset_app", &asset_artifact)
@@ -496,51 +559,51 @@ mod tests {
         let asset_utxo = builder
             .covenant_utxo("asset_app::Asset", asset_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
             .expect("asset UTXO builds");
-        let observed = ObservedCovenantContext::from_app("asset_app")
-            .input("payment", "Asset", asset_utxo.clone(), asset_initial.clone())
-            .output("reserve", "Asset", asset_next.clone());
         let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x76; 32]), index: 0 };
         let asset_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x77; 32]), index: 0 };
 
-        let built = builder
-            .transition("Controller", "swap")
-            .args(args![asset_covenant_id, next_owner_pk.clone()])
-            .input(controller_outpoint, controller_utxo.clone(), controller_initial.clone())
-            .observe("flow", observed.clone())
-            .expect(controller_next.clone())
-            .preserve_value()
-            .co_spend_observed_with(
-                "flow",
-                "payment",
-                "transfer",
-                asset_outpoint,
-                |tx, input_idx| args![next_owner_pk.clone(), sign_mutable_input(tx, input_idx, &owner)],
-                2_000,
+        let context = TxContext::new()
+            .argent_input(
+                "Controller",
+                controller_initial.clone(),
+                EntryCall::new("swap").args(args![asset_covenant_id, next_owner_pk.clone()]),
+                controller_outpoint,
+                controller_utxo.clone(),
             )
-            .build()
-            .expect("signed observed co-spend builds");
-
-        assert_eq!(built.transaction.inputs.len(), 2);
-        assert_eq!(built.transaction.outputs.len(), 2);
-        assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
-
-        let err = builder
-            .transition("Controller", "swap")
-            .args(args![asset_covenant_id, next_owner_pk.clone()])
-            .input(controller_outpoint, controller_utxo, controller_initial)
-            .observe("flow", observed)
-            .expect(controller_next)
-            .preserve_value()
-            .co_spend_observed_with(
-                "flow",
-                "payment",
-                "transfer",
+            .argent_input(
+                "asset_app::Asset",
+                asset_initial.clone(),
+                EntryCall::new("transfer")
+                    .args_with(|tx, input_idx| args![next_owner_pk.clone(), sign_mutable_input(tx, input_idx, &owner)]),
                 asset_outpoint,
-                move |_tx, _input_idx| args![next_owner_pk, vec![0; 65]],
-                2_000,
+                asset_utxo.clone(),
             )
-            .build()
-            .expect_err("invalid observed co-spend signature must fail");
+            .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
+            .argent_output("asset_app::Asset", asset_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
+        let transaction = builder.build(&context).expect("signed observed co-spend builds");
+
+        assert_eq!(transaction.inputs.len(), 2);
+        assert_eq!(transaction.outputs.len(), 2);
+        assert_eq!(transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
+
+        let invalid_signature = TxContext::new()
+            .argent_input(
+                "Controller",
+                controller_initial,
+                EntryCall::new("swap").args(args![asset_covenant_id, next_owner_pk.clone()]),
+                controller_outpoint,
+                controller_utxo,
+            )
+            .argent_input(
+                "asset_app::Asset",
+                asset_initial,
+                EntryCall::new("transfer").args(args![next_owner_pk.clone(), vec![0; 65]]),
+                asset_outpoint,
+                asset_utxo,
+            )
+            .argent_output("Controller", controller_next, CovenantBinding::new(0, controller_covenant_id), 4_000)
+            .argent_output("asset_app::Asset", asset_next, CovenantBinding::new(1, asset_covenant_id), 2_000);
+        let err = builder.build(&invalid_signature).expect_err("invalid observed co-spend signature must fail");
         assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
     }
 
@@ -548,7 +611,7 @@ mod tests {
     fn route_plan_builds_stones_start_game_and_rejects_bad_routes() {
         let artifact = example_artifact("examples/stones/app.ag", "stones-route-plan");
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let entry = builder.entry("Player", "start_game").expect("start_game entry exists");
+        let entry = entry_artifact(&artifact, "Player", "start_game");
         assert_eq!(
             entry.route_plan.leader_input.as_ref().map(|input| (input.actor.as_str(), input.cov_index)),
             Some(("Player", Some(0)))
@@ -578,7 +641,7 @@ mod tests {
             entry.witnesses.iter().map(|witness| witness.recipe_id.as_str()).collect::<Vec<_>>()
         );
 
-        let accept_start = builder.entry("Player", "accept_start").expect("accept_start entry exists");
+        let accept_start = entry_artifact(&artifact, "Player", "accept_start");
         assert_eq!(
             accept_start
                 .hidden_params
@@ -619,42 +682,39 @@ mod tests {
             .covenant_utxo("Player", initial_b.clone(), input_b_value, 0, false, Some(covenant_id))
             .expect("player B utxo builds");
         let entries = vec![player_a_utxo.clone(), player_b_utxo.clone()];
-        let outputs = vec![
-            builder.covenant_output("Player", next_a, input_a_value, 0, covenant_id).expect("player A output builds"),
-            builder.covenant_output("Player", next_b, input_b_value, 0, covenant_id).expect("player B output builds"),
-            builder.covenant_output("StonesGame", next_game, game_value, 0, covenant_id).expect("game output builds"),
-        ];
-        let unsigned_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(outpoint_a, Vec::new()), TxBuilder::transaction_input(outpoint_b, Vec::new())],
-            outputs.clone(),
-        );
-        let tx = signed_start_game_tx(
-            &builder,
-            unsigned_tx.clone(),
-            entries.clone(),
-            outpoint_a,
-            outpoint_b,
-            &initial_a,
-            &initial_b,
-            &owner_a,
-            &owner_b,
-            &owner_a_pk,
-            &owner_b_pk,
-        );
+        let context = TxContext::new()
+            .argent_input(
+                "Player",
+                initial_a.clone(),
+                EntryCall::new("start_game")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
+                outpoint_a,
+                player_a_utxo.clone(),
+            )
+            .argent_input(
+                "Player",
+                initial_b.clone(),
+                EntryCall::new("accept_start")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_b), owner_b_pk.clone()]),
+                outpoint_b,
+                player_b_utxo.clone(),
+            )
+            .argent_output("Player", next_a.clone(), CovenantBinding::new(0, covenant_id), input_a_value)
+            .argent_output("Player", next_b.clone(), CovenantBinding::new(0, covenant_id), input_b_value)
+            .argent_output("StonesGame", next_game.clone(), CovenantBinding::new(0, covenant_id), game_value);
+        let tx = builder.build(&context).expect("leader and delegate inputs pass");
 
-        execute_input_with_covenants(&tx, entries.clone(), 0).expect("leader input passes");
-        execute_input_with_covenants(&tx, entries.clone(), 1).expect("delegate input passes");
-
-        let player_template = &builder.contract("Player").expect("Player contract exists").compiled.template;
+        let player_contract = artifact.sil_abi.contract("Player").expect("Player contract exists");
+        let player_template = &player_contract.compiled.template;
         let wrong_delegate_sigscript = {
-            let delegate_sig = sign_input(&unsigned_tx, entries.clone(), 1, &owner_b);
+            let populated = MutableTransaction::with_entries(tx.clone(), entries.clone());
+            let delegate_sig = sign_mutable_input(&populated, 1, &owner_b);
             let prefix_len = decode_hex(&player_template.prefix_hex).expect("prefix hex decodes").len() as i64;
             let suffix_len = decode_hex(&player_template.suffix_hex).expect("suffix hex decodes").len() as i64;
-            let accept_entry =
-                builder.contract("Player").expect("Player contract exists").entry("accept_start").expect("accept_start exists");
+            let accept_entry = player_contract.entry("accept_start").expect("accept_start exists");
             let sigscript = encode_entry_sig_script(
                 &artifact.sil_abi,
-                builder.contract("Player").expect("Player contract exists"),
+                player_contract,
                 accept_entry,
                 &[
                     ArtifactValue::Bytes(delegate_sig),
@@ -665,61 +725,68 @@ mod tests {
             )
             .expect("bad delegate sigscript encodes");
             pay_to_script_hash_signature_script_with_flags(
-                builder.redeem_script("Player", initial_b.clone()).expect("delegate redeem script builds"),
+                p2sh_redeem_script(&tx.inputs[1].signature_script),
                 sigscript,
                 covenant_engine_flags(),
             )
             .expect("bad delegate p2sh sigscript builds")
         };
-        let wrong_length_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(outpoint_a, tx.inputs[0].signature_script.clone()),
-                TxBuilder::transaction_input(outpoint_b, wrong_delegate_sigscript),
-            ],
-            tx.outputs.clone(),
-        );
+        let mut wrong_length_tx = tx.clone();
+        wrong_length_tx.inputs[1].signature_script = wrong_delegate_sigscript;
         assert!(
             execute_input_with_covenants(&wrong_length_tx, entries.clone(), 1).is_err(),
             "delegate input must reject a wrong read-only template prefix length"
         );
 
-        let swapped_outputs = vec![outputs[1].clone(), outputs[0].clone(), outputs[2].clone()];
-        let swapped_unsigned_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(outpoint_a, Vec::new()), TxBuilder::transaction_input(outpoint_b, Vec::new())],
-            swapped_outputs,
-        );
-        let swapped_tx = signed_start_game_tx(
-            &builder,
-            swapped_unsigned_tx,
-            entries.clone(),
-            outpoint_a,
-            outpoint_b,
-            &initial_a,
-            &initial_b,
-            &owner_a,
-            &owner_b,
-            &owner_a_pk,
-            &owner_b_pk,
-        );
-        assert!(execute_input_with_covenants(&swapped_tx, entries.clone(), 0).is_err());
+        let swapped_outputs = TxContext::new()
+            .argent_input(
+                "Player",
+                initial_a.clone(),
+                EntryCall::new("start_game")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
+                outpoint_a,
+                player_a_utxo.clone(),
+            )
+            .argent_input(
+                "Player",
+                initial_b.clone(),
+                EntryCall::new("accept_start")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_b), owner_b_pk.clone()]),
+                outpoint_b,
+                player_b_utxo,
+            )
+            .argent_output("Player", next_b, CovenantBinding::new(0, covenant_id), input_b_value)
+            .argent_output("Player", next_a, CovenantBinding::new(0, covenant_id), input_a_value)
+            .argent_output("StonesGame", next_game.clone(), CovenantBinding::new(0, covenant_id), game_value);
+        assert!(builder.build(&swapped_outputs).is_err());
 
         let wrong_peer = builder
             .covenant_utxo("League", league_state(vec![0; 32], 7, 3), input_b_value, 0, false, Some(covenant_id))
             .expect("wrong-template peer utxo builds");
-        let wrong_entries = vec![player_a_utxo, wrong_peer];
-        let wrong_peer_unsigned_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(outpoint_a, Vec::new()), TxBuilder::transaction_input(outpoint_b, Vec::new())],
-            outputs,
-        );
-        let leader_sig = sign_input(&wrong_peer_unsigned_tx, wrong_entries.clone(), 0, &owner_a);
-        let leader_sigscript = builder
-            .p2sh_signature_script("Player", "start_game", initial_a, args![leader_sig, owner_a_pk, 0, 7, 3])
-            .expect("leader sigscript builds");
-        let wrong_peer_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(outpoint_a, leader_sigscript), TxBuilder::transaction_input(outpoint_b, Vec::new())],
-            wrong_peer_unsigned_tx.outputs,
-        );
-        assert!(execute_input_with_covenants(&wrong_peer_tx, wrong_entries, 0).is_err());
+        let wrong_peer = TxContext::new()
+            .argent_input(
+                "Player",
+                initial_a,
+                EntryCall::new("start_game")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
+                outpoint_a,
+                player_a_utxo,
+            )
+            .input(outpoint_b, wrong_peer, Vec::new())
+            .argent_output(
+                "Player",
+                player_state(owner_a_hash, player_a_id, 1, 0, 0, 0),
+                CovenantBinding::new(0, covenant_id),
+                input_a_value,
+            )
+            .argent_output(
+                "Player",
+                player_state(owner_b_hash, player_b_id, 1, 0, 0, 0),
+                CovenantBinding::new(0, covenant_id),
+                input_b_value,
+            )
+            .argent_output("StonesGame", next_game, CovenantBinding::new(0, covenant_id), game_value);
+        assert!(builder.build(&wrong_peer).is_err());
     }
 
     #[test]
@@ -735,18 +802,15 @@ mod tests {
         let player_utxo = builder
             .covenant_utxo("Player", player_initial.clone(), input_value, 0, false, Some(covenant_id))
             .expect("Player utxo builds");
-        let mux_output = builder.covenant_output("Mux", mux_initial.clone(), input_value, 0, covenant_id).expect("Mux output builds");
-        let enter_mux_sigscript = builder
-            .p2sh_signature_script("Player", "enter_mux", player_initial.clone(), args![])
-            .expect("enter_mux sigscript fills the family route table");
-        let enter_mux_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(player_outpoint, enter_mux_sigscript)], vec![mux_output.clone()]);
-        execute_input_with_covenants(&enter_mux_tx, vec![player_utxo.clone()], 0).expect("Player can enter the mux family");
+        let enter_mux = TxContext::new()
+            .argent_input("Player", player_initial.clone(), "enter_mux", player_outpoint, player_utxo.clone())
+            .argent_output("Mux", mux_initial.clone(), CovenantBinding::new(0, covenant_id), input_value);
+        let enter_mux_tx = builder.build(&enter_mux).expect("Player can enter the mux family");
 
-        let player_contract = builder.contract("Player").expect("Player contract exists");
+        let player_contract = artifact.sil_abi.contract("Player").expect("Player contract exists");
         let enter_mux = player_contract.entry("enter_mux").expect("enter_mux ABI exists");
-        let mux_template = &builder.contract("Mux").expect("Mux contract exists").compiled.template;
-        let mut wrong_routes = builder.route_family_table_bytes("route_family/BoardState/mux").expect("mux family route table builds");
+        let mux_template = &artifact.sil_abi.contract("Mux").expect("Mux contract exists").compiled.template;
+        let mut wrong_routes = route_family_table_bytes(&artifact, "route_family/BoardState/mux");
         wrong_routes[0] ^= 1;
         let bad_route_table_sigscript = encode_entry_sig_script(
             &artifact.sil_abi,
@@ -760,13 +824,13 @@ mod tests {
         )
         .expect("bad route table sigscript encodes");
         let bad_route_table_sigscript = pay_to_script_hash_signature_script_with_flags(
-            builder.redeem_script("Player", player_initial).expect("Player redeem script builds"),
+            p2sh_redeem_script(&enter_mux_tx.inputs[0].signature_script),
             bad_route_table_sigscript,
             covenant_engine_flags(),
         )
         .expect("bad route table p2sh sigscript builds");
-        let bad_route_table_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(player_outpoint, bad_route_table_sigscript)], vec![mux_output]);
+        let mut bad_route_table_tx = enter_mux_tx;
+        bad_route_table_tx.inputs[0].signature_script = bad_route_table_sigscript;
         assert!(
             execute_input_with_covenants(&bad_route_table_tx, vec![player_utxo], 0).is_err(),
             "Player must reject a route-family table that does not match the stored digest"
@@ -776,28 +840,12 @@ mod tests {
         let mux_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x63; 32]), index: 0 };
         let mux_utxo =
             builder.covenant_utxo("Mux", mux_initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
-        let pawn_output = builder.covenant_output("Pawn", pawn_next.clone(), input_value, 0, covenant_id).expect("Pawn output builds");
-        let choose_pawn_sigscript = builder
-            .p2sh_signature_script("Mux", "choose_pawn", mux_initial.clone(), args![])
-            .expect("choose_pawn sigscript fills Pawn template lens");
-        let choose_pawn_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript.clone())], vec![pawn_output]);
-        execute_input_with_covenants(&choose_pawn_tx, vec![mux_utxo.clone()], 0).expect("Mux can route to Pawn by table slice");
+        let choose_pawn = TxContext::new()
+            .argent_input("Mux", mux_initial.clone(), "choose_pawn", mux_outpoint, mux_utxo.clone())
+            .argent_output("Pawn", pawn_next.clone(), CovenantBinding::new(0, covenant_id), input_value);
+        builder.build(&choose_pawn).expect("Mux can route to Pawn by table slice");
 
         let dynamic_pawn_next = board_state(7, 1);
-        let dynamic_pawn_output = builder
-            .covenant_output("Pawn", dynamic_pawn_next.clone(), input_value, 0, covenant_id)
-            .expect("dynamic Pawn output builds");
-        let dynamic_pawn_sigscript = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Pawn")])
-            .expect("selector sigscript fills Pawn template lens");
-        let dynamic_pawn_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, dynamic_pawn_sigscript.clone())],
-            vec![dynamic_pawn_output],
-        );
-        execute_input_with_covenants(&dynamic_pawn_tx, vec![mux_utxo.clone()], 0)
-            .expect("Mux can route through an actor enum selector");
-
         let context = TxContext::new()
             .argent_input(
                 "Mux",
@@ -809,31 +857,37 @@ mod tests {
             .argent_output("Pawn", dynamic_pawn_next.clone(), CovenantBinding::new(0, covenant_id), input_value);
         let context_tx = builder.build(&context).expect("context builder resolves the dynamic route witnesses");
         assert!(context_tx.inputs[0].compute_commit.compute_budget().is_some());
-        assert_eq!(context_tx.inputs[0].signature_script, dynamic_pawn_sigscript);
 
-        let dynamic_knight_output =
-            builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("dynamic Knight output builds");
-        let dynamic_knight_sigscript = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Knight")])
-            .expect("selector sigscript fills Knight template lens");
-        let dynamic_knight_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, dynamic_knight_sigscript)],
-            vec![dynamic_knight_output],
-        );
-        execute_input_with_covenants(&dynamic_knight_tx, vec![mux_utxo.clone()], 0)
-            .expect("Mux selector can choose the second table entry");
+        let dynamic_knight = TxContext::new()
+            .argent_input(
+                "Mux",
+                mux_initial.clone(),
+                EntryCall::new("choose").args(args![actor("Knight")]),
+                mux_outpoint,
+                mux_utxo.clone(),
+            )
+            .argent_output("Knight", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        builder.build(&dynamic_knight).expect("Mux selector can choose the second table entry");
 
-        let missing_selector = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![0])
-            .expect_err("selector entries require an explicit template choice");
+        let missing_selector = TxContext::new()
+            .argent_input("Mux", mux_initial.clone(), EntryCall::new("choose").args(args![0]), mux_outpoint, mux_utxo.clone())
+            .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        let missing_selector = builder.build(&missing_selector).expect_err("selector entries require an explicit template choice");
         assert!(
             matches!(missing_selector, BuilderError::MissingTemplateSelectorChoice { ref selector } if selector == "target"),
             "unexpected error: {missing_selector}"
         );
 
-        let invalid_selector = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("League")])
-            .expect_err("selector must choose one of the actor enum variants");
+        let invalid_selector = TxContext::new()
+            .argent_input(
+                "Mux",
+                mux_initial.clone(),
+                EntryCall::new("choose").args(args![actor("League")]),
+                mux_outpoint,
+                mux_utxo.clone(),
+            )
+            .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        let invalid_selector = builder.build(&invalid_selector).expect_err("selector must choose one of the actor enum variants");
         assert!(
             matches!(
                 invalid_selector,
@@ -843,55 +897,34 @@ mod tests {
             "unexpected error: {invalid_selector}"
         );
 
-        let wrong_selector_witness = builder
-            .p2sh_signature_script("Mux", "choose", mux_initial.clone(), args![actor("Knight")])
-            .expect("selector sigscript can encode mismatched witness material");
-        let wrong_selector_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, wrong_selector_witness)],
-            vec![
-                builder
-                    .covenant_output("Pawn", dynamic_pawn_next, input_value, 0, covenant_id)
-                    .expect("dynamic wrong-witness Pawn output builds"),
-            ],
-        );
-        assert!(
-            execute_input_with_covenants(&wrong_selector_tx, vec![mux_utxo.clone()], 0).is_err(),
-            "selector witness must match the actor selected by table index"
-        );
+        let wrong_selector = TxContext::new()
+            .argent_input(
+                "Mux",
+                mux_initial.clone(),
+                EntryCall::new("choose").args(args![actor("Knight")]),
+                mux_outpoint,
+                mux_utxo.clone(),
+            )
+            .argent_output("Pawn", dynamic_pawn_next, CovenantBinding::new(0, covenant_id), input_value);
+        assert!(builder.build(&wrong_selector).is_err(), "selector witness must match the actor selected by table index");
 
-        let const_knight_sigscript = builder
-            .p2sh_signature_script("Mux", "choose_knight_const", mux_initial.clone(), args![])
-            .expect("fixed actor enum selector fills Knight template lens");
-        let const_knight_tx = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, const_knight_sigscript.clone())],
-            vec![
-                builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("const Knight output builds"),
-            ],
-        );
-        execute_input_with_covenants(&const_knight_tx, vec![mux_utxo.clone()], 0)
-            .expect("fixed actor enum selector can route to Knight without caller selector metadata");
+        let const_knight = TxContext::new()
+            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone())
+            .argent_output("Knight", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        builder.build(&const_knight).expect("fixed actor enum selector can route to Knight without caller selector metadata");
 
-        let const_wrong_output = TxBuilder::transaction(
-            vec![TxBuilder::transaction_input(mux_outpoint, const_knight_sigscript)],
-            vec![
-                builder
-                    .covenant_output("Pawn", board_state(7, 1), input_value, 0, covenant_id)
-                    .expect("const wrong Pawn output builds"),
-            ],
-        );
-        assert!(
-            execute_input_with_covenants(&const_wrong_output, vec![mux_utxo.clone()], 0).is_err(),
-            "fixed actor enum selector must reject a non-Knight output"
-        );
+        let const_wrong_output = TxContext::new()
+            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone())
+            .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
+        assert!(builder.build(&const_wrong_output).is_err(), "fixed actor enum selector must reject a non-Knight output");
 
-        let wrong_worker_output =
-            builder.covenant_output("Knight", pawn_next, input_value, 0, covenant_id).expect("wrong worker output builds");
-        let wrong_worker_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(mux_outpoint, choose_pawn_sigscript)], vec![wrong_worker_output]);
-        assert!(
-            execute_input_with_covenants(&wrong_worker_tx, vec![mux_utxo], 0).is_err(),
-            "choose_pawn must reject an output using the wrong worker template"
+        let wrong_worker = TxContext::new().argent_input("Mux", mux_initial, "choose_pawn", mux_outpoint, mux_utxo).argent_output(
+            "Knight",
+            pawn_next,
+            CovenantBinding::new(0, covenant_id),
+            input_value,
         );
+        assert!(builder.build(&wrong_worker).is_err(), "choose_pawn must reject an output using the wrong worker template");
     }
 
     #[test]
@@ -1009,7 +1042,7 @@ mod tests {
             "#,
         );
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let foo_bump = builder.entry("Foo", "bump").expect("bump entry exists");
+        let foo_bump = entry_artifact(&artifact, "Foo", "bump");
         assert!(foo_bump.hidden_params.is_empty(), "same-template route should not need hidden template witnesses");
 
         let initial = count_state(4);
@@ -1020,27 +1053,22 @@ mod tests {
 
         let input_utxo =
             builder.covenant_utxo("Foo", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("foo utxo builds");
-        let output = builder.covenant_output("Foo", next.clone(), input_value, 0, covenant_id).expect("foo output builds");
-        let sigscript = builder.p2sh_signature_script("Foo", "bump", initial.clone(), args![5]).expect("bump sigscript builds");
-        let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript.clone())], vec![output]);
+        let context = TxContext::new()
+            .argent_input("Foo", initial.clone(), EntryCall::new("bump").args(args![5]), outpoint, input_utxo.clone())
+            .argent_output("Foo", next.clone(), CovenantBinding::new(0, covenant_id), input_value);
+        builder.build(&context).expect("same-template transition passes");
 
-        execute_input_with_covenants(&tx, vec![input_utxo.clone()], 0).expect("same-template transition passes");
-
-        let wrong_template_output =
-            builder.covenant_output("Bar", next, input_value, 0, covenant_id).expect("bar output builds with same source state");
-        let wrong_template_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript)], vec![wrong_template_output]);
-        assert!(
-            execute_input_with_covenants(&wrong_template_tx, vec![input_utxo], 0).is_err(),
-            "same-template validation must reject a different actor template"
-        );
+        let wrong_template = TxContext::new()
+            .argent_input("Foo", initial, EntryCall::new("bump").args(args![5]), outpoint, input_utxo)
+            .argent_output("Bar", next, CovenantBinding::new(0, covenant_id), input_value);
+        assert!(builder.build(&wrong_template).is_err(), "same-template validation must reject a different actor template");
     }
 
     #[test]
     fn exact_continuation_shortcut_redeems_register_player_and_rejects_changed_state() {
         let artifact = example_artifact("examples/stones/app.ag", "stones-exact-continuation");
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let register_player = builder.entry("League", "register_player").expect("register_player entry exists");
+        let register_player = entry_artifact(&artifact, "League", "register_player");
         assert_eq!(
             register_player.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
             ["gen__player_prefix", "gen__player_suffix"],
@@ -1061,31 +1089,34 @@ mod tests {
         let league_utxo = builder
             .covenant_utxo("League", league_initial.clone(), input_value, 0, false, Some(covenant_id))
             .expect("league utxo builds");
-        let entries = vec![league_utxo.clone()];
-        let outputs = vec![
-            builder.covenant_output("League", league_initial.clone(), input_value, 0, covenant_id).expect("league output builds"),
-            builder.covenant_output("Player", player_next.clone(), player_value, 0, covenant_id).expect("player output builds"),
-        ];
-        let unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], outputs.clone());
-        let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
-        let sigscript = builder
-            .p2sh_signature_script("League", "register_player", league_initial.clone(), args![signature.clone(), owner_pk.clone()])
-            .expect("register sigscript builds");
-        let tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, sigscript)], outputs.clone());
+        let context = TxContext::new()
+            .argent_input(
+                "League",
+                league_initial.clone(),
+                EntryCall::new("register_player")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                outpoint,
+                league_utxo.clone(),
+            )
+            .argent_output("League", league_initial.clone(), CovenantBinding::new(0, covenant_id), input_value)
+            .argent_output("Player", player_next.clone(), CovenantBinding::new(0, covenant_id), player_value);
+        let tx = builder.build(&context).expect("exact continuation register_player passes");
 
-        execute_input_with_covenants(&tx, entries.clone(), 0).expect("exact continuation register_player passes");
-
-        let player_template = &builder.contract("Player").expect("Player contract exists").compiled.template;
-        let register_entry =
-            builder.contract("League").expect("League contract exists").entry("register_player").expect("register_player exists");
+        let player_template = &artifact.sil_abi.contract("Player").expect("Player contract exists").compiled.template;
+        let league_contract = artifact.sil_abi.contract("League").expect("League contract exists");
+        let register_entry = league_contract.entry("register_player").expect("register_player exists");
         let mut bad_prefix = decode_hex(&player_template.prefix_hex).expect("player prefix decodes");
         bad_prefix.push(0);
         let bad_prefix_sigscript = encode_entry_sig_script(
             &artifact.sil_abi,
-            builder.contract("League").expect("League contract exists"),
+            league_contract,
             register_entry,
             &[
-                ArtifactValue::Bytes(signature),
+                ArtifactValue::Bytes(sign_mutable_input(
+                    &MutableTransaction::with_entries(tx.clone(), vec![league_utxo.clone()]),
+                    0,
+                    &owner,
+                )),
                 ArtifactValue::Bytes(owner_pk.clone()),
                 ArtifactValue::Bytes(bad_prefix),
                 ArtifactValue::Bytes(decode_hex(&player_template.suffix_hex).expect("player suffix decodes")),
@@ -1093,30 +1124,31 @@ mod tests {
         )
         .expect("bad prefix sigscript encodes");
         let bad_prefix_sigscript = pay_to_script_hash_signature_script_with_flags(
-            builder.redeem_script("League", league_initial.clone()).expect("league redeem script builds"),
+            p2sh_redeem_script(&tx.inputs[0].signature_script),
             bad_prefix_sigscript,
             covenant_engine_flags(),
         )
         .expect("bad prefix p2sh sigscript builds");
-        let bad_prefix_tx =
-            TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, bad_prefix_sigscript)], outputs.clone());
+        let mut bad_prefix_tx = tx;
+        bad_prefix_tx.inputs[0].signature_script = bad_prefix_sigscript;
         assert!(
-            execute_input_with_covenants(&bad_prefix_tx, entries.clone(), 0).is_err(),
+            execute_input_with_covenants(&bad_prefix_tx, vec![league_utxo.clone()], 0).is_err(),
             "register_player must reject a corrupted Player template prefix"
         );
 
         let changed_league_state = league_state(vec![0x56; 32], 7, 3);
-        let bad_outputs = vec![
-            builder.covenant_output("League", changed_league_state, input_value, 0, covenant_id).expect("league output builds"),
-            builder.covenant_output("Player", player_next, player_value, 0, covenant_id).expect("player output builds"),
-        ];
-        let bad_unsigned_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, Vec::new())], bad_outputs.clone());
-        let bad_signature = sign_input(&bad_unsigned_tx, entries.clone(), 0, &owner);
-        let bad_sigscript = builder
-            .p2sh_signature_script("League", "register_player", league_initial, args![bad_signature, owner_pk])
-            .expect("bad register sigscript builds");
-        let bad_tx = TxBuilder::transaction(vec![TxBuilder::transaction_input(outpoint, bad_sigscript)], bad_outputs);
-        assert!(execute_input_with_covenants(&bad_tx, entries, 0).is_err(), "exact continuation must reject a changed League state");
+        let changed_continuation = TxContext::new()
+            .argent_input(
+                "League",
+                league_initial,
+                EntryCall::new("register_player")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                outpoint,
+                league_utxo,
+            )
+            .argent_output("League", changed_league_state, CovenantBinding::new(0, covenant_id), input_value)
+            .argent_output("Player", player_next, CovenantBinding::new(0, covenant_id), player_value);
+        assert!(builder.build(&changed_continuation).is_err(), "exact continuation must reject a changed League state");
     }
 
     #[test]
@@ -1148,85 +1180,51 @@ mod tests {
 
         let mut explicit_observed_template_state = minter_initial.clone();
         explicit_observed_template_state.insert("gen__asset_kcc20_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
-        let hidden_field_err = builder
-            .covenant_output("Minter", explicit_observed_template_state, minter_value, 0, controller_covenant_id)
-            .expect_err("observed template fields must be filled by the runtime");
+        let explicit_hidden_state = TxContext::new().argent_output(
+            "Minter",
+            explicit_observed_template_state,
+            CovenantBinding::new(0, controller_covenant_id),
+            minter_value,
+        );
+        let hidden_field_err =
+            builder.build(&explicit_hidden_state).expect_err("observed template fields must be filled by the runtime");
         assert!(
             matches!(hidden_field_err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__asset_kcc20_template"),
             "unexpected error: {hidden_field_err}"
         );
 
-        let observed = observed_asset_context(
-            "MinterProxy",
-            proxy_state.clone(),
-            builder
-                .covenant_utxo("kcc20_asset::MinterProxy", proxy_state.clone(), proxy_value, 0, false, Some(asset_covenant_id))
-                .expect("proxy utxo builds"),
-            "KCC20",
-            recipient_state.clone(),
-        );
-        let outputs = icc_mint_outputs(
-            &builder,
-            minter_next.clone(),
-            &observed,
-            minter_value,
-            proxy_value,
-            recipient_value,
-            controller_covenant_id,
-            asset_covenant_id,
-        );
         let minter_utxo = builder
             .covenant_utxo("Minter", minter_initial.clone(), minter_value, 0, false, Some(controller_covenant_id))
             .expect("minter utxo builds");
-        let proxy_utxo = observed.get("asset").unwrap().inputs.get("proxy").unwrap().utxo.clone();
+        let proxy_utxo = builder
+            .covenant_utxo("kcc20_asset::MinterProxy", proxy_state.clone(), proxy_value, 0, false, Some(asset_covenant_id))
+            .expect("proxy utxo builds");
         let entries = vec![minter_utxo.clone(), proxy_utxo.clone()];
-        let proxy_sigscript = builder
-            .p2sh_signature_script_in_app(
-                "kcc20_asset",
-                "MinterProxy",
-                "mint",
+        let context = TxContext::new()
+            .argent_input(
+                "Minter",
+                minter_initial.clone(),
+                EntryCall::new("mint").args_with(|tx, input_idx| {
+                    args![sign_mutable_input(tx, input_idx, &owner), recipient_owner.clone(), minted_amount]
+                }),
+                minter_outpoint,
+                minter_utxo.clone(),
+            )
+            .argent_input(
+                "kcc20_asset::MinterProxy",
                 proxy_state.clone(),
-                args![proxy_state.clone(), recipient_state.clone()],
+                EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
+                proxy_outpoint,
+                proxy_utxo.clone(),
             )
-            .expect("proxy mint sigscript builds");
-        let unsigned_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            outputs.clone(),
-        );
-        let signature = sign_input(&unsigned_tx, entries.clone(), 0, &owner);
-        let inferred_sigscript = builder
-            .p2sh_signature_script(
-                "Minter",
-                "mint",
-                minter_initial.clone(),
-                args![signature.clone(), recipient_owner.clone(), minted_amount],
-            )
-            .expect("closed observed template witnesses are inferred from the attached app");
-        let sigscript = builder
-            .p2sh_signature_script_with_observed_covenants(
-                "Minter",
-                "mint",
-                minter_initial.clone(),
-                args![signature, recipient_owner.clone(), minted_amount],
-                &observed,
-            )
-            .expect("observed mint sigscript builds");
-        assert_eq!(inferred_sigscript, sigscript);
-        let tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, sigscript),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            outputs,
-        );
-        execute_input_with_covenants(&tx, entries.clone(), 0).expect("observed ICC mint passes");
+            .argent_output("Minter", minter_next.clone(), CovenantBinding::new(0, controller_covenant_id), minter_value)
+            .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
+            .argent_output("kcc20_asset::KCC20", recipient_state.clone(), CovenantBinding::new(1, asset_covenant_id), recipient_value);
+        let tx = builder.build(&context).expect("observed ICC mint passes");
 
-        let minter_contract = builder.contract("Minter").expect("Minter contract exists");
+        let minter_contract = controller_artifact.sil_abi.contract("Minter").expect("Minter contract exists");
         let minter_entry = minter_contract.entry("mint").expect("mint entry exists");
-        let proxy_template = &builder.contract_in_app("kcc20_asset", "MinterProxy").unwrap().compiled.template;
+        let proxy_template = &asset_artifact.sil_abi.contract("MinterProxy").expect("MinterProxy contract exists").compiled.template;
         let proxy_prefix_len = decode_hex(&proxy_template.prefix_hex).expect("proxy prefix decodes").len() as i64;
         let bad_proxy_suffix_len = decode_hex(&proxy_template.suffix_hex).expect("proxy suffix decodes").len() as i64 + 1;
         let corrupt_hidden_sigscript = encode_entry_sig_script(
@@ -1234,151 +1232,116 @@ mod tests {
             minter_contract,
             minter_entry,
             &[
-                ArtifactValue::Bytes(sign_input(&unsigned_tx, entries.clone(), 0, &owner)),
+                ArtifactValue::Bytes(sign_mutable_input(&MutableTransaction::with_entries(tx.clone(), entries.clone()), 0, &owner)),
                 ArtifactValue::Bytes(recipient_owner.clone()),
                 ArtifactValue::Int(minted_amount),
                 ArtifactValue::Int(proxy_prefix_len),
                 ArtifactValue::Int(bad_proxy_suffix_len),
                 ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("kcc20_asset", "KCC20").unwrap().compiled.template.prefix_hex)
+                    decode_hex(&asset_artifact.sil_abi.contract("KCC20").expect("KCC20 contract exists").compiled.template.prefix_hex)
                         .expect("KCC20 prefix decodes"),
                 ),
                 ArtifactValue::Bytes(
-                    decode_hex(&builder.contract_in_app("kcc20_asset", "KCC20").unwrap().compiled.template.suffix_hex)
+                    decode_hex(&asset_artifact.sil_abi.contract("KCC20").expect("KCC20 contract exists").compiled.template.suffix_hex)
                         .expect("KCC20 suffix decodes"),
                 ),
             ],
         )
         .expect("manual corrupt observed sigscript encodes");
         let corrupt_hidden_sigscript = pay_to_script_hash_signature_script_with_flags(
-            builder.redeem_script("Minter", minter_initial.clone()).expect("Minter redeem script builds"),
+            p2sh_redeem_script(&tx.inputs[0].signature_script),
             corrupt_hidden_sigscript,
             covenant_engine_flags(),
         )
         .expect("corrupt P2SH sigscript builds");
-        let corrupt_hidden_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, corrupt_hidden_sigscript),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            tx.outputs.clone(),
-        );
+        let mut corrupt_hidden_tx = tx;
+        corrupt_hidden_tx.inputs[0].signature_script = corrupt_hidden_sigscript;
         assert!(execute_input_with_covenants(&corrupt_hidden_tx, entries.clone(), 0).is_err());
 
-        let missing_proxy = BTreeMap::from([(
-            "asset".to_string(),
-            ObservedCovenantContext {
-                app: "kcc20_asset".to_string(),
-                inputs: BTreeMap::new(),
-                outputs: observed.get("asset").unwrap().outputs.clone(),
-            },
-        )]);
-        let missing_proxy_err = builder
-            .p2sh_signature_script_with_observed_covenants(
+        let missing_proxy = TxContext::new()
+            .argent_input(
                 "Minter",
-                "mint",
                 minter_initial.clone(),
-                args![sign_input(&unsigned_tx, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
-                &missing_proxy,
+                EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
+                minter_outpoint,
+                minter_utxo.clone(),
             )
-            .expect_err("missing observed input is rejected by the runtime");
-        assert!(matches!(missing_proxy_err, BuilderError::MissingObservedActor { side: "input", handle, .. } if handle == "proxy"));
+            .argent_output("Minter", minter_next.clone(), CovenantBinding::new(0, controller_covenant_id), minter_value)
+            .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
+            .argent_output("kcc20_asset::KCC20", recipient_state.clone(), CovenantBinding::new(1, asset_covenant_id), recipient_value);
+        let missing_proxy_err = builder.build(&missing_proxy).expect_err("missing observed input is rejected by the runtime");
+        assert!(matches!(missing_proxy_err, BuilderError::ObservedCountMismatch { side: "input", expected: 1, found: 0, .. }));
 
         let wrong_proxy_state = minter_proxy_state(Hash::from_bytes([0xd0; 32]));
-        let wrong_observed =
-            observed_asset_context("MinterProxy", wrong_proxy_state, proxy_utxo.clone(), "KCC20", recipient_state.clone());
-        let wrong_proxy_err = builder
-            .p2sh_signature_script_with_observed_covenants(
+        let wrong_proxy = TxContext::new()
+            .argent_input(
                 "Minter",
-                "mint",
                 minter_initial.clone(),
-                args![sign_input(&unsigned_tx, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
-                &wrong_observed,
+                EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
+                minter_outpoint,
+                minter_utxo.clone(),
             )
-            .expect_err("observed input state must match its UTXO script");
-        assert!(matches!(wrong_proxy_err, BuilderError::ObservedUtxoScriptMismatch { handle, .. } if handle == "proxy"));
-
-        let wrong_recipient_outputs = icc_mint_outputs(
-            &builder,
-            minter_next.clone(),
-            &observed_asset_context(
-                "MinterProxy",
-                proxy_state.clone(),
+            .argent_input(
+                "kcc20_asset::MinterProxy",
+                wrong_proxy_state,
+                EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
+                proxy_outpoint,
                 proxy_utxo.clone(),
-                "KCC20",
-                kcc20_state(recipient_owner.clone(), minted_amount + 1),
-            ),
-            minter_value,
-            proxy_value,
-            recipient_value,
-            controller_covenant_id,
-            asset_covenant_id,
-        );
-        let wrong_recipient_unsigned = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            wrong_recipient_outputs.clone(),
-        );
-        let wrong_recipient_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants(
+            );
+        let wrong_proxy_err = builder.build(&wrong_proxy).expect_err("observed input state must match its UTXO script");
+        assert!(matches!(wrong_proxy_err, BuilderError::ArgentInputScriptMismatch { input_index: 1, .. }));
+
+        let wrong_recipient = TxContext::new()
+            .argent_input(
                 "Minter",
-                "mint",
                 minter_initial.clone(),
-                args![sign_input(&wrong_recipient_unsigned, entries.clone(), 0, &owner), recipient_owner.clone(), minted_amount],
-                &observed,
+                EntryCall::new("mint").args_with(|tx, input_idx| {
+                    args![sign_mutable_input(tx, input_idx, &owner), recipient_owner.clone(), minted_amount]
+                }),
+                minter_outpoint,
+                minter_utxo.clone(),
             )
-            .expect("wrong-recipient sigscript still builds");
-        let wrong_recipient_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, wrong_recipient_sigscript),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            wrong_recipient_outputs,
-        );
-        assert!(execute_input_with_covenants(&wrong_recipient_tx, entries.clone(), 0).is_err());
+            .argent_input(
+                "kcc20_asset::MinterProxy",
+                proxy_state.clone(),
+                EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
+                proxy_outpoint,
+                proxy_utxo.clone(),
+            )
+            .argent_output("Minter", minter_next, CovenantBinding::new(0, controller_covenant_id), minter_value)
+            .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
+            .argent_output(
+                "kcc20_asset::KCC20",
+                kcc20_state(recipient_owner.clone(), minted_amount + 1),
+                CovenantBinding::new(1, asset_covenant_id),
+                recipient_value,
+            );
+        assert!(builder.build(&wrong_recipient).is_err());
 
         let wrong_asset_minter_initial = minter_state(owner_pk.clone(), wrong_asset_covenant_id, 100, true);
         let wrong_asset_minter_next = minter_state(owner_pk, wrong_asset_covenant_id, 83, true);
-        let wrong_asset_outputs = icc_mint_outputs(
-            &builder,
-            wrong_asset_minter_next,
-            &observed,
-            minter_value,
-            proxy_value,
-            recipient_value,
-            controller_covenant_id,
-            asset_covenant_id,
-        );
         let wrong_asset_minter_utxo = builder
             .covenant_utxo("Minter", wrong_asset_minter_initial.clone(), minter_value, 0, false, Some(controller_covenant_id))
             .expect("wrong-asset minter utxo builds");
-        let wrong_asset_entries = vec![wrong_asset_minter_utxo, proxy_utxo];
-        let wrong_asset_unsigned = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, Vec::new()),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript.clone()),
-            ],
-            wrong_asset_outputs.clone(),
-        );
-        let wrong_asset_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants(
+        let wrong_asset = TxContext::new()
+            .argent_input(
                 "Minter",
-                "mint",
                 wrong_asset_minter_initial,
-                args![sign_input(&wrong_asset_unsigned, wrong_asset_entries.clone(), 0, &owner), recipient_owner, minted_amount],
-                &observed,
+                EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
+                minter_outpoint,
+                wrong_asset_minter_utxo,
             )
-            .expect("wrong-asset sigscript still builds");
-        let wrong_asset_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(minter_outpoint, wrong_asset_sigscript),
-                TxBuilder::transaction_input(proxy_outpoint, proxy_sigscript),
-            ],
-            wrong_asset_outputs,
-        );
-        assert!(execute_input_with_covenants(&wrong_asset_tx, wrong_asset_entries, 0).is_err());
+            .argent_input(
+                "kcc20_asset::MinterProxy",
+                proxy_state.clone(),
+                EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
+                proxy_outpoint,
+                proxy_utxo,
+            )
+            .argent_output("Minter", wrong_asset_minter_next, CovenantBinding::new(0, controller_covenant_id), minter_value)
+            .argent_output("kcc20_asset::MinterProxy", proxy_state, CovenantBinding::new(1, asset_covenant_id), proxy_value)
+            .argent_output("kcc20_asset::KCC20", recipient_state, CovenantBinding::new(1, asset_covenant_id), recipient_value);
+        assert!(builder.build(&wrong_asset).is_err());
     }
 
     #[test]
@@ -1395,12 +1358,6 @@ mod tests {
         TxBuilder::from_bundle(&bundle).expect("builder accepts valid bundle");
         ArtifactBundle::named("kcc20_mint_controller", &controller_artifact)
             .expect("bundle accepts an explicitly named primary artifact");
-        TxBuilder::new(&controller_artifact)
-            .expect("builder accepts controller artifact")
-            .with_observed_artifact(&asset_artifact)
-            .expect("observed artifact attaches under its app alias")
-            .contract_in_app("kcc20_asset", "MinterProxy")
-            .expect("app alias exposes the observed asset app");
 
         let wrong_alias_err = ArtifactBundle::new(&controller_artifact)
             .expect("controller artifact remains valid")
@@ -1443,14 +1400,14 @@ mod tests {
             .with_app("kcc20_asset", &bad_interface_asset)
             .expect("interface mismatch is checked when the app is used");
         let bad_interface_builder = TxBuilder::from_bundle(&bad_interface_bundle).expect("builder accepts bundle shape");
+        let bad_interface_context = TxContext::new().argent_output(
+            "Minter",
+            minter_state(vec![0x22; 32], Hash::from_bytes([0xa5; 32]), 1, true),
+            CovenantBinding::new(0, Hash::from_bytes([0xc0; 32])),
+            1_000,
+        );
         let mismatch_err = bad_interface_builder
-            .covenant_output(
-                "Minter",
-                minter_state(vec![0x22; 32], Hash::from_bytes([0xa5; 32]), 1, true),
-                1_000,
-                0,
-                Hash::from_bytes([0xc0; 32]),
-            )
+            .build(&bad_interface_context)
             .expect_err("interface fingerprint mismatch is rejected when filling observed template fields");
         assert!(
             matches!(&mismatch_err, BuilderError::InterfaceMismatch { app, actor, .. } if app == "kcc20_asset" && actor == "MinterProxy"),
@@ -1505,37 +1462,15 @@ mod tests {
         let agent_initial = open_agent_state(controller_covenant_id, caps_digest.clone(), 5);
         let agent_next = open_agent_state(controller_covenant_id, caps_digest, 4);
 
-        let missing_context_err = builder
-            .p2sh_signature_script("Cell", "advance", cell_initial.clone(), args![])
-            .expect_err("open observed actors still require explicit context");
-        assert!(
-            matches!(&missing_context_err, BuilderError::MissingObservedCovenant { observe } if observe == "remote"),
-            "unexpected error: {missing_context_err}"
-        );
-
         let agent_utxo = builder
             .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("agent utxo builds");
-        let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
-        let fluent_cell_utxo = builder
+        let cell_utxo = builder
             .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
-            .expect("fluent cell UTXO builds");
-        let fluent = builder
-            .transition("Cell", "advance")
-            .input(cell_outpoint, fluent_cell_utxo.clone(), cell_initial.clone())
-            .observe("remote", observed.get("remote").expect("remote context exists").clone())
-            .output("cell", cell_next.clone(), cell_value)
-            .co_spend_observed("remote", "agent", "step", agent_outpoint, args![agent_next.clone()], agent_value)
-            .build()
-            .expect("open ICC transition builds from explicit observed context");
-        assert_eq!(fluent.transaction.inputs.len(), 2);
-        assert_eq!(fluent.transaction.outputs.len(), 2);
-        assert_eq!(fluent.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
-        assert_eq!(fluent.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
-        assert!(fluent.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+            .expect("cell UTXO builds");
 
         let context = TxContext::new()
-            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, fluent_cell_utxo)
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo.clone())
             .argent_input(
                 "open_agent::Agent",
                 agent_initial.clone(),
@@ -1545,42 +1480,23 @@ mod tests {
             )
             .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Agent", agent_next.clone(), CovenantBinding::new(1, agent_covenant_id), agent_value);
-        let context_tx = builder.build(&context).expect("context resolves the open observed actor");
-        assert_eq!(context_tx.inputs[0].signature_script, fluent.transaction.inputs[0].signature_script);
-        assert_eq!(context_tx.inputs[1].signature_script, fluent.transaction.inputs[1].signature_script);
+        let transaction = builder.build(&context).expect("context resolves and executes the open observed actor");
+        assert_eq!(transaction.inputs.len(), 2);
+        assert_eq!(transaction.outputs.len(), 2);
+        assert_eq!(transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
+        assert_eq!(transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
+        assert!(transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
 
-        let mut observed_keyed_by_app = BTreeMap::new();
-        observed_keyed_by_app
-            .insert("open_agent".to_string(), observed.get("remote").expect("remote observed context exists").clone());
-        let wrong_observe_key_err = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed_keyed_by_app)
-            .expect_err("observed context map is keyed by observe name, not app alias");
+        let missing_observed = TxContext::new()
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo)
+            .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value);
+        let missing_observed_err = builder.build(&missing_observed).expect_err("the declared observed input/output pair is required");
         assert!(
-            matches!(
-                &wrong_observe_key_err,
-                BuilderError::UnknownObserve { actor, entry, observe }
-                    if actor == "Cell" && entry == "advance" && observe == "open_agent"
-            ),
-            "unexpected error: {wrong_observe_key_err}"
+            matches!(&missing_observed_err, BuilderError::ObservedCountMismatch { observe, side, expected: 1, found: 0 }
+                if observe == "remote" && *side == "input"),
+            "unexpected error: {missing_observed_err}"
         );
-        let wrong_app_context = ObservedCovenantContext::from_app("remote")
-            .input("agent", "Agent", agent_utxo.clone(), agent_initial.clone())
-            .output("agent", "Agent", agent_next.clone());
-        let wrong_app_alias_err = builder
-            .observed_outputs(
-                "Cell",
-                "advance",
-                "remote",
-                &wrong_app_context,
-                BTreeMap::from([("agent".to_string(), agent_value)]),
-                1,
-                agent_covenant_id,
-            )
-            .expect_err("observed context app is the attached artifact alias, not the observe name");
-        assert!(
-            matches!(&wrong_app_alias_err, BuilderError::UnknownAppAlias(alias) if alias == "remote"),
-            "unexpected error: {wrong_app_alias_err}"
-        );
+
         let mut bad_layout_agent_artifact = agent_artifact.clone();
         let bad_energy_field = bad_layout_agent_artifact
             .argent
@@ -1596,9 +1512,25 @@ mod tests {
             .with_app("open_agent", &bad_layout_agent_artifact)
             .expect("layout mismatch is checked when open observed actor is used");
         let bad_layout_builder = TxBuilder::from_bundle(&bad_layout_bundle).expect("builder accepts bundle shape");
-        let bad_layout_err = bad_layout_builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
-            .expect_err("open observed actor state layout mismatch is rejected");
+        let bad_layout_cell_utxo = bad_layout_builder
+            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("bad-layout bundle still builds the Cell UTXO");
+        let bad_layout_agent_utxo = bad_layout_builder
+            .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("bad-layout bundle still builds the Agent UTXO");
+        let bad_layout_context = TxContext::new()
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, bad_layout_cell_utxo)
+            .argent_input(
+                "open_agent::Agent",
+                agent_initial.clone(),
+                EntryCall::new("step").args(args![agent_next.clone()]),
+                agent_outpoint,
+                bad_layout_agent_utxo,
+            )
+            .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value)
+            .argent_output("open_agent::Agent", agent_next.clone(), CovenantBinding::new(1, agent_covenant_id), agent_value);
+        let bad_layout_err =
+            bad_layout_builder.build(&bad_layout_context).expect_err("open observed actor state layout mismatch is rejected");
         assert!(
             matches!(
                 &bad_layout_err,
@@ -1618,32 +1550,31 @@ mod tests {
             .actor_type_handle("open_agent::Forager", "AgentCapsule")
             .expect("Forager exposes its AgentCapsule handle");
         let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
+        let expanded_cell_next = expanded_cell_initial.clone();
         let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
         let expanded_agent_next = expanded_open_agent_state(controller_covenant_id, 3, 4);
+        let expanded_cell_utxo = expanded_builder
+            .covenant_utxo("Cell", expanded_cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("expanded Cell UTXO builds");
         let expanded_agent_utxo = expanded_builder
             .covenant_utxo("open_agent::Forager", expanded_agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("expanded agent utxo builds");
-        let expanded_observed = open_agent_context("Forager", expanded_agent_initial, expanded_agent_utxo, expanded_agent_next);
-        expanded_builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", expanded_cell_initial, args![], &expanded_observed)
-            .expect("open observed actor accepts a state that expands the expected base state");
-        expanded_builder
-            .p2sh_signature_script_in_app(
-                "open_agent",
-                "Forager",
-                "step",
-                expanded_open_agent_state(controller_covenant_id, 2, 5),
-                args![],
-            )
-            .expect("expanded agent sigscript is built from slot-qualified source fields");
+        let expanded_context = TxContext::new()
+            .argent_input("Cell", expanded_cell_initial, "advance", cell_outpoint, expanded_cell_utxo)
+            .argent_input("open_agent::Forager", expanded_agent_initial.clone(), "step", agent_outpoint, expanded_agent_utxo.clone())
+            .argent_output("Cell", expanded_cell_next, CovenantBinding::new(0, controller_covenant_id), cell_value)
+            .argent_output("open_agent::Forager", expanded_agent_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
+        expanded_builder.build(&expanded_context).expect("open ICC accepts an actor state that expands the observed capsule");
+
         let mut flattened_forager_state = expanded_open_agent_state(controller_covenant_id, 2, 5);
         flattened_forager_state.remove("strategy");
         flattened_forager_state.insert("hunger".to_string(), ArtifactValue::Int(2));
         flattened_forager_state.insert("mood".to_string(), ArtifactValue::Int(1));
         flattened_forager_state.insert("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32]));
-        let flattened_err = expanded_builder
-            .p2sh_signature_script_in_app("open_agent", "Forager", "step", flattened_forager_state, args![])
-            .expect_err("expanded agent state must provide slot-qualified source fields");
+        let flattened_context =
+            TxContext::new().argent_input("open_agent::Forager", flattened_forager_state, "step", agent_outpoint, expanded_agent_utxo);
+        let flattened_err =
+            expanded_builder.build(&flattened_context).expect_err("expanded agent state must provide slot-qualified source fields");
         assert!(
             matches!(&flattened_err, BuilderError::MissingStateExpansionPreimage { contract, field, memory_state }
                 if contract == "Forager" && field == "strategy" && memory_state == "ForagerStrategy"),
@@ -1651,99 +1582,49 @@ mod tests {
         );
 
         let forager_type =
-            decode_hex(&agent_artifact.sil_abi.contract("Forager").expect("Forager ABI exists").compiled.template.hash_hex)
-                .expect("Forager template hash decodes");
+            builder.actor_type_handle("open_agent::Forager", "AgentCapsule").expect("Forager exposes its AgentCapsule handle");
         let forager_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x53; 32]), index: 0 };
-        let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x54; 32]), index: 0 };
         let forager_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
-        let forager_next = expanded_open_agent_state_at(controller_covenant_id, 3, 4, 1, 0);
-        let controller_utxo = builder
-            .covenant_utxo(
-                "Cell",
-                open_cell_state(agent_covenant_id, forager_type, 7),
-                cell_value,
-                0,
-                false,
-                Some(controller_covenant_id),
-            )
+        let forager_next = expanded_open_agent_state_at(controller_covenant_id, 3, 4, 0, 0);
+        let forager_cell_initial = open_cell_state(agent_covenant_id, forager_type, 7);
+        let forager_cell_utxo = builder
+            .covenant_utxo("Cell", forager_cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
             .expect("controller cell utxo builds");
         let forager_utxo = builder
             .covenant_utxo("open_agent::Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("Forager utxo builds");
-        let forager_output = builder
-            .covenant_output_in_app("open_agent", "Forager", forager_next, agent_value, 1, agent_covenant_id)
-            .expect("Forager output builds with packed expanded memory digest");
-        let forager_sigscript = builder
-            .p2sh_signature_script_in_app("open_agent", "Forager", "step", forager_initial, args![1, 0, 4])
-            .expect("Forager step sigscript fills hidden expanded-memory preimage");
-        let forager_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(controller_outpoint, Vec::new()),
-                TxBuilder::transaction_input(forager_outpoint, forager_sigscript),
-            ],
-            vec![forager_output],
-        );
-        execute_input_with_covenants(&forager_tx, vec![controller_utxo, forager_utxo], 1)
-            .expect("Forager step executes with digest-backed memory repacking");
-
-        let outputs = open_icc_advance_outputs(
-            &builder,
-            cell_next,
-            &observed,
-            cell_value,
-            agent_value,
-            controller_covenant_id,
-            agent_covenant_id,
-        );
-        let cell_utxo = builder
-            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
-            .expect("cell utxo builds");
-        let entries = vec![cell_utxo, agent_utxo];
-        let agent_sigscript = builder
-            .p2sh_signature_script_in_app("open_agent", "Agent", "step", agent_initial.clone(), args![agent_next.clone()])
-            .expect("agent step sigscript builds");
-        let cell_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
-            .expect("cell advance sigscript builds");
-        let tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(cell_outpoint, cell_sigscript),
-                TxBuilder::transaction_input(agent_outpoint, agent_sigscript),
-            ],
-            outputs,
-        );
-        execute_input_with_covenants(&tx, entries.clone(), 0).expect("core cell input passes");
-        execute_input_with_covenants(&tx, entries.clone(), 1).expect("agent input passes");
+        let forager_context = TxContext::new()
+            .argent_input("Cell", forager_cell_initial.clone(), "advance", cell_outpoint, forager_cell_utxo)
+            .argent_input(
+                "open_agent::Forager",
+                forager_initial,
+                EntryCall::new("step").args(args![0, 0, 4]),
+                forager_outpoint,
+                forager_utxo,
+            )
+            .argent_output("Cell", forager_cell_initial, CovenantBinding::new(0, controller_covenant_id), cell_value)
+            .argent_output("open_agent::Forager", forager_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
+        builder.build(&forager_context).expect("Forager route executes with expanded-memory repacking");
 
         let wrong_agent_next = open_agent_state(controller_covenant_id, vec![0x77; 32], 5);
-        let wrong_observed = open_agent_context("Agent", agent_initial.clone(), entries[1].clone(), wrong_agent_next.clone());
-        let wrong_outputs = open_icc_advance_outputs(
-            &builder,
-            open_cell_state(agent_covenant_id, agent_type, 8),
-            &wrong_observed,
-            cell_value,
-            agent_value,
-            controller_covenant_id,
-            agent_covenant_id,
-        );
-        let wrong_agent_sigscript = builder
-            .p2sh_signature_script_in_app("open_agent", "Agent", "step", agent_initial.clone(), args![wrong_agent_next])
-            .expect("agent accepts controller-co-spent non-physics state");
-        let wrong_cell_sigscript = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_initial.clone(), args![], &observed)
-            .expect("cell sigscript builds for wrong-output tx");
-        let wrong_tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(cell_outpoint, wrong_cell_sigscript),
-                TxBuilder::transaction_input(agent_outpoint, wrong_agent_sigscript),
-            ],
-            wrong_outputs,
-        );
-        assert!(
-            execute_input_with_covenants(&wrong_tx, entries.clone(), 0).is_err(),
-            "core physics rejects an agent output that does not spend one energy"
-        );
-        execute_input_with_covenants(&wrong_tx, entries, 1).expect("agent still accepts co-spent header-preserving output");
+        let wrong_cell_utxo = builder
+            .covenant_utxo("Cell", cell_initial.clone(), cell_value, 0, false, Some(controller_covenant_id))
+            .expect("wrong-output Cell UTXO builds");
+        let wrong_agent_utxo = builder
+            .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .expect("wrong-output Agent UTXO builds");
+        let wrong_context = TxContext::new()
+            .argent_input("Cell", cell_initial, "advance", cell_outpoint, wrong_cell_utxo)
+            .argent_input(
+                "open_agent::Agent",
+                agent_initial,
+                EntryCall::new("step").args(args![wrong_agent_next.clone()]),
+                agent_outpoint,
+                wrong_agent_utxo,
+            )
+            .argent_output("Cell", cell_next, CovenantBinding::new(0, controller_covenant_id), cell_value)
+            .argent_output("open_agent::Agent", wrong_agent_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
+        assert!(builder.build(&wrong_context).is_err(), "core physics rejects an agent output that does not spend one energy");
     }
 
     #[test]
@@ -1803,19 +1684,29 @@ mod tests {
         let agent_utxo = builder
             .covenant_utxo("agent_app::Agent", agent_state.clone(), 1_000, 0, false, Some(agent_covenant_id))
             .expect("observed Agent UTXO builds");
-        let observed = BTreeMap::from([(
-            "remote".to_string(),
-            ObservedCovenantContext::from_app("agent_app").input("agent", "Agent", agent_utxo, agent_state.clone()).output(
-                "agent",
-                "Agent",
-                next_agent_state.clone(),
-            ),
-        )]);
-
-        let sigscript = builder
-            .p2sh_signature_script_with_observed_covenants("Cell", "advance", cell_state.clone(), args![], &observed)
-            .expect("anonymous open sigscript builds");
-        let contract = builder.contract("Cell").expect("Cell contract exists");
+        let cell_utxo = builder
+            .covenant_utxo("Cell", cell_state.clone(), 2_000, 0, false, Some(controller_covenant_id))
+            .expect("Cell UTXO builds");
+        let context = TxContext::new()
+            .argent_input(
+                "Cell",
+                cell_state,
+                "advance",
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x55; 32]), index: 0 },
+                cell_utxo,
+            )
+            .argent_input(
+                "agent_app::Agent",
+                agent_state,
+                EntryCall::new("step").args(args![next_agent_state.clone()]),
+                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x66; 32]), index: 0 },
+                agent_utxo,
+            )
+            .argent_output("Cell", next_cell_state, CovenantBinding::new(0, controller_covenant_id), 2_000)
+            .argent_output("agent_app::Agent", next_agent_state, CovenantBinding::new(1, agent_covenant_id), 1_000);
+        let transaction = builder.build(&context).expect("anonymous open binding resolves and executes");
+        let sigscript = &transaction.inputs[0].signature_script;
+        let contract = core_artifact.sil_abi.contract("Cell").expect("Cell contract exists");
         let entry = contract.entry("advance").expect("advance entry exists");
         let expected_args = vec![
             ArtifactValue::Int(decode_hex(&agent_template.prefix_hex).expect("Agent prefix decodes").len() as i64),
@@ -1824,44 +1715,11 @@ mod tests {
         ];
         let expected_entry = encode_entry_sig_script(&core_artifact.sil_abi, contract, entry, &expected_args)
             .expect("expected entry sigscript encodes");
-        let expected = pay_to_script_hash_signature_script_with_flags(
-            builder.redeem_script("Cell", cell_state.clone()).expect("Cell redeem script builds"),
-            expected_entry,
-            covenant_engine_flags(),
-        )
-        .expect("expected P2SH sigscript builds");
+        let expected =
+            pay_to_script_hash_signature_script_with_flags(p2sh_redeem_script(sigscript), expected_entry, covenant_engine_flags())
+                .expect("expected P2SH sigscript builds");
 
-        assert_eq!(sigscript, expected);
-
-        // Execute both sides of the co-spent anonymous observer/agent transition.
-        let cell_utxo =
-            builder.covenant_utxo("Cell", cell_state, 2_000, 0, false, Some(controller_covenant_id)).expect("Cell UTXO builds");
-        let agent_utxo = observed.get("remote").unwrap().inputs.get("agent").unwrap().utxo.clone();
-        let outputs = vec![
-            builder.covenant_output("Cell", next_cell_state, 2_000, 0, controller_covenant_id).expect("Cell output builds"),
-            builder
-                .covenant_output_in_app("agent_app", "Agent", next_agent_state.clone(), 1_000, 1, agent_covenant_id)
-                .expect("Agent output builds"),
-        ];
-        let agent_sigscript = builder
-            .p2sh_signature_script_in_app("agent_app", "Agent", "step", agent_state, args![next_agent_state])
-            .expect("Agent sigscript builds");
-        let tx = TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(
-                    TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x55; 32]), index: 0 },
-                    sigscript,
-                ),
-                TxBuilder::transaction_input(
-                    TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x66; 32]), index: 0 },
-                    agent_sigscript,
-                ),
-            ],
-            outputs,
-        );
-        let entries = vec![cell_utxo, agent_utxo];
-        execute_input_with_covenants(&tx, entries.clone(), 0).expect("anonymous observer input passes");
-        execute_input_with_covenants(&tx, entries, 1).expect("observed Agent input passes");
+        assert_eq!(sigscript, &expected);
     }
 
     fn tickets_artifact() -> Artifact {
@@ -2128,97 +1986,6 @@ mod tests {
         }
     }
 
-    fn observed_asset_context(
-        proxy_actor: &str,
-        proxy_state: BTreeMap<String, ArtifactValue>,
-        proxy_utxo: UtxoEntry,
-        recipient_actor: &str,
-        recipient_state: BTreeMap<String, ArtifactValue>,
-    ) -> BTreeMap<String, ObservedCovenantContext> {
-        BTreeMap::from([(
-            "asset".to_string(),
-            ObservedCovenantContext::from_app("kcc20_asset")
-                .input("proxy", proxy_actor, proxy_utxo, proxy_state.clone())
-                .output("proxy", proxy_actor, proxy_state)
-                .output("recipient", recipient_actor, recipient_state),
-        )])
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn icc_mint_outputs(
-        builder: &TxBuilder<'_>,
-        minter_next: BTreeMap<String, ArtifactValue>,
-        observed: &BTreeMap<String, ObservedCovenantContext>,
-        minter_value: u64,
-        proxy_value: u64,
-        recipient_value: u64,
-        controller_covenant_id: Hash,
-        asset_covenant_id: Hash,
-    ) -> Vec<kaspa_consensus_core::tx::TransactionOutput> {
-        let mut outputs = vec![
-            builder
-                .covenant_output("Minter", minter_next, minter_value, 0, controller_covenant_id)
-                .expect("minter controller output builds"),
-        ];
-        outputs.extend(
-            builder
-                .observed_outputs(
-                    "Minter",
-                    "mint",
-                    "asset",
-                    observed.get("asset").expect("asset observed context exists"),
-                    BTreeMap::from([("proxy".to_string(), proxy_value), ("recipient".to_string(), recipient_value)]),
-                    1,
-                    asset_covenant_id,
-                )
-                .expect("observed asset outputs build"),
-        );
-        outputs
-    }
-
-    fn open_agent_context(
-        agent_actor: &str,
-        agent_state: BTreeMap<String, ArtifactValue>,
-        agent_utxo: UtxoEntry,
-        next_agent_state: BTreeMap<String, ArtifactValue>,
-    ) -> BTreeMap<String, ObservedCovenantContext> {
-        BTreeMap::from([(
-            "remote".to_string(),
-            ObservedCovenantContext::from_app("open_agent").input("agent", agent_actor, agent_utxo, agent_state).output(
-                "agent",
-                agent_actor,
-                next_agent_state,
-            ),
-        )])
-    }
-
-    fn open_icc_advance_outputs(
-        builder: &TxBuilder<'_>,
-        cell_next: BTreeMap<String, ArtifactValue>,
-        observed: &BTreeMap<String, ObservedCovenantContext>,
-        cell_value: u64,
-        agent_value: u64,
-        controller_covenant_id: Hash,
-        agent_covenant_id: Hash,
-    ) -> Vec<kaspa_consensus_core::tx::TransactionOutput> {
-        let mut outputs =
-            vec![builder.covenant_output("Cell", cell_next, cell_value, 0, controller_covenant_id).expect("cell output builds")];
-        outputs.extend(
-            builder
-                .observed_outputs(
-                    "Cell",
-                    "advance",
-                    "remote",
-                    observed.get("remote").expect("remote observed context exists"),
-                    BTreeMap::from([("agent".to_string(), agent_value)]),
-                    1,
-                    agent_covenant_id,
-                )
-                .expect("agent output builds"),
-        );
-        outputs
-    }
-
     fn stones_player_id(outpoint: &TransactionOutpoint) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(b"StonesPlayer");
@@ -2227,41 +1994,13 @@ mod tests {
         blake2b32(&bytes)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn signed_start_game_tx(
-        builder: &TxBuilder<'_>,
-        unsigned_tx: Transaction,
-        entries: Vec<UtxoEntry>,
-        outpoint_a: TransactionOutpoint,
-        outpoint_b: TransactionOutpoint,
-        initial_a: &BTreeMap<String, ArtifactValue>,
-        initial_b: &BTreeMap<String, ArtifactValue>,
-        owner_a: &Keypair,
-        owner_b: &Keypair,
-        owner_a_pk: &[u8],
-        owner_b_pk: &[u8],
-    ) -> Transaction {
-        let leader_sig = sign_input(&unsigned_tx, entries.clone(), 0, owner_a);
-        let delegate_sig = sign_input(&unsigned_tx, entries, 1, owner_b);
-        let leader_sigscript = builder
-            .p2sh_signature_script("Player", "start_game", initial_a.clone(), args![leader_sig, owner_a_pk.to_vec(), 0, 7, 3])
-            .expect("leader sigscript builds");
-        let delegate_sigscript = builder
-            .p2sh_signature_script("Player", "accept_start", initial_b.clone(), args![delegate_sig, owner_b_pk.to_vec()])
-            .expect("delegate sigscript builds");
-
-        TxBuilder::transaction(
-            vec![
-                TxBuilder::transaction_input(outpoint_a, leader_sigscript),
-                TxBuilder::transaction_input(outpoint_b, delegate_sigscript),
-            ],
-            unsigned_tx.outputs,
-        )
-    }
-
-    fn sign_input(tx: &Transaction, entries: Vec<UtxoEntry>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {
-        let tx = MutableTransaction::with_entries(tx.clone(), entries);
-        sign_mutable_input(&tx, input_idx, keypair)
+    fn p2sh_redeem_script(signature_script: &[u8]) -> Vec<u8> {
+        parse_script::<PopulatedTransaction<'_>, SigHashReusedValuesUnsync>(signature_script)
+            .last()
+            .expect("P2SH sigscript has a redeem-script push")
+            .expect("P2SH sigscript parses")
+            .get_data()
+            .to_vec()
     }
 
     fn sign_mutable_input<T: AsRef<Transaction>>(tx: &MutableTransaction<T>, input_idx: usize, keypair: &Keypair) -> Vec<u8> {

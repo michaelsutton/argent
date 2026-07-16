@@ -9,7 +9,6 @@ use kaspa_consensus_core::{
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
 };
 use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
-use silverscript_abi::encode_entry_sig_script;
 
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
@@ -88,7 +87,7 @@ impl<'artifact> TxBuilder<'artifact> {
             match input {
                 ContextInput::Argent(input) => {
                     let (app, contract_ref) = self.bind_actor(&input.actor)?;
-                    let argent_entry = self.entry_ref_in_artifact(contract_ref.artifact, &input.actor.actor, &input.entry.name)?.entry;
+                    let argent_entry = self.entry_ref_in_artifact(contract_ref.artifact, &input.actor.actor, &input.entry.name)?;
                     let sil_entry = contract_ref.contract.entry(&input.entry.name).ok_or_else(|| BuilderError::UnknownEntry {
                         actor: input.actor.to_string(),
                         entry: input.entry.name.clone(),
@@ -226,7 +225,7 @@ impl<'artifact> TxBuilder<'artifact> {
                 input.argent_entry,
                 source_args,
             )?;
-            let values = self.runtime_entry_args(input.artifact, input.contract, input.sil_entry, values)?;
+            let values = self.runtime_entry_args(input.artifact, input.contract, input.sil_entry, input.argent_entry, values)?;
             input.args = Some(ResolvedEntryArgs { values, template_selectors });
         }
 
@@ -311,7 +310,13 @@ impl<'artifact> TxBuilder<'artifact> {
                             .iter()
                             .cloned(),
                     );
-                    let abi_script = encode_entry_sig_script(&input.artifact.sil_abi, input.contract, input.sil_entry, &args)?;
+                    let abi_script = self.encode_runtime_entry_sig_script(
+                        input.artifact,
+                        input.contract,
+                        input.sil_entry,
+                        input.argent_entry,
+                        &args,
+                    )?;
                     pay_to_script_hash_signature_script_with_flags(
                         self.redeem_script_for_contract(input.contract_ref(), input.source.state.clone())?,
                         abi_script,
@@ -505,7 +510,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{ArgValue, ArtifactValue, EntryCall, InputSigScript, actor};
+    use crate::{ArgValue, ArtifactBundle, ArtifactValue, EntryCall, InputSigScript, actor};
 
     fn artifact(app: &str, actor: &str, entry: &str) -> Artifact {
         artifact_with_entry(app, actor, entry, Vec::new(), Vec::new())
@@ -598,7 +603,9 @@ mod tests {
     fn unsigned_transaction_materializes_ordered_primary_qualified_and_ordinary_items() {
         let primary = artifact("primary", "Counter", "bump");
         let attached = artifact("asset", "Reserve", "move");
-        let builder = TxBuilder::new(&primary).expect("primary artifact builds").with_app("asset", &attached).expect("app attaches");
+        let bundle =
+            ArtifactBundle::new(&primary).expect("primary artifact builds").with_app("asset", &attached).expect("app attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
         let counter_id = Hash::from_bytes([0x11; 32]);
         let reserve_id = Hash::from_bytes([0x22; 32]);
         let counter_utxo = builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(counter_id)).expect("counter UTXO builds");
@@ -649,11 +656,17 @@ mod tests {
         assert_eq!(unsigned.entries, vec![Some(counter_utxo), Some(ordinary_utxo), Some(reserve_utxo)]);
         assert_eq!(
             unsigned.tx.outputs[0].script_public_key,
-            builder.script_public_key("Counter", state(3)).expect("counter output script builds")
+            builder
+                .covenant_utxo("Counter", state(3), 900, 0, false, Some(counter_id))
+                .expect("counter output script builds")
+                .script_public_key
         );
         assert_eq!(
             unsigned.tx.outputs[2].script_public_key,
-            builder.script_public_key_in_app("asset", "Reserve", state(8)).expect("reserve output script builds")
+            builder
+                .covenant_utxo("asset::Reserve", state(8), 2_000, 0, false, Some(reserve_id))
+                .expect("reserve output script builds")
+                .script_public_key
         );
         assert_eq!(unsigned.tx.outputs[0].covenant, Some(CovenantBinding::new(0, counter_id)));
         assert_eq!(unsigned.tx.outputs[1].covenant, Some(CovenantBinding::new(0, counter_id)));

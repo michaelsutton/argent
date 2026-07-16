@@ -106,13 +106,21 @@ Forager     concrete actor in the attached app
 let bundle = ArtifactBundle::new(&core_artifact)?
     .with_app("open_agent", &agent_artifact)?;
 
-let observed = BTreeMap::from([(
-    "remote".to_string(),
-    ObservedCovenantContext::from_app("open_agent")
-        .input("agent", "Forager", agent_utxo, forager_state)
-        .output("agent", "Forager", next_forager_state),
-)]);
+let context = TxContext::new()
+    .argent_input("Cell", cell_state, "advance", cell_outpoint, cell_utxo)
+    .argent_input(
+        "open_agent::Forager",
+        forager_state,
+        EntryCall::new("step").args(args![next_x, next_y, next_energy]),
+        agent_outpoint,
+        agent_utxo,
+    )
+    .argent_output("Cell", next_cell_state, cell_binding, cell_value)
+    .argent_output("open_agent::Forager", next_forager_state, agent_binding, agent_value);
+
+let tx = TxBuilder::from_bundle(&bundle)?.build(&context)?;
 ```
 
-The observe name is not an app identity. It is the local coordinate used by the
-entry being invoked.
+The observe name and handles remain compiler-level coordinates. The runtime
+resolves them from the concrete actors and covenant ids in the transaction
+context.
