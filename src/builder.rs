@@ -358,7 +358,7 @@ mod tests {
             .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
             .expect("controller UTXO builds");
         let badge_utxo = builder
-            .covenant_utxo_in_app("badge_asset", "Badge", badge_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
+            .covenant_utxo("badge_asset::Badge", badge_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
             .expect("badge UTXO builds");
 
         let built = builder
@@ -494,7 +494,7 @@ mod tests {
             .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
             .expect("controller UTXO builds");
         let asset_utxo = builder
-            .covenant_utxo_in_app("asset_app", "Asset", asset_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
+            .covenant_utxo("asset_app::Asset", asset_initial.clone(), 2_000, 0, false, Some(asset_covenant_id))
             .expect("asset UTXO builds");
         let observed = ObservedCovenantContext::from_app("asset_app")
             .input("payment", "Asset", asset_utxo.clone(), asset_initial.clone())
@@ -1160,15 +1160,7 @@ mod tests {
             "MinterProxy",
             proxy_state.clone(),
             builder
-                .covenant_utxo_in_app(
-                    "kcc20_asset",
-                    "MinterProxy",
-                    proxy_state.clone(),
-                    proxy_value,
-                    0,
-                    false,
-                    Some(asset_covenant_id),
-                )
+                .covenant_utxo("kcc20_asset::MinterProxy", proxy_state.clone(), proxy_value, 0, false, Some(asset_covenant_id))
                 .expect("proxy utxo builds"),
             "KCC20",
             recipient_state.clone(),
@@ -1522,7 +1514,7 @@ mod tests {
         );
 
         let agent_utxo = builder
-            .covenant_utxo_in_app("open_agent", "Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("agent utxo builds");
         let observed = open_agent_context("Agent", agent_initial.clone(), agent_utxo.clone(), agent_next.clone());
         let fluent_cell_utxo = builder
@@ -1629,15 +1621,7 @@ mod tests {
         let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
         let expanded_agent_next = expanded_open_agent_state(controller_covenant_id, 3, 4);
         let expanded_agent_utxo = expanded_builder
-            .covenant_utxo_in_app(
-                "open_agent",
-                "Forager",
-                expanded_agent_initial.clone(),
-                agent_value,
-                0,
-                false,
-                Some(agent_covenant_id),
-            )
+            .covenant_utxo("open_agent::Forager", expanded_agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("expanded agent utxo builds");
         let expanded_observed = open_agent_context("Forager", expanded_agent_initial, expanded_agent_utxo, expanded_agent_next);
         expanded_builder
@@ -1684,7 +1668,7 @@ mod tests {
             )
             .expect("controller cell utxo builds");
         let forager_utxo = builder
-            .covenant_utxo_in_app("open_agent", "Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
+            .covenant_utxo("open_agent::Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("Forager utxo builds");
         let forager_output = builder
             .covenant_output_in_app("open_agent", "Forager", forager_next, agent_value, 1, agent_covenant_id)
@@ -1817,7 +1801,7 @@ mod tests {
             tick: 1,
         };
         let agent_utxo = builder
-            .covenant_utxo_in_app("agent_app", "Agent", agent_state.clone(), 1_000, 0, false, Some(agent_covenant_id))
+            .covenant_utxo("agent_app::Agent", agent_state.clone(), 1_000, 0, false, Some(agent_covenant_id))
             .expect("observed Agent UTXO builds");
         let observed = BTreeMap::from([(
             "remote".to_string(),

@@ -616,30 +616,29 @@ impl<'a> TxBuilder<'a> {
         Ok(pay_to_script_hash_script(&self.redeem_script_in_app(app, actor_name, source_state)?))
     }
 
+    fn script_public_key_for_actor(
+        &self,
+        actor: ActorPath,
+        source_state: BTreeMap<String, ArtifactValue>,
+    ) -> BuilderResult<kaspa_consensus_core::tx::ScriptPublicKey> {
+        let contract_ref = match &actor.app {
+            Some(app) => self.contract_ref_in_app(app, &actor.actor)?,
+            None => self.contract_ref_in_artifact(self.bundle.primary(), &actor.actor)?,
+        };
+        Ok(pay_to_script_hash_script(&self.redeem_script_for_contract(contract_ref, source_state)?))
+    }
+
     /// Build an actor output before it has a covenant id.
     ///
     /// The returned output has the correct P2SH script for `actor_name(state)`
     /// and `covenant: None`, ready for `Transaction::populate_genesis_covenants`.
     pub fn genesis_output(
         &self,
-        actor_name: &str,
+        actor: impl Into<ActorPath>,
         source_state: BTreeMap<String, ArtifactValue>,
         value: u64,
     ) -> BuilderResult<TransactionOutput> {
-        Ok(TransactionOutput::new(value, self.script_public_key(actor_name, source_state)?))
-    }
-
-    /// Build an actor output in an attached app before it has a covenant id.
-    ///
-    /// This is the multi-app variant of `genesis_output`.
-    pub fn genesis_output_in_app(
-        &self,
-        app: &str,
-        actor_name: &str,
-        source_state: BTreeMap<String, ArtifactValue>,
-        value: u64,
-    ) -> BuilderResult<TransactionOutput> {
-        Ok(TransactionOutput::new(value, self.script_public_key_in_app(app, actor_name, source_state)?))
+        Ok(TransactionOutput::new(value, self.script_public_key_for_actor(actor.into(), source_state)?))
     }
 
     /// Populate genesis covenant bindings and return first-spend handles.
@@ -989,21 +988,7 @@ impl<'a> TxBuilder<'a> {
 
     pub fn covenant_utxo(
         &self,
-        actor_name: &str,
-        source_state: BTreeMap<String, ArtifactValue>,
-        value: u64,
-        block_daa_score: u64,
-        is_coinbase: bool,
-        covenant_id: Option<Hash>,
-    ) -> BuilderResult<UtxoEntry> {
-        Ok(UtxoEntry::new(value, self.script_public_key(actor_name, source_state)?, block_daa_score, is_coinbase, covenant_id))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn covenant_utxo_in_app(
-        &self,
-        app: &str,
-        actor_name: &str,
+        actor: impl Into<ActorPath>,
         source_state: BTreeMap<String, ArtifactValue>,
         value: u64,
         block_daa_score: u64,
@@ -1012,7 +997,7 @@ impl<'a> TxBuilder<'a> {
     ) -> BuilderResult<UtxoEntry> {
         Ok(UtxoEntry::new(
             value,
-            self.script_public_key_in_app(app, actor_name, source_state)?,
+            self.script_public_key_for_actor(actor.into(), source_state)?,
             block_daa_score,
             is_coinbase,
             covenant_id,

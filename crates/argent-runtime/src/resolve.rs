@@ -602,9 +602,8 @@ mod tests {
         let counter_id = Hash::from_bytes([0x11; 32]);
         let reserve_id = Hash::from_bytes([0x22; 32]);
         let counter_utxo = builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(counter_id)).expect("counter UTXO builds");
-        let reserve_utxo = builder
-            .covenant_utxo_in_app("asset", "Reserve", state(7), 2_000, 0, false, Some(reserve_id))
-            .expect("reserve UTXO builds");
+        let reserve_utxo =
+            builder.covenant_utxo("asset::Reserve", state(7), 2_000, 0, false, Some(reserve_id)).expect("reserve UTXO builds");
         let ordinary_utxo = UtxoEntry::new(500, ScriptPublicKey::default(), 0, false, None);
         let args_called = Cell::new(false);
         let script_called = Cell::new(false);
