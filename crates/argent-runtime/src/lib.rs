@@ -468,9 +468,19 @@ pub struct ObservedCovenantOutputRequest<'a> {
 impl<'a> ArtifactBundle<'a> {
     pub fn new(primary: &'a Artifact) -> BuilderResult<Self> {
         let primary_alias = artifact_app_alias(&primary.app);
-        validate_artifact(&primary_alias, primary)?;
-        let apps = BTreeMap::from([(primary_alias.clone(), primary)]);
-        Ok(Self { primary_alias, apps })
+        Self::named(primary_alias, primary)
+    }
+
+    /// Create a bundle with an explicitly named primary app.
+    pub fn named(alias: impl Into<String>, primary: &'a Artifact) -> BuilderResult<Self> {
+        let alias = alias.into();
+        let expected = artifact_app_alias(&primary.app);
+        if alias != expected {
+            return Err(BuilderError::AppAliasMismatch { app: primary.app.clone(), expected, found: alias });
+        }
+        validate_artifact(&alias, primary)?;
+        let apps = BTreeMap::from([(alias.clone(), primary)]);
+        Ok(Self { primary_alias: alias, apps })
     }
 
     pub fn with_app(mut self, alias: impl Into<String>, artifact: &'a Artifact) -> BuilderResult<Self> {
@@ -1072,13 +1082,13 @@ impl<'a> TxBuilder<'a> {
 
     /// Return the template handle by which an external app observes `actor` as
     /// `actor_type<state>`.
-    pub fn actor_type_handle(&self, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
-        self.actor_type_handle_in_artifact(self.bundle.primary(), actor, state)
-    }
-
-    /// Return an attached app actor's external `actor_type<state>` handle.
-    pub fn actor_type_handle_in_app(&self, app: &str, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
-        self.actor_type_handle_in_artifact(self.bundle.app(app)?, actor, state)
+    pub fn actor_type_handle(&self, actor: impl Into<ActorPath>, state: &str) -> BuilderResult<Vec<u8>> {
+        let actor = actor.into();
+        let artifact = match &actor.app {
+            Some(app) => self.bundle.app(app)?,
+            None => self.bundle.primary(),
+        };
+        self.actor_type_handle_in_artifact(artifact, &actor.actor, state)
     }
 
     fn actor_type_handle_in_artifact(&self, artifact: &'a Artifact, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {

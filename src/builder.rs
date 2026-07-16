@@ -485,7 +485,7 @@ mod tests {
         let owner = keypair_from_byte(7);
         let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
         let next_owner_pk = keypair_from_byte(8).x_only_public_key().0.serialize().to_vec();
-        let asset_type = builder.actor_type_handle_in_app("asset_app", "Asset", "AssetState").expect("asset actor type resolves");
+        let asset_type = builder.actor_type_handle("asset_app::Asset", "AssetState").expect("asset actor type resolves");
         let controller_initial = state! { asset_type: asset_type.clone(), swaps: 0 };
         let controller_next = state! { asset_type: asset_type, swaps: 1 };
         let asset_initial = state! { owner: owner_pk, amount: 10 };
@@ -1401,6 +1401,8 @@ mod tests {
             .with_app("kcc20_asset", &asset_artifact)
             .expect("matching observed artifact attaches");
         TxBuilder::from_bundle(&bundle).expect("builder accepts valid bundle");
+        ArtifactBundle::named("kcc20_mint_controller", &controller_artifact)
+            .expect("bundle accepts an explicitly named primary artifact");
         TxBuilder::new(&controller_artifact)
             .expect("builder accepts controller artifact")
             .with_observed_artifact(&asset_artifact)
@@ -1416,6 +1418,14 @@ mod tests {
             wrong_alias_err,
             BuilderError::AppAliasMismatch { app, expected, found }
                 if app == "KCC20Asset" && expected == "kcc20_asset" && found == "wrong"
+        ));
+
+        let wrong_primary_alias_err =
+            ArtifactBundle::named("wrong", &controller_artifact).expect_err("wrong primary app alias is rejected");
+        assert!(matches!(
+            wrong_primary_alias_err,
+            BuilderError::AppAliasMismatch { app, expected, found }
+                if app == "KCC20MintController" && expected == "kcc20_mint_controller" && found == "wrong"
         ));
 
         let mut bad_id_asset = asset_artifact.clone();
@@ -1613,7 +1623,7 @@ mod tests {
             .expect("expanded agent artifact attaches under the same app alias");
         let expanded_builder = TxBuilder::from_bundle(&expanded_bundle).expect("builder accepts expanded agent bundle");
         let expanded_agent_type = expanded_builder
-            .actor_type_handle_in_app("open_agent", "Forager", "AgentCapsule")
+            .actor_type_handle("open_agent::Forager", "AgentCapsule")
             .expect("Forager exposes its AgentCapsule handle");
         let expanded_cell_initial = open_cell_state(agent_covenant_id, expanded_agent_type, 7);
         let expanded_agent_initial = expanded_open_agent_state(controller_covenant_id, 2, 5);
