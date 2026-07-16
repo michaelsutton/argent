@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "cd57dfad4a9c53fd9080515b5a4d5fefa34095cd6371816a699a42c5bcb9b209",
+  "id": "52a184c0724073da7c83950477742c9421398791f00af41e18234a03398ebab6",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -30,14 +30,14 @@
           "actor": "Issuer",
           "contract": "Issuer",
           "symbol": "gen__issuer_template",
-          "hash_hex": "50e292bdb137981290dec826a6b432c50f5d385141c050c87295794939c7fc11"
+          "canonical_template_hash": "50e292bdb137981290dec826a6b432c50f5d385141c050c87295794939c7fc11"
         },
         {
           "id": "template/ticket",
           "actor": "Ticket",
           "contract": "Ticket",
           "symbol": "gen__ticket_template",
-          "hash_hex": "fe9ed8bd62293091afa65b0520f1175b4cace3f5864232f2fc932c367a42cc25"
+          "canonical_template_hash": "fe9ed8bd62293091afa65b0520f1175b4cace3f5864232f2fc932c367a42cc25"
         }
       ],
       "runtime_states": [

@@ -54,6 +54,16 @@ pub fn build_file(input: impl AsRef<Path>, out_dir: impl AsRef<Path>) -> Result<
     read_artifact(out_dir.as_ref())
 }
 
+/// Build one named app from a file that declares multiple apps.
+///
+/// Only apps declared in the input file are selectable. App declarations in
+/// imported files remain supporting compilation context.
+pub fn build_file_app(input: impl AsRef<Path>, app_name: &str, out_dir: impl AsRef<Path>) -> Result<artifact::Artifact> {
+    let program = loader::load_program(input.as_ref())?;
+    emit::emit_build_app(&program, app_name, out_dir.as_ref())?;
+    read_artifact(out_dir.as_ref())
+}
+
 fn inline_program(source_label: PathBuf, source: String) -> Result<ast::Program> {
     let module = parser::parse_module(source_label.clone(), source)?;
     Ok(ast::Program { root: source_label, modules: vec![module] })
@@ -86,6 +96,57 @@ actor Counter owns CounterState {
 
 app CounterApp {
     actor Counter;
+}
+"#;
+
+    const TWO_APPS: &str = r#"
+state LeftState {
+    int value;
+}
+
+actor Left owns LeftState {
+    entry bump() emits one Left {
+        LeftState next = {
+            value: value + 1,
+        };
+        become Left(next);
+    }
+}
+
+state RightState {
+    int value;
+}
+
+actor Right owns RightState {
+    entry bump() emits one Right {
+        RightState next = {
+            value: value + 1,
+        };
+        become Right(next);
+    }
+}
+
+actor RightAlt owns RightState {
+    entry bump() emits one RightAlt {
+        RightState next = {
+            value: value + 1,
+        };
+        become RightAlt(next);
+    }
+}
+
+actor enum RightKind {
+    Right;
+    RightAlt;
+}
+
+app LeftApp {
+    actor Left;
+}
+
+app RightApp {
+    actor Right;
+    actor RightAlt;
 }
 "#;
 
@@ -125,6 +186,45 @@ app CounterApp {
         assert_eq!(artifact.app, "CounterApp");
         assert!(out_dir.join("artifact.json").exists());
         assert!(out_dir.join("sil").join("Counter.sil").exists());
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn build_file_app_selects_one_root_app() {
+        let temp = std::env::temp_dir().join(format!("argent-build-file-app-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("temp dir created");
+
+        let input = temp.join("pair.ag");
+        std::fs::write(&input, TWO_APPS).expect("source written");
+
+        let left = build_file_app(&input, "LeftApp", temp.join("left")).expect("left app builds");
+        assert_eq!(left.app, "LeftApp");
+        assert!(left.sil_abi.contract("Left").is_some());
+        assert!(left.sil_abi.contract("Right").is_none());
+
+        let right = build_file_app(&input, "RightApp", temp.join("right")).expect("right app builds");
+        assert_eq!(right.app, "RightApp");
+        assert!(right.sil_abi.contract("Right").is_some());
+        assert!(right.sil_abi.contract("RightAlt").is_some());
+        assert!(right.sil_abi.contract("Left").is_none());
+        assert!(right.argent.actor_enums.iter().any(|actor_enum| actor_enum.name == "RightKind"));
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
+    fn build_file_requires_selection_for_multiple_root_apps() {
+        let temp = std::env::temp_dir().join(format!("argent-build-file-ambiguous-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("temp dir created");
+
+        let input = temp.join("pair.ag");
+        std::fs::write(&input, TWO_APPS).expect("source written");
+
+        let error = build_file(&input, temp.join("build")).expect_err("app selection is required");
+        assert!(error.to_string().contains("select one with `--app <name>`"));
 
         let _ = std::fs::remove_dir_all(temp);
     }

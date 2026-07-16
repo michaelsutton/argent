@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "c13347316d4699c8b0a64b0acea671210c224f105be09cd95b64a75464a4656f",
+  "id": "c45ae97f17d67402e5b5ab0e20b9989230135562b6b753a057de70d22f5fa158",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -26,7 +26,7 @@
           "actor": "Minter",
           "contract": "Minter",
           "symbol": "gen__minter_template",
-          "hash_hex": "b07f92b1bb28807709abd5764c44da140e544b3004d51fb9a912d8483099afbb"
+          "canonical_template_hash": "b07f92b1bb28807709abd5764c44da140e544b3004d51fb9a912d8483099afbb"
         }
       ],
       "runtime_states": [
@@ -330,6 +330,10 @@
               {
                 "name": "asset",
                 "covenant_expr": "self.kcc20_covid",
+                "covenant_id_source": {
+                  "kind": "state_field",
+                  "field": "kcc20_covid"
+                },
                 "inputs": [
                   {
                     "name": "proxy",

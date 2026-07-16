@@ -1,0 +1,4 @@
+state AssetState {
+    pubkey owner;
+    int amount;
+}

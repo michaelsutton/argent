@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "8740556ba18ebb213bf552a1c9f020d6e3dbeddfe1ad6b6c4cc86a1739457de5",
+  "id": "b7b781f1e23533652376e784b4d45a8bb9ddd582574cbab6a3200a4644a97142",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -30,14 +30,14 @@
           "actor": "KCC20",
           "contract": "KCC20",
           "symbol": "gen__kcc20_template",
-          "hash_hex": "f0edc799774661280d660cf5d6cda26e1b7ce2dd4f63ec66f4ce587ca217cc44"
+          "canonical_template_hash": "f0edc799774661280d660cf5d6cda26e1b7ce2dd4f63ec66f4ce587ca217cc44"
         },
         {
           "id": "template/minter_proxy",
           "actor": "MinterProxy",
           "contract": "MinterProxy",
           "symbol": "gen__minter_proxy_template",
-          "hash_hex": "ca595f3a6baa0922160ebd5ed17dd9f830738f8fe688841eb7ae5d00b3e58b17"
+          "canonical_template_hash": "ca595f3a6baa0922160ebd5ed17dd9f830738f8fe688841eb7ae5d00b3e58b17"
         }
       ],
       "runtime_states": [

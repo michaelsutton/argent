@@ -273,6 +273,48 @@ observer does not execute the implementation body. The observed implementation
 is a covenant input in the same transaction and validates itself. The observer
 only constrains the parts of that transition it cares about.
 
+## Expanded capsule handles
+
+An actor whose state expands a shared capsule may also carry compiler-owned
+route commitments. Argent gives its redeem script two logical template cuts:
+
+```text
+canonical app template:
+[ prefix ][ fixed route context ][ concrete state ][ suffix ]
+
+external actor_type<Capsule> handle:
+[ prefix + fixed route context ][ Capsule state ][ suffix ]
+```
+
+Internal routes use the canonical template. The external handle absorbs the
+fixed route context into its prefix, so an observer sees only the stable capsule
+layout. Virtual fields remain implementation-owned state and are not used for
+route metadata.
+
+Each expanded actor has at most one external capsule handle: the base state it
+expands. Its template receipt records both identities:
+
+```json
+{
+  "canonical_template_hash": "<canonical-hash>",
+  "actor_type_handle": {
+    "state": "AssetCapsule",
+    "context_fields": ["gen__wallet_asset_template"],
+    "template": {
+      "prefix_hex": "<wider-prefix>",
+      "suffix_hex": "<canonical-suffix>",
+      "hash_hex": "<external-handle>"
+    }
+  }
+}
+```
+
+Route context is initialized from canonical in-app template hashes. External
+handles therefore do not feed back into the route graph and cannot create a
+recursive template definition. Artifact verification also requires the listed
+context fields to be the leading compiler-owned fields in the physical runtime
+state layout.
+
 ## Input-Only Open Observation
 
 Sometimes an observer only reads a foreign input and does not constrain a

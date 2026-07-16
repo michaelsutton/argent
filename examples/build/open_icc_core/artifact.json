@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "c08057ffdd49874791a08e8ea5e6e39e859edce294ec85d86c17bf33c709fe28",
+  "id": "33af65895683cb426d14f1c563fc2c6f6ca0a7acc6e8bad5533f276c772a0e76",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -25,7 +25,7 @@
           "actor": "Cell",
           "contract": "Cell",
           "symbol": "gen__cell_template",
-          "hash_hex": "30dfb22e76354ead00c35aeee234171d57d6e75d7ff10f7a4b1a44423bed0a69"
+          "canonical_template_hash": "30dfb22e76354ead00c35aeee234171d57d6e75d7ff10f7a4b1a44423bed0a69"
         }
       ],
       "runtime_states": [
@@ -352,6 +352,10 @@
               {
                 "name": "remote",
                 "covenant_expr": "self.occupant_agent_covid",
+                "covenant_id_source": {
+                  "kind": "state_field",
+                  "field": "occupant_agent_covid"
+                },
                 "inputs": [
                   {
                     "name": "agent",
@@ -570,6 +574,10 @@
               {
                 "name": "remote",
                 "covenant_expr": "self.occupant_agent_covid",
+                "covenant_id_source": {
+                  "kind": "state_field",
+                  "field": "occupant_agent_covid"
+                },
                 "inputs": [
                   {
                     "name": "agent",

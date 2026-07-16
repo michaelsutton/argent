@@ -155,7 +155,16 @@ pub struct TemplatePlanTemplateArtifact {
     pub actor: String,
     pub contract: String,
     pub symbol: String,
-    pub hash_hex: String,
+    pub canonical_template_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_type_handle: Option<ActorTypeHandleArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ActorTypeHandleArtifact {
+    pub state: String,
+    pub context_fields: Vec<String>,
+    pub template: CompiledTemplateArtifact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -312,8 +321,19 @@ pub struct TemplateSelectorArtifact {
 pub struct ObserveArtifact {
     pub name: String,
     pub covenant_expr: String,
+    pub covenant_id_source: CovenantIdSourceArtifact,
     pub inputs: Vec<ObservedActorArtifact>,
     pub outputs: Vec<ObservedActorArtifact>,
+}
+
+/// Machine-readable source of the covenant id selected by an `observes` clause.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CovenantIdSourceArtifact {
+    /// A field in the actor's source state.
+    StateField { field: String },
+    /// A user-visible entry argument, indexed in source declaration order.
+    EntryArgument { index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -466,8 +486,10 @@ pub enum TemplatePlanError {
     TemplateRefMismatch { id: String, actor: String },
     #[error("template receipt `{id}` is not referenced by an Argent template ref")]
     UnreferencedTemplateReceipt { id: String },
-    #[error("template receipt `{id}` hash mismatch: expected `{expected}`, found `{found}`")]
+    #[error("template receipt `{id}` canonical hash mismatch: expected `{expected}`, found `{found}`")]
     TemplateHashMismatch { id: String, expected: String, found: String },
+    #[error("template receipt `{id}` actor_type handle is invalid: {message}")]
+    ActorTypeHandleMismatch { id: String, message: String },
     #[error("invalid hex in template receipt `{id}`: {message}")]
     InvalidHex { id: String, message: String },
     #[error("route template table `{id}` has byte_len `{byte_len}`, expected `{expected}`")]
@@ -597,13 +619,14 @@ impl TemplatePlanArtifact {
             // The plan carries a denormalized copy for route-proof leaves. Keep
             // that receipt consistent with the authoritative Sil ABI value.
             let expected_hash = &contract.compiled.template.hash_hex;
-            if template.hash_hex.as_str() != expected_hash.as_str() {
+            if template.canonical_template_hash.as_str() != expected_hash.as_str() {
                 return Err(TemplatePlanError::TemplateHashMismatch {
                     id: template.id.clone(),
                     expected: expected_hash.clone(),
-                    found: template.hash_hex.clone(),
+                    found: template.canonical_template_hash.clone(),
                 });
             }
+            verify_actor_type_handle(self, artifact, template, contract)?;
             templates_by_id.insert(template.id.as_str(), template);
         }
 
@@ -1081,6 +1104,163 @@ impl TemplatePlanArtifact {
     }
 }
 
+fn verify_actor_type_handle(
+    plan: &TemplatePlanArtifact,
+    artifact: &Artifact,
+    template: &TemplatePlanTemplateArtifact,
+    contract: &SilContractArtifact,
+) -> std::result::Result<(), TemplatePlanError> {
+    let mismatch = |message| TemplatePlanError::ActorTypeHandleMismatch { id: template.id.clone(), message };
+    let actor = artifact
+        .argent
+        .actors
+        .iter()
+        .find(|actor| actor.name == template.actor)
+        .ok_or_else(|| mismatch(format!("missing actor `{}`", template.actor)))?;
+    let expanded_base = artifact
+        .argent
+        .state_expansions
+        .iter()
+        .find(|expansion| expansion.state == actor.state)
+        .map(|expansion| expansion.base.as_str());
+
+    let Some(handle) = &template.actor_type_handle else {
+        if let Some(base) = expanded_base {
+            return Err(mismatch(format!("expanded state `{}` requires actor_type<{base}>", actor.state)));
+        }
+        return Ok(());
+    };
+    if expanded_base != Some(handle.state.as_str()) {
+        return Err(mismatch(format!(
+            "handle state `{}` does not match expanded state `{}` base `{}`",
+            handle.state,
+            actor.state,
+            expanded_base.unwrap_or("none")
+        )));
+    }
+
+    let runtime_plan = plan.runtime_states.iter().find(|runtime_state| runtime_state.contract == contract.name);
+    let expected_context_fields = runtime_plan
+        .map(|runtime_state| runtime_state.field_roles.iter().map(|field| field.name.clone()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if handle.context_fields != expected_context_fields {
+        return Err(mismatch(format!(
+            "context fields {:?} do not match compiler-owned runtime fields {:?}",
+            handle.context_fields, expected_context_fields
+        )));
+    }
+    let leading_runtime_fields = contract.runtime_state.fields.iter().take(handle.context_fields.len()).collect::<Vec<_>>();
+    if leading_runtime_fields.len() != handle.context_fields.len()
+        || leading_runtime_fields.iter().zip(&handle.context_fields).any(|(field, expected_name)| field.name != *expected_name)
+    {
+        return Err(mismatch("context fields are not the leading physical runtime fields".to_string()));
+    }
+
+    let canonical_prefix = decode_hex_for_template(&template.id, &contract.compiled.template.prefix_hex)?;
+    let canonical_suffix = decode_hex_for_template(&template.id, &contract.compiled.template.suffix_hex)?;
+    let handle_prefix = decode_hex_for_template(&template.id, &handle.template.prefix_hex)?;
+    let handle_suffix = decode_hex_for_template(&template.id, &handle.template.suffix_hex)?;
+    decode_hash_hex(&template.id, &handle.template.hash_hex)?;
+    if !handle_prefix.starts_with(&canonical_prefix) {
+        return Err(mismatch("prefix does not extend the canonical template prefix".to_string()));
+    }
+    if handle_suffix != canonical_suffix {
+        return Err(mismatch("suffix differs from the canonical template suffix".to_string()));
+    }
+
+    let context_state =
+        RuntimeStateArtifact { source: handle.state.clone(), fields: leading_runtime_fields.into_iter().cloned().collect() };
+    let decoded_context = silverscript_abi::decode_runtime_state_script(&context_state, &handle_prefix[canonical_prefix.len()..])
+        .map_err(|err| mismatch(format!("prefix context does not decode according to its runtime fields: {err}")))?;
+    if let Some(runtime_plan) = runtime_plan {
+        for field in &runtime_plan.field_roles {
+            let expected = fixed_runtime_context_value(plan, runtime_plan, field)?;
+            if decoded_context.get(&field.name) != Some(&silverscript_abi::ArtifactValue::Bytes(expected)) {
+                return Err(mismatch(format!("context field `{}` does not contain its canonical commitment", field.name)));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Resolve one compiler-owned runtime field whose value is fixed by the
+/// artifact's canonical route plan.
+pub fn fixed_runtime_context_value(
+    plan: &TemplatePlanArtifact,
+    runtime_state: &RuntimeStatePlanArtifact,
+    field: &RuntimeFieldRolePlanArtifact,
+) -> std::result::Result<Vec<u8>, TemplatePlanError> {
+    let invalid = |message| TemplatePlanError::RuntimeStatePlanMismatch {
+        contract: runtime_state.contract.clone(),
+        message: format!("field `{}` cannot be fixed as template context: {message}", field.name),
+    };
+    match &field.role {
+        RuntimeFieldRoleArtifact::Template { contract } => canonical_template_hash_bytes(plan, contract),
+        RuntimeFieldRoleArtifact::TemplateTable { contracts } => {
+            let mut table = Vec::with_capacity(contracts.len() * 32);
+            for contract in contracts {
+                table.extend_from_slice(&canonical_template_hash_bytes(plan, contract)?);
+            }
+            Ok(table)
+        }
+        RuntimeFieldRoleArtifact::TemplateDigest { id } => {
+            let family = plan
+                .route_families
+                .iter()
+                .find(|family| family.id == *id)
+                .ok_or_else(|| invalid(format!("missing route family `{id}`")))?;
+            let table = plan
+                .route_tables
+                .iter()
+                .find(|table| table.id == family.table_id)
+                .ok_or_else(|| invalid(format!("missing route table `{}`", family.table_id)))?;
+            let bytes = fixed_route_table_bytes(plan, runtime_state, table)?;
+            Ok(blake2b_simd::Params::new().hash_length(32).hash(&bytes).as_bytes().to_vec())
+        }
+        RuntimeFieldRoleArtifact::TemplateRoot { .. } => {
+            let proof_id = route_template_proof_receipt_id(&runtime_state.source, &field.name);
+            let proof = plan
+                .route_proofs
+                .iter()
+                .find(|proof| proof.id == proof_id)
+                .ok_or_else(|| invalid(format!("missing route proof `{proof_id}`")))?;
+            Ok(decode_hash_hex(&proof_id, &proof.root_hex)?.to_vec())
+        }
+        RuntimeFieldRoleArtifact::ObservedTemplate { observe, .. } => Err(invalid(format!("depends on open observe `{observe}`"))),
+    }
+}
+
+fn fixed_route_table_bytes(
+    plan: &TemplatePlanArtifact,
+    runtime_state: &RuntimeStatePlanArtifact,
+    table: &RouteTemplateTableArtifact,
+) -> std::result::Result<Vec<u8>, TemplatePlanError> {
+    let mut bytes = Vec::with_capacity(table.byte_len);
+    for entry in &table.entries {
+        match &entry.leaf {
+            RouteTemplateLeafArtifact::Template { actor, .. } => {
+                bytes.extend_from_slice(&canonical_template_hash_bytes(plan, actor)?);
+            }
+            RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => {
+                return Err(TemplatePlanError::RuntimeStatePlanMismatch {
+                    contract: runtime_state.contract.clone(),
+                    message: format!("field `{}` route table `{}` contains nested family `{family_id}`", table.field, table.id),
+                });
+            }
+        }
+    }
+    Ok(bytes)
+}
+
+fn canonical_template_hash_bytes(plan: &TemplatePlanArtifact, actor: &str) -> std::result::Result<Vec<u8>, TemplatePlanError> {
+    let template = plan
+        .templates
+        .iter()
+        .find(|template| template.actor == actor)
+        .ok_or_else(|| TemplatePlanError::UnknownContract(actor.to_string()))?;
+    Ok(decode_hash_hex(&template.id, &template.canonical_template_hash)?.to_vec())
+}
+
 pub fn actor_interface_id(actor: &str) -> String {
     format!("interface/actor/{actor}")
 }
@@ -1145,7 +1325,7 @@ fn route_template_leaf_hash(
                     template_actor: template.actor.clone(),
                 });
             }
-            decode_hash_hex(&template.id, &template.hash_hex)
+            decode_hash_hex(&template.id, &template.canonical_template_hash)
         }
         RouteTemplateLeafArtifact::RouteFamily { family_id, proof_id } => {
             let Some(root_hex) = digest_roots.get(proof_id) else {
@@ -1620,7 +1800,8 @@ mod tests {
                 actor: actor.to_string(),
                 contract: actor.to_string(),
                 symbol: format!("gen__{}_template", actor.to_ascii_lowercase()),
-                hash_hex: template_hash.clone(),
+                canonical_template_hash: template_hash.clone(),
+                actor_type_handle: None,
             })
             .collect::<Vec<_>>();
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "6a858b2c834ad7d3e464f4af5fcaef7adce81d1e9b1e4e19c6f2672affeacc75",
+  "id": "76ca240f2c2a6e5a4e6eadc5b577337740b61087b73ec2271464ea2672050573",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -45,35 +45,35 @@
           "actor": "League",
           "contract": "League",
           "symbol": "gen__league_template",
-          "hash_hex": "6ed8c45d447b5327ec840a286461bbe55f44dc4dbea9aee2d2d755ef04637bb4"
+          "canonical_template_hash": "6ed8c45d447b5327ec840a286461bbe55f44dc4dbea9aee2d2d755ef04637bb4"
         },
         {
           "id": "template/player",
           "actor": "Player",
           "contract": "Player",
           "symbol": "gen__player_template",
-          "hash_hex": "9f1116d3ce907467b4c382ebd0e103b87a69916718afcb73a7c2af6cd35f1a5a"
+          "canonical_template_hash": "9f1116d3ce907467b4c382ebd0e103b87a69916718afcb73a7c2af6cd35f1a5a"
         },
         {
           "id": "template/mux",
           "actor": "Mux",
           "contract": "Mux",
           "symbol": "gen__mux_template",
-          "hash_hex": "0b3a0a7500a490534e915817be702da017a75bc58aaaff84dccb250524ce486b"
+          "canonical_template_hash": "0b3a0a7500a490534e915817be702da017a75bc58aaaff84dccb250524ce486b"
         },
         {
           "id": "template/pawn",
           "actor": "Pawn",
           "contract": "Pawn",
           "symbol": "gen__pawn_template",
-          "hash_hex": "4d85870ea4d8316b3a49f1d50bfe78c8802f6ba6282f88e22155e3b4a77358f2"
+          "canonical_template_hash": "4d85870ea4d8316b3a49f1d50bfe78c8802f6ba6282f88e22155e3b4a77358f2"
         },
         {
           "id": "template/knight",
           "actor": "Knight",
           "contract": "Knight",
           "symbol": "gen__knight_template",
-          "hash_hex": "656111361f5a6c03ac834868b05ce9d4e3df766f5a3e6e593fc12e7cf1ceb4ca"
+          "canonical_template_hash": "656111361f5a6c03ac834868b05ce9d4e3df766f5a3e6e593fc12e7cf1ceb4ca"
         }
       ],
       "runtime_states": [

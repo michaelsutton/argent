@@ -12,11 +12,22 @@ use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
+    emit_build_selected(program, None, out_dir)
+}
+
+pub fn emit_build_app(program: &Program, app_name: &str, out_dir: impl AsRef<Path>) -> Result<()> {
+    emit_build_selected(program, Some(app_name), out_dir)
+}
+
+fn emit_build_selected(program: &Program, app_name: Option<&str>, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
     let sil_dir = out_dir.join("sil");
     fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(out_dir, err.to_string()))?;
 
-    let model = Model::from_program(program)?;
+    let model = match app_name {
+        Some(app_name) => Model::from_program_app(program, app_name)?,
+        None => Model::from_program(program)?,
+    };
     let mut actor_sil = BTreeMap::new();
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
@@ -106,6 +117,14 @@ enum RouteRootLeaf {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
+        Self::from_program_selected(program, None)
+    }
+
+    fn from_program_app(program: &'a Program, app_name: &str) -> Result<Self> {
+        Self::from_program_selected(program, Some(app_name))
+    }
+
+    fn from_program_selected(program: &'a Program, app_name: Option<&str>) -> Result<Self> {
         validate_unique_apps(program)?;
         let consts = collect_consts(program)?;
         let functions = collect_functions(program)?;
@@ -113,7 +132,7 @@ impl<'a> Model<'a> {
         let all_actors = collect_actors(program)?;
         let actor_enum_decls = collect_actor_enums(program)?;
 
-        let app = program.apps().next();
+        let app = select_root_app(program, app_name)?;
         let (app_name, template_actors) = if let Some(app) = app {
             (app.name.clone(), app.actors.clone())
         } else {
@@ -491,6 +510,7 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, observe.name
                 )));
             }
+            observe_covenant_id_source(actor, entry, self, observe)?;
             self.validate_observed_open_bindings(actor, entry, observe)?;
             self.validate_observed_actor_types(actor, entry, observe, "input", &observe.inputs)?;
             self.validate_observed_actor_types(actor, entry, observe, "output", &observe.outputs)?;
@@ -799,6 +819,9 @@ fn build_actor_enums(
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut out = BTreeMap::new();
     for actor_enum in actor_enum_decls.values() {
+        if !actor_enum.variants.iter().any(|variant| template_actor_set.contains(variant)) {
+            continue;
+        }
         if actors_by_name.contains_key(&actor_enum.name) || states.contains_key(&actor_enum.name) {
             return Err(ArgentError::new(format!("actor enum `{}` conflicts with an actor or state declaration", actor_enum.name)));
         }
@@ -1161,6 +1184,35 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn select_root_app<'a>(program: &'a Program, app_name: Option<&str>) -> Result<Option<&'a AppDecl>> {
+    let root = program
+        .modules
+        .iter()
+        .find(|module| module.path == program.root)
+        .ok_or_else(|| ArgentError::at(&program.root, "root module is missing from the loaded program"))?;
+
+    if let Some(app_name) = app_name {
+        return root
+            .apps
+            .iter()
+            .find(|app| app.name == app_name)
+            .map(Some)
+            .ok_or_else(|| ArgentError::at(&program.root, format!("root module has no app named `{app_name}`")));
+    }
+
+    match root.apps.as_slice() {
+        [] => Ok(None),
+        [app] => Ok(Some(app)),
+        apps => Err(ArgentError::at(
+            &program.root,
+            format!(
+                "root module declares multiple apps ({}); select one with `--app <name>`",
+                apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+        )),
+    }
 }
 
 fn compute_state_template_deps<'a>(
@@ -3856,7 +3908,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
         })
         .collect::<Vec<_>>();
     let argent_actors = model.actors.iter().map(|actor| actor_artifact(actor, model)).collect::<Result<Vec<_>>>()?;
-    let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts)?;
+    let template_plan = template_plan_artifact(model, &templates, &argent_actors, &sil_contracts, actor_sil)?;
     let interfaces = interface_set_artifact(model)?;
 
     let mut artifact = Artifact {
@@ -3928,6 +3980,7 @@ fn template_plan_artifact(
     templates: &[TemplateRefArtifact],
     actors: &[ActorArtifact],
     sil_contracts: &[SilContractArtifact],
+    actor_sil: &BTreeMap<String, String>,
 ) -> Result<TemplatePlanArtifact> {
     let sil_by_name = sil_contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
     let templates = templates
@@ -3941,7 +3994,8 @@ fn template_plan_artifact(
                 actor: template.actor.clone(),
                 contract: contract.name.clone(),
                 symbol: template.symbol.clone(),
-                hash_hex: contract.compiled.template.hash_hex.clone(),
+                canonical_template_hash: contract.compiled.template.hash_hex.clone(),
+                actor_type_handle: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -3982,7 +4036,103 @@ fn template_plan_artifact(
         }
     }
 
-    Ok(TemplatePlanArtifact { templates, runtime_states, route_tables, route_proofs, route_families, witness_recipes })
+    let mut plan = TemplatePlanArtifact { templates, runtime_states, route_tables, route_proofs, route_families, witness_recipes };
+    let handles = plan
+        .templates
+        .iter()
+        .map(|template| actor_type_handle_artifact(template, &plan, model, actor_sil))
+        .collect::<Result<Vec<_>>>()?;
+    for (template, handle) in plan.templates.iter_mut().zip(handles) {
+        template.actor_type_handle = handle;
+    }
+    Ok(plan)
+}
+
+fn actor_type_handle_artifact(
+    template: &TemplatePlanTemplateArtifact,
+    plan: &TemplatePlanArtifact,
+    model: &Model<'_>,
+    actor_sil: &BTreeMap<String, String>,
+) -> Result<Option<ActorTypeHandleArtifact>> {
+    let actor = model.actor(&template.actor)?;
+    let Some(expansion) = &model.state(&actor.state)?.expansion else {
+        return Ok(None);
+    };
+    let runtime_plan = plan.runtime_states.iter().find(|runtime_state| runtime_state.contract == actor.name);
+    let context_fields = runtime_plan
+        .map(|runtime_state| runtime_state.field_roles.iter().map(|field| field.name.clone()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let context_values = runtime_plan
+        .map(|runtime_state| {
+            runtime_state
+                .field_roles
+                .iter()
+                .map(|field| {
+                    fixed_runtime_context_value(plan, runtime_state, field)
+                        .map_err(|err| ArgentError::new(format!("cannot derive fixed capsule context: {err}")))
+                })
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let context_state = RuntimeStateArtifact {
+        source: expansion.base.clone(),
+        fields: runtime_fields.iter().take(context_fields.len()).cloned().collect(),
+    };
+    let context_state_values =
+        context_fields.iter().cloned().zip(context_values.iter().cloned().map(ArtifactValue::Bytes)).collect::<BTreeMap<_, _>>();
+    let context_script = crate::codec::encode_runtime_state_script(&context_state, &context_state_values)
+        .map_err(|err| ArgentError::new(format!("cannot encode actor_type<{}> context: {err}", expansion.base)))?;
+
+    let mut args = context_values.into_iter().map(SilExpr::from).collect::<Vec<_>>();
+    for field in &model.storage_state(&actor.state)?.fields {
+        args.push(placeholder_expr_for_type(&field.ty).map_err(|err| {
+            ArgentError::new(format!(
+                "cannot build actor_type<{}> placeholder for actor `{}` field `{}`: {err}",
+                expansion.base, actor.name, field.name
+            ))
+        })?);
+    }
+
+    let sil = actor_sil
+        .get(&actor.name)
+        .ok_or_else(|| ArgentError::new(format!("missing generated Silverscript for actor `{}`", actor.name)))?;
+    let compiled = compile_contract(sil, &args, CompileOptions::default()).map_err(|err| {
+        ArgentError::new(format!("generated Silverscript for actor `{}` failed to compile its capsule cut: {err}", actor.name))
+    })?;
+    if encode_hex(&compiled.template_hash()) != template.canonical_template_hash {
+        return Err(ArgentError::new(format!(
+            "actor `{}` canonical template changed while resolving its capsule context",
+            actor.name
+        )));
+    }
+    if compiled.ast.fields.len() != runtime_fields.len() {
+        return Err(ArgentError::new(format!("actor `{}` compiled state fields do not match its runtime state layout", actor.name)));
+    }
+
+    let state_start = compiled.state_layout.start;
+    let context_end = state_start
+        .checked_add(context_script.len())
+        .ok_or_else(|| ArgentError::new(format!("actor `{}` capsule context offset overflow", actor.name)))?;
+    let state_end = state_start
+        .checked_add(compiled.state_layout.len)
+        .ok_or_else(|| ArgentError::new(format!("actor `{}` state offset overflow", actor.name)))?;
+    if compiled.script.get(state_start..context_end) != Some(context_script.as_slice()) {
+        return Err(ArgentError::new(format!("actor `{}` compiled capsule context does not match its runtime state ABI", actor.name)));
+    }
+    let prefix = &compiled.script[..context_end];
+    let suffix = &compiled.script[state_end..];
+    let hash = silverscript_lang::template::template_hash(prefix, suffix);
+    Ok(Some(ActorTypeHandleArtifact {
+        state: expansion.base.clone(),
+        context_fields,
+        template: CompiledTemplateArtifact {
+            prefix_hex: encode_hex(prefix),
+            suffix_hex: encode_hex(suffix),
+            hash_hex: encode_hex(&hash),
+        },
+    }))
 }
 
 fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamilyArtifact> {
@@ -4514,6 +4664,7 @@ fn observe_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, obs
     Ok(ObserveArtifact {
         name: observe.name.clone(),
         covenant_expr: compact_expr(&observe.covenant_expr),
+        covenant_id_source: observe_covenant_id_source(actor, entry, model, observe)?,
         inputs: observe
             .inputs
             .iter()
@@ -4525,6 +4676,86 @@ fn observe_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, obs
             .map(|observed| observed_actor_artifact(actor, entry, model, observe, observed))
             .collect::<Result<Vec<_>>>()?,
     })
+}
+
+fn observe_covenant_id_source(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    observe: &ObserveDecl,
+) -> Result<CovenantIdSourceArtifact> {
+    let tokens = lex(&observe.covenant_expr).map_err(|err| {
+        ArgentError::new(format!(
+            "failed to lex covenant id source for `{}::{}` observe `{}`: {}",
+            actor.name, entry.name, observe.name, err.message
+        ))
+    })?;
+
+    match tokens.as_slice() {
+        [
+            Token { kind: TokenKind::Ident(self_name), .. },
+            Token { kind: TokenKind::Symbol('.'), .. },
+            Token { kind: TokenKind::Ident(field_name), .. },
+            Token { kind: TokenKind::Eof, .. },
+        ] if self_name == word::SELF => {
+            let field = model.storage_state(&actor.state)?.fields.iter().find(|field| field.name == *field_name).ok_or_else(|| {
+                ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` references unknown state field `{}.{field_name}`",
+                    actor.name,
+                    entry.name,
+                    observe.name,
+                    word::SELF
+                ))
+            })?;
+            require_covenant_id_source_type(actor, entry, observe, &format!("{}.{field_name}", word::SELF), &field.ty)?;
+            Ok(CovenantIdSourceArtifact::StateField { field: field_name.clone() })
+        }
+        [Token { kind: TokenKind::Ident(argument_name), .. }, Token { kind: TokenKind::Eof, .. }] => {
+            if let Some((index, param)) = entry.params.iter().enumerate().find(|(_, param)| param.name == *argument_name) {
+                require_covenant_id_source_type(actor, entry, observe, argument_name, &param.ty)?;
+                return Ok(CovenantIdSourceArtifact::EntryArgument { index });
+            }
+            let field = model
+                .storage_state(&actor.state)?
+                .fields
+                .iter()
+                .find(|field| field.name == *argument_name)
+                .ok_or_else(|| unsupported_observe_covenant_id_source(actor, entry, observe))?;
+            require_covenant_id_source_type(actor, entry, observe, argument_name, &field.ty)?;
+            Ok(CovenantIdSourceArtifact::StateField { field: argument_name.clone() })
+        }
+        _ => Err(unsupported_observe_covenant_id_source(actor, entry, observe)),
+    }
+}
+
+fn require_covenant_id_source_type(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    source: &str,
+    ty: &TypeRef,
+) -> Result<()> {
+    if ty.name == word::COVENANT_ID && ty.array.is_none() && ty.actor_state.is_none() {
+        return Ok(());
+    }
+    Err(ArgentError::new(format!(
+        "entry `{}::{}` observe `{}` covenant id source `{source}` has type `{}`; expected `{}`",
+        actor.name,
+        entry.name,
+        observe.name,
+        source_type_ref(ty),
+        word::COVENANT_ID
+    )))
+}
+
+fn unsupported_observe_covenant_id_source(actor: &ActorDecl, entry: &EntryDecl, observe: &ObserveDecl) -> ArgentError {
+    ArgentError::new(format!(
+        "entry `{}::{}` observe `{}` covenant id source must be a `{}` state field or entry argument",
+        actor.name,
+        entry.name,
+        observe.name,
+        word::COVENANT_ID
+    ))
 }
 
 fn observed_actor_artifact(
@@ -5917,7 +6148,7 @@ mod tests {
         assert_eq!(artifact.argent.templates[0].id, "template/foo");
         assert_eq!(artifact.argent.template_plan.templates[0].id, "template/foo");
         assert_eq!(
-            artifact.argent.template_plan.templates[0].hash_hex,
+            artifact.argent.template_plan.templates[0].canonical_template_hash,
             artifact.sil_abi.contract("Foo").unwrap().compiled.template.hash_hex
         );
         artifact.verify_template_plan().expect("template plan receipt verifies");
@@ -6021,6 +6252,50 @@ mod tests {
     }
 
     #[test]
+    fn expanded_actor_records_canonical_and_capsule_template_cuts() {
+        let (sil, artifact) = emit_fixture("capsule_route_context", "ReserveAsset");
+        assert!(sil.contains("byte[32] gen__wallet_asset_template"), "{sil}");
+
+        let contract = artifact.sil_abi.contract("ReserveAsset").expect("ReserveAsset Sil ABI exists");
+        let runtime_plan = runtime_state_plan(&artifact, "ReserveAsset").expect("route context is recorded");
+        assert!(!runtime_plan.field_roles.is_empty());
+        let receipt = artifact
+            .argent
+            .template_plan
+            .templates
+            .iter()
+            .find(|template| template.actor == "ReserveAsset")
+            .expect("ReserveAsset template receipt exists");
+        assert_eq!(receipt.canonical_template_hash, contract.compiled.template.hash_hex);
+        let handle = receipt.actor_type_handle.as_ref().expect("expanded actor exposes a capsule handle");
+        assert_eq!(handle.state, "AssetCapsule");
+        assert_eq!(handle.context_fields, runtime_plan.field_roles.iter().map(|field| field.name.clone()).collect::<Vec<_>>());
+        assert_ne!(handle.template.hash_hex, receipt.canonical_template_hash);
+
+        let canonical_prefix = crate::codec::decode_hex(&contract.compiled.template.prefix_hex).expect("canonical prefix decodes");
+        let capsule_prefix = crate::codec::decode_hex(&handle.template.prefix_hex).expect("capsule prefix decodes");
+        assert!(capsule_prefix.starts_with(&canonical_prefix));
+        assert!(capsule_prefix.len() > canonical_prefix.len());
+        assert_eq!(handle.template.suffix_hex, contract.compiled.template.suffix_hex);
+        artifact.verify_template_plan().expect("capsule template receipt verifies");
+
+        let mut corrupted = artifact.clone();
+        let receipt = corrupted
+            .argent
+            .template_plan
+            .templates
+            .iter_mut()
+            .find(|template| template.actor == "ReserveAsset")
+            .expect("ReserveAsset template receipt exists");
+        let handle = receipt.actor_type_handle.as_mut().expect("expanded actor exposes a capsule handle");
+        let mut prefix = crate::codec::decode_hex(&handle.template.prefix_hex).expect("capsule prefix decodes");
+        *prefix.last_mut().expect("capsule prefix contains context") ^= 1;
+        handle.template.prefix_hex = encode_hex(&prefix);
+        let err = corrupted.verify_template_plan().expect_err("corrupted capsule context is rejected");
+        assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
+    }
+
+    #[test]
     fn state_expansion_requires_virtual_byte32_backing_field() {
         let err = parse_and_validate(
             r#"
@@ -6121,7 +6396,7 @@ mod tests {
             }
 
             state MinterState {
-                byte[32] kcc20_covid;
+                covid kcc20_covid;
                 int amount;
             }
 
@@ -6174,6 +6449,7 @@ mod tests {
         let observe = &mint.observes[0];
         assert_eq!(observe.name, "asset");
         assert_eq!(observe.covenant_expr, "self.kcc20_covid");
+        assert_eq!(observe.covenant_id_source, CovenantIdSourceArtifact::StateField { field: "kcc20_covid".to_string() });
         assert_eq!(
             observe.inputs.iter().map(|input| (input.name.as_str(), input.actor.as_str())).collect::<Vec<_>>(),
             vec![("proxy", "MinterProxy")]
@@ -6264,6 +6540,98 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn observe_entry_argument_source_is_recorded_by_index() {
+        let artifact = inline_artifact(
+            "observe-entry-argument",
+            r#"
+            state ForeignState {
+                int count;
+            }
+            state LocalState {}
+
+            actor Foreign owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor Local owns LocalState {
+                entry step(unused: int, target_id: covid)
+                observes asset by target_id {
+                    inputs {
+                        foreign: Foreign;
+                    }
+                }
+                emits none {
+                    require(unused >= 0);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        );
+
+        let local = artifact.argent.actors.iter().find(|actor| actor.name == "Local").expect("Local actor exists");
+        let step = local.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
+        assert_eq!(step.observes[0].covenant_id_source, CovenantIdSourceArtifact::EntryArgument { index: 1 });
+    }
+
+    #[test]
+    fn observe_covenant_id_source_rejects_computed_expressions() {
+        let err = parse_and_validate(
+            r#"
+            state LocalState {}
+
+            actor Local owns LocalState {
+                entry step(first: covid, second: covid)
+                observes asset by first + second {}
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("computed observe covenant ids must be rejected");
+
+        assert!(
+            err.to_string().contains("covenant id source must be a `covid` state field or entry argument"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observe_covenant_id_source_requires_covid_type() {
+        let err = parse_and_validate(
+            r#"
+            state LocalState {
+                byte[32] target_id;
+            }
+
+            actor Local owns LocalState {
+                entry step()
+                observes asset by self.target_id {}
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("byte arrays must not stand in for covenant ids");
+
+        assert!(err.to_string().contains("has type `byte[32]`; expected `covid`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -6383,7 +6751,9 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state ForeignState {}
-            state LocalState {}
+            state LocalState {
+                covid target_id;
+            }
 
             actor Foreign owns ForeignState {
                 entry hold() emits none {
@@ -6423,7 +6793,9 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state ForeignState {}
-            state LocalState {}
+            state LocalState {
+                covid target_id;
+            }
 
             actor Foreign owns ForeignState {
                 entry hold() emits none {
@@ -6480,6 +6852,7 @@ mod tests {
 
         let local_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Local").expect("Local artifact actor exists");
         let step = local_actor.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
+        assert_eq!(step.observes[0].covenant_id_source, CovenantIdSourceArtifact::StateField { field: "target_id".to_string() });
         assert_eq!(
             step.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
             vec!["gen__asset_foreign_prefix_len", "gen__asset_foreign_suffix_len"]
@@ -6605,7 +6978,7 @@ mod tests {
             }
 
             state LocalState {
-                byte[32] target_id;
+                covid target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -6651,7 +7024,7 @@ mod tests {
             }
 
             state LocalState {
-                byte[32] target_id;
+                covid target_id;
             }
 
             actor ForeignA owns ForeignState {

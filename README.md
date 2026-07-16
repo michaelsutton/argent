@@ -1,15 +1,42 @@
 # Argent
 
-Argent is an actor-style language for writing Kaspa covenant applications that
-compile to plain Silverscript.
+Argent is an actor-based, multi-contract and multi-app language and compiler for
+building Kaspa covenant applications. It compiles `.ag` source to plain,
+auditable Silverscript contracts plus portable artifacts consumed by
+`argent-runtime`.
 
-Argent source describes the application state, actors, entrypoints, coordinated
-inputs and outputs, observed covenants, and successor actors. The compiler emits
-auditable `.sil` files plus a portable artifact consumed by `argent-runtime`.
+An Argent app describes transaction-wide state transitions over covenant UTXOs.
+Actors own typed state, entries consume and emit one or more actors, and
+`become` defines the successor actors created by the transaction.
+Inter-Covenant Communication (ICC) extends the same model across independently
+compiled apps, allowing several covenant actors to inspect and constrain one
+atomic transition.
+
+The compiler and runtime handle the underlying covenant plumbing: state
+layouts, template commitments, route families, output validation, observed
+covenants, virtual state expansion, and hidden witness material. Application
+code stays at the level of actors, state, and transitions.
 
 Argent is still evolving, but the main pieces are present: compiler, generated
-Silverscript, portable artifacts, runtime transaction building, route families,
-actor enums, ICC, open observed actors, and virtual-slot state expansion.
+Silverscript, portable artifacts, runtime transaction building, multi-actor
+routes, actor enums, closed and open ICC, and virtual-slot state expansion.
+
+```text
+.ag source
+    |
+    v
+Argent compiler
+    |
+    +-- plain .sil contracts
+    |
+    +-- portable artifact
+              |
+              v
+       argent-runtime
+              |
+              v
+   atomic multi-actor Kaspa tx
+```
 
 ## Quick start
 
@@ -34,6 +61,12 @@ cargo run -- build examples/icc/kcc20_asset.ag --out examples/build/icc_kcc20_as
 cargo run -- build examples/icc/minter.ag --out examples/build/icc_minter
 cargo run -- build examples/open_icc/agent.ag --out examples/build/open_icc_agent
 cargo run -- build examples/open_icc/core.ag --out examples/build/open_icc_core
+```
+
+When one source file declares multiple apps, select the app to build by name:
+
+```sh
+cargo run -- build contracts.ag --app DexCore --out build/dex-core
 ```
 
 Generated outputs include:
@@ -101,54 +134,72 @@ Core terms:
 - [examples/open_icc](examples/open_icc): open observed actors and virtual-slot
   agent state
 
+For client-side examples, see
+[argent-playground](https://github.com/michaelsutton/argent-playground). It is a
+separate Rust project that depends on a neighboring Argent checkout and shows
+complete app compilation and transaction-building flows through
+`argent-runtime`.
+
 ## Runtime
 
 `argent-runtime` is the artifact-only consumer surface. It has no compiler
 dependency. It loads compiled artifacts, fills hidden witness material, builds
-covenant UTXOs and outputs, composes artifact bundles, and constructs P2SH
-signature scripts for tests and client tooling.
+covenant UTXOs, composes artifact bundles, and builds complete transactions
+from concrete actor inputs and outputs.
 
 Classic single-app flow:
 
 ```rust
 let builder = TxBuilder::new(&artifact)?;
 
-let input_state = ticket_state(owner, value);
-let output_state = ticket_state(next_owner, value);
+let input_state = state! { count: 2 };
+let output_state = state! { count: 5 };
 
 // The covenant UTXO being spent.
-let input_utxo = builder.covenant_utxo("Ticket", input_state.clone(), value, 0, false, Some(covenant_id))?;
-
-// The successor covenant output this entry authorizes.
-let output = builder.covenant_output("Ticket", output_state, value, 0, covenant_id)?;
-
-let sigscript = builder.p2sh_signature_script(
-    "Ticket",
-    "transfer",
-    input_state,
-    args![next_owner],
+let input_utxo = builder.covenant_utxo(
+    "Counter",
+    input_state.clone(),
+    value,
+    0,
+    false,
+    Some(covenant_id),
 )?;
 
-// ... compose tx
+let context = TxContext::new()
+    .argent_input(
+        "Counter",
+        input_state,
+        EntryCall::new("bump").args(args![3]),
+        outpoint,
+        input_utxo,
+    )
+    .argent_output(
+        "Counter",
+        output_state,
+        CovenantBinding::new(0, covenant_id),
+        value,
+    );
+
+let tx = builder.build(&context)?;
 ```
 
 The runtime API is Argent-specific while the language settles. The lower-level
 Silverscript ABI and artifact boundaries are split into small crates so they can
-be kept portable. Multi-app ICC uses `ArtifactBundle`, while the basic path is
-single-artifact `TxBuilder::new`.
+be kept portable. Multi-app ICC uses `ArtifactBundle`; the transaction context
+is otherwise the same for single- and multi-app transactions.
 
 ## Why Argent
 
-Kaspa covenants make it possible to build applications out of multiple
-coordinated UTXOs, but hand-written covenant systems quickly accumulate
-mechanical obligations: template hashes, state serialization, prefix/suffix
-witnesses, output ordering, route commitments, observed covenant ids, and
-cross-contract state reads.
+Kaspa covenants make it possible to build applications from several stateful
+UTXOs whose transitions compose atomically in one transaction. But hand-written
+multi-contract systems quickly accumulate mechanical obligations: state
+serialization, template hashes, route commitments, prefix/suffix witnesses,
+output ordering, observed covenant ids, and cross-contract state reads.
 
-Argent makes those relationships source-level. Actors own state. Entries name
-the peer inputs they consume, the outputs they emit, the foreign covenants they
-observe, and the actors those outputs become. The compiler checks that the
-declared state-machine edges are well formed, then emits the Silverscript that
+Argent makes the application graph source-level. Actors own state. Entries
+declare the peer actors they consume, the outputs they emit, the foreign
+covenants they observe, and the successor actors those outputs become. The
+compiler checks the declared state-machine edges and emits the Silverscript that
 performs the low-level validation.
 
 Generated contracts stay as plain `.sil` files, and the artifact records the

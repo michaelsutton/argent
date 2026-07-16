@@ -1,7 +1,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use argent::emit::emit_build;
+use argent::emit::{emit_build, emit_build_app};
 use argent::loader::load_program;
 use argent::{ArgentError, Result};
 
@@ -28,6 +28,7 @@ fn run() -> Result<()> {
 
 fn build(args: Vec<String>) -> Result<()> {
     let mut input = None;
+    let mut app_name = None;
     let mut out_dir = PathBuf::from("build/argent");
     let mut idx = 0;
     while idx < args.len() {
@@ -37,6 +38,11 @@ fn build(args: Vec<String>) -> Result<()> {
                 let value = args.get(idx).ok_or_else(|| ArgentError::new("missing value after --out"))?;
                 out_dir = PathBuf::from(value);
             }
+            "--app" => {
+                idx += 1;
+                let value = args.get(idx).ok_or_else(|| ArgentError::new("missing value after --app"))?;
+                app_name = Some(value.clone());
+            }
             value if input.is_none() => input = Some(PathBuf::from(value)),
             value => return Err(ArgentError::new(format!("unexpected argument `{value}`"))),
         }
@@ -45,11 +51,15 @@ fn build(args: Vec<String>) -> Result<()> {
 
     let input = input.ok_or_else(|| ArgentError::new("missing input .ag file"))?;
     let program = load_program(&input)?;
-    emit_build(&program, &out_dir)?;
+    if let Some(app_name) = app_name {
+        emit_build_app(&program, &app_name, &out_dir)?;
+    } else {
+        emit_build(&program, &out_dir)?;
+    }
     println!("wrote {}", out_dir.display());
     Ok(())
 }
 
 fn print_usage() {
-    eprintln!("usage: argentc build <app.ag> [--out <dir>]");
+    eprintln!("usage: argentc build <app.ag> [--app <name>] [--out <dir>]");
 }

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "53442214fbad1387ec219089e395d28bd79679fd258647d7189f86d6777951f5",
+  "id": "5247dd48c24c4d592d218bd71475c0230832ac338fa79f121e883f7e7ab07cf3",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -45,28 +45,28 @@
           "actor": "League",
           "contract": "League",
           "symbol": "gen__league_template",
-          "hash_hex": "f879fd476b2bce57088b601d67b8000e47496747ea6f99512d5a5e29a41963ea"
+          "canonical_template_hash": "f879fd476b2bce57088b601d67b8000e47496747ea6f99512d5a5e29a41963ea"
         },
         {
           "id": "template/player",
           "actor": "Player",
           "contract": "Player",
           "symbol": "gen__player_template",
-          "hash_hex": "1cf0549d94523150510111dd265e8f8e64c94d9a9e13641ccfbb00a74f7ffbd0"
+          "canonical_template_hash": "1cf0549d94523150510111dd265e8f8e64c94d9a9e13641ccfbb00a74f7ffbd0"
         },
         {
           "id": "template/stones_game",
           "actor": "StonesGame",
           "contract": "StonesGame",
           "symbol": "gen__stones_game_template",
-          "hash_hex": "5897257152e93a2b4ed3f6efa9a7492808b6303883fabe84c02d6c68486a8a18"
+          "canonical_template_hash": "5897257152e93a2b4ed3f6efa9a7492808b6303883fabe84c02d6c68486a8a18"
         },
         {
           "id": "template/stones_settle",
           "actor": "StonesSettle",
           "contract": "StonesSettle",
           "symbol": "gen__stones_settle_template",
-          "hash_hex": "849026de6755bd748cc821b6fce3e7dac117ff5744a4f9b1e02c917a1d2ebe78"
+          "canonical_template_hash": "849026de6755bd748cc821b6fce3e7dac117ff5744a4f9b1e02c917a1d2ebe78"
         }
       ],
       "runtime_states": [
