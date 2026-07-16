@@ -350,6 +350,10 @@ mod tests {
         let badge_owner_pk = badge_owner.x_only_public_key().0.serialize().to_vec();
         let controller_initial = state! { minted: 0 };
         let badge_initial = state! { owner: badge_owner_pk.clone(), controller_id: controller_covenant_id, balance: 10 };
+        let controller_next = state! { minted: 7 };
+        let badge_next = state! { owner: badge_owner_pk, controller_id: controller_covenant_id, balance: 17 };
+        let controller_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x72; 32]), index: 0 };
+        let badge_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x73; 32]), index: 0 };
         let controller_utxo = builder
             .covenant_utxo("Controller", controller_initial.clone(), 4_000, 0, false, Some(controller_covenant_id))
             .expect("controller UTXO builds");
@@ -360,21 +364,17 @@ mod tests {
         let built = builder
             .transition("Controller", "mint")
             .args(args![asset_covenant_id, 7])
-            .input(
-                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x72; 32]), index: 0 },
-                controller_utxo,
-                controller_initial,
-            )
-            .output("controller", state! { minted: 7 }, 4_000)
+            .input(controller_outpoint, controller_utxo.clone(), controller_initial.clone())
+            .output("controller", controller_next.clone(), 4_000)
             .co_spend_in_app_with(
                 "badge_asset",
                 "Badge",
                 "apply",
-                TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x73; 32]), index: 0 },
-                badge_utxo,
-                badge_initial,
+                badge_outpoint,
+                badge_utxo.clone(),
+                badge_initial.clone(),
                 |tx, input_idx| args![17, sign_mutable_input(tx, input_idx, &badge_owner)],
-                state! { owner: badge_owner_pk, controller_id: controller_covenant_id, balance: 17 },
+                badge_next.clone(),
                 2_000,
             )
             .build()
@@ -385,6 +385,88 @@ mod tests {
         assert_eq!(built.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
         assert_eq!(built.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
         assert!(built.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+
+        let context = TxContext::new()
+            .argent_input(
+                "Controller",
+                controller_initial.clone(),
+                EntryCall::new("mint").args(args![asset_covenant_id, 7]),
+                controller_outpoint,
+                controller_utxo.clone(),
+            )
+            .argent_input(
+                "badge_asset::Badge",
+                badge_initial.clone(),
+                EntryCall::new("apply").args_with(|tx, input_idx| args![17, sign_mutable_input(tx, input_idx, &badge_owner)]),
+                badge_outpoint,
+                badge_utxo.clone(),
+            )
+            .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
+            .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
+        let context_tx = builder.build(&context).expect("context resolves the closed observed covenant");
+        assert!(context_tx.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+
+        let extra_output = TxContext::new()
+            .argent_input(
+                "Controller",
+                controller_initial.clone(),
+                EntryCall::new("mint").args(args![asset_covenant_id, 7]),
+                controller_outpoint,
+                controller_utxo.clone(),
+            )
+            .argent_input(
+                "badge_asset::Badge",
+                badge_initial.clone(),
+                EntryCall::new("apply").args(args![17, vec![0; 65]]),
+                badge_outpoint,
+                badge_utxo.clone(),
+            )
+            .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
+            .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000)
+            .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
+        let err = builder.build(&extra_output).expect_err("observed covenant output cardinality must be exact");
+        assert!(
+            matches!(
+                err,
+                BuilderError::ObservedCountMismatch { ref observe, side: "output", expected: 1, found: 2 }
+                    if observe == "asset"
+            ),
+            "unexpected error: {err}"
+        );
+
+        let ordinary_badge_script = builder
+            .script_public_key_in_app("badge_asset", "Badge", badge_next)
+            .expect("ordinary output can reproduce the Badge script");
+        let missing_metadata = TxContext::new()
+            .argent_input(
+                "Controller",
+                controller_initial,
+                EntryCall::new("mint").args(args![asset_covenant_id, 7]),
+                controller_outpoint,
+                controller_utxo,
+            )
+            .argent_input(
+                "badge_asset::Badge",
+                badge_initial,
+                EntryCall::new("apply").args(args![17, vec![0; 65]]),
+                badge_outpoint,
+                badge_utxo,
+            )
+            .argent_output("Controller", controller_next, CovenantBinding::new(0, controller_covenant_id), 4_000)
+            .output(ordinary_badge_script, Some(CovenantBinding::new(1, asset_covenant_id)), 2_000);
+        let err = builder.build(&missing_metadata).expect_err("observed outputs must retain Argent metadata");
+        assert!(
+            matches!(
+                err,
+                BuilderError::MissingObservedActorMetadata {
+                    ref observe,
+                    side: "output",
+                    ref handle,
+                    index: 1
+                } if observe == "asset" && handle == "badge"
+            ),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1438,7 +1520,7 @@ mod tests {
             .expect("fluent cell UTXO builds");
         let fluent = builder
             .transition("Cell", "advance")
-            .input(cell_outpoint, fluent_cell_utxo, cell_initial.clone())
+            .input(cell_outpoint, fluent_cell_utxo.clone(), cell_initial.clone())
             .observe("remote", observed.get("remote").expect("remote context exists").clone())
             .output("cell", cell_next.clone(), cell_value)
             .co_spend_observed("remote", "agent", "step", agent_outpoint, args![agent_next.clone()], agent_value)
@@ -1449,6 +1531,21 @@ mod tests {
         assert_eq!(fluent.transaction.outputs[0].covenant.unwrap().authorizing_input, 0);
         assert_eq!(fluent.transaction.outputs[1].covenant.unwrap().authorizing_input, 1);
         assert!(fluent.transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+
+        let context = TxContext::new()
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, fluent_cell_utxo)
+            .argent_input(
+                "open_agent::Agent",
+                agent_initial.clone(),
+                EntryCall::new("step").args(args![agent_next.clone()]),
+                agent_outpoint,
+                agent_utxo.clone(),
+            )
+            .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value)
+            .argent_output("open_agent::Agent", agent_next.clone(), CovenantBinding::new(1, agent_covenant_id), agent_value);
+        let context_tx = builder.build(&context).expect("context resolves the open observed actor");
+        assert_eq!(context_tx.inputs[0].signature_script, fluent.transaction.inputs[0].signature_script);
+        assert_eq!(context_tx.inputs[1].signature_script, fluent.transaction.inputs[1].signature_script);
 
         let mut observed_keyed_by_app = BTreeMap::new();
         observed_keyed_by_app

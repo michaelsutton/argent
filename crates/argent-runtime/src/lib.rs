@@ -308,6 +308,14 @@ pub enum BuilderError {
     UnknownState { app: String, state: String },
     #[error("observed input `{observe}.{handle}` UTXO does not match actor `{actor}` and state")]
     ObservedUtxoScriptMismatch { observe: String, handle: String, actor: String },
+    #[error("observe `{observe}` covenant id source must resolve to exactly 32 bytes")]
+    InvalidObservedCovenantId { observe: String },
+    #[error("observe `{observe}` expects {expected} {side}s for its covenant id, found {found}")]
+    ObservedCountMismatch { observe: String, side: &'static str, expected: usize, found: usize },
+    #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no Argent actor metadata")]
+    MissingObservedActorMetadata { observe: String, side: &'static str, handle: String, index: usize },
+    #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
+    ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
     #[error("Argent input {input_index} `{actor}` has no covenant id")]
@@ -334,7 +342,7 @@ pub enum BuilderError {
 
 #[derive(Clone, Debug)]
 pub struct ArtifactBundle<'a> {
-    primary: &'a Artifact,
+    primary_alias: String,
     apps: BTreeMap<String, &'a Artifact>,
 }
 
@@ -459,18 +467,20 @@ pub struct ObservedCovenantOutputRequest<'a> {
 
 impl<'a> ArtifactBundle<'a> {
     pub fn new(primary: &'a Artifact) -> BuilderResult<Self> {
-        validate_artifact("primary", primary)?;
-        Ok(Self { primary, apps: BTreeMap::new() })
+        let primary_alias = artifact_app_alias(&primary.app);
+        validate_artifact(&primary_alias, primary)?;
+        let apps = BTreeMap::from([(primary_alias.clone(), primary)]);
+        Ok(Self { primary_alias, apps })
     }
 
     pub fn with_app(mut self, alias: impl Into<String>, artifact: &'a Artifact) -> BuilderResult<Self> {
         let alias = alias.into();
-        if self.apps.contains_key(&alias) {
-            return Err(BuilderError::DuplicateAppAlias(alias));
-        }
         let expected = artifact_app_alias(&artifact.app);
         if alias != expected {
             return Err(BuilderError::AppAliasMismatch { app: artifact.app.clone(), expected, found: alias });
+        }
+        if self.apps.contains_key(&alias) {
+            return Err(BuilderError::DuplicateAppAlias(alias));
         }
         validate_artifact(&alias, artifact)?;
         self.apps.insert(alias, artifact);
@@ -491,8 +501,17 @@ impl<'a> ArtifactBundle<'a> {
         self.apps.get(alias).copied().ok_or_else(|| BuilderError::UnknownAppAlias(alias.to_string()))
     }
 
+    fn primary(&self) -> &'a Artifact {
+        self.apps.get(&self.primary_alias).copied().expect("bundle contains its primary app")
+    }
+
+    fn primary_alias(&self) -> &str {
+        &self.primary_alias
+    }
+
     fn artifacts(&self) -> impl Iterator<Item = &'a Artifact> + '_ {
-        std::iter::once(self.primary).chain(self.apps.values().copied())
+        std::iter::once(self.primary())
+            .chain(self.apps.iter().filter(|(alias, _)| alias.as_str() != self.primary_alias.as_str()).map(|(_, artifact)| *artifact))
     }
 }
 
@@ -767,7 +786,7 @@ impl<'a> TxBuilder<'a> {
             }
         }
         if let Some(observed) = observed {
-            self.validate_observed_contexts(actor_name, entry_name, argent_entry, observed)?;
+            self.validate_observed_contexts(artifact, actor_name, entry_name, argent_entry, observed)?;
         }
         let mut args = self.runtime_entry_args(contract_ref.artifact, contract, sil_entry, user_args)?;
         args.extend(self.resolve_hidden_args_in_artifact(
@@ -995,7 +1014,7 @@ impl<'a> TxBuilder<'a> {
     pub fn observed_covenant_outputs(&self, request: ObservedCovenantOutputRequest<'_>) -> BuilderResult<Vec<TransactionOutput>> {
         let entry = self.entry(request.actor_name, request.entry_name)?;
         let observe = self.observe(request.actor_name, request.entry_name, entry, request.observe)?;
-        self.validate_observed_covenant(request.observe, observe, request.context)?;
+        self.validate_observed_covenant(self.bundle.primary(), request.observe, observe, request.context)?;
         let app = request.context.app.as_str();
 
         for handle in request.context.outputs.keys().chain(request.output_values.keys()) {
@@ -1054,7 +1073,7 @@ impl<'a> TxBuilder<'a> {
     /// Return the template handle by which an external app observes `actor` as
     /// `actor_type<state>`.
     pub fn actor_type_handle(&self, actor: &str, state: &str) -> BuilderResult<Vec<u8>> {
-        self.actor_type_handle_in_artifact(self.bundle.primary, actor, state)
+        self.actor_type_handle_in_artifact(self.bundle.primary(), actor, state)
     }
 
     /// Return an attached app actor's external `actor_type<state>` handle.
@@ -1085,11 +1104,11 @@ impl<'a> TxBuilder<'a> {
         Ok(decode_hex(&handle.template.hash_hex)?)
     }
 
-    fn validate_actor_interface(&self, app: &str, actor: &str) -> BuilderResult<()> {
+    fn validate_actor_interface(&self, observing_artifact: &Artifact, app: &str, actor: &str) -> BuilderResult<()> {
         let artifact = self.bundle.app(app)?;
-        let expected = find_interface(&self.bundle.primary.argent.interfaces.imports, actor).ok_or_else(|| {
-            BuilderError::MissingInterface { app: "primary".to_string(), direction: "import", actor: actor.to_string() }
-        })?;
+        let observing_app = artifact_app_alias(&observing_artifact.app);
+        let expected = find_interface(&observing_artifact.argent.interfaces.imports, actor)
+            .ok_or_else(|| BuilderError::MissingInterface { app: observing_app, direction: "import", actor: actor.to_string() })?;
         let found = find_interface(&artifact.argent.interfaces.exports, actor).ok_or_else(|| BuilderError::MissingInterface {
             app: app.to_string(),
             direction: "export",
@@ -1106,15 +1125,25 @@ impl<'a> TxBuilder<'a> {
         Ok(())
     }
 
-    fn observed_contract_ref(&self, observe: &str, contract: &str) -> BuilderResult<ContractRef<'a>> {
+    fn observed_contract_ref(
+        &self,
+        observing_artifact: &'a Artifact,
+        observe: &str,
+        contract: &str,
+    ) -> BuilderResult<ContractRef<'a>> {
         let mut contract_apps = Vec::new();
         let mut valid_apps = Vec::new();
         let mut first_interface_error = None;
         for (app, artifact) in &self.bundle.apps {
+            let app = app.as_str();
+            let artifact = *artifact;
+            if std::ptr::eq(artifact, observing_artifact) {
+                continue;
+            }
             if artifact.sil_abi.contract(contract).is_some() {
-                contract_apps.push(app.clone());
-                match self.validate_actor_interface(app, contract) {
-                    Ok(()) => valid_apps.push(app.clone()),
+                contract_apps.push(app.to_string());
+                match self.validate_actor_interface(observing_artifact, app, contract) {
+                    Ok(()) => valid_apps.push(app.to_string()),
                     Err(err) if first_interface_error.is_none() => first_interface_error = Some(err),
                     Err(_) => {}
                 }
@@ -1229,7 +1258,7 @@ impl<'a> TxBuilder<'a> {
                         if observed_actor.open_state.is_some() {
                             return Err(BuilderError::MissingObservedCovenant { observe: observe.clone() });
                         }
-                        self.observed_contract_ref(observe, &observed_actor.actor)
+                        self.observed_contract_ref(primary_artifact, observe, &observed_actor.actor)
                     }
                 }
             }
@@ -1332,6 +1361,7 @@ impl<'a> TxBuilder<'a> {
 
     fn validate_observed_contexts(
         &self,
+        observing_artifact: &'a Artifact,
         actor_name: &str,
         entry_name: &str,
         entry: &EntryArtifact,
@@ -1343,24 +1373,26 @@ impl<'a> TxBuilder<'a> {
         for observe in &entry.observes {
             let context =
                 observed.get(&observe.name).ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.name.clone() })?;
-            self.validate_observed_covenant(&observe.name, observe, context)?;
+            self.validate_observed_covenant(observing_artifact, &observe.name, observe, context)?;
         }
         Ok(())
     }
 
     fn validate_observed_covenant(
         &self,
+        observing_artifact: &'a Artifact,
         observe_name: &str,
         observe: &ObserveArtifact,
         context: &ObservedCovenantContext,
     ) -> BuilderResult<()> {
         self.bundle.app(&context.app)?;
-        self.validate_observed_inputs(observe_name, &observe.inputs, context)?;
-        self.validate_observed_outputs(observe_name, &observe.outputs, context)
+        self.validate_observed_inputs(observing_artifact, observe_name, &observe.inputs, context)?;
+        self.validate_observed_outputs(observing_artifact, observe_name, &observe.outputs, context)
     }
 
     fn validate_observed_inputs(
         &self,
+        observing_artifact: &'a Artifact,
         observe_name: &str,
         expected: &[ObservedActorArtifact],
         context: &ObservedCovenantContext,
@@ -1380,7 +1412,14 @@ impl<'a> TxBuilder<'a> {
                 side: observed_side_label(ObservedActorSideArtifact::Input),
                 handle: input.name.clone(),
             })?;
-            self.validate_observed_actor(&context.app, observe_name, ObservedActorSideArtifact::Input, input, &observed.actor)?;
+            self.validate_observed_actor(
+                observing_artifact,
+                &context.app,
+                observe_name,
+                ObservedActorSideArtifact::Input,
+                input,
+                &observed.actor,
+            )?;
             let expected_script_public_key = self.script_public_key_in_app(&context.app, &observed.actor, observed.state.clone())?;
             if observed.utxo.script_public_key != expected_script_public_key {
                 return Err(BuilderError::ObservedUtxoScriptMismatch {
@@ -1395,6 +1434,7 @@ impl<'a> TxBuilder<'a> {
 
     fn validate_observed_outputs(
         &self,
+        observing_artifact: &'a Artifact,
         observe_name: &str,
         expected: &[ObservedActorArtifact],
         context: &ObservedCovenantContext,
@@ -1414,7 +1454,14 @@ impl<'a> TxBuilder<'a> {
                 side: observed_side_label(ObservedActorSideArtifact::Output),
                 handle: output.name.clone(),
             })?;
-            self.validate_observed_actor(&context.app, observe_name, ObservedActorSideArtifact::Output, output, &observed.actor)?;
+            self.validate_observed_actor(
+                observing_artifact,
+                &context.app,
+                observe_name,
+                ObservedActorSideArtifact::Output,
+                output,
+                &observed.actor,
+            )?;
             self.redeem_script_in_app(&context.app, &observed.actor, observed.state.clone())?;
         }
         Ok(())
@@ -1422,6 +1469,7 @@ impl<'a> TxBuilder<'a> {
 
     fn validate_observed_actor(
         &self,
+        observing_artifact: &'a Artifact,
         app: &str,
         observe_name: &str,
         side: ObservedActorSideArtifact,
@@ -1439,7 +1487,7 @@ impl<'a> TxBuilder<'a> {
                     state: expected_state.to_string(),
                 });
             }
-            let expected_layout = state_artifact(self.bundle.primary, expected_state)?;
+            let expected_layout = state_artifact(observing_artifact, expected_state)?;
             let found_layout = state_artifact(found.artifact, &found.actor.state)?;
             if expected_layout.fields != found_layout.fields {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
@@ -1461,7 +1509,7 @@ impl<'a> TxBuilder<'a> {
                 found: found_actor.to_string(),
             });
         }
-        self.validate_actor_interface(app, &expected.actor)?;
+        self.validate_actor_interface(observing_artifact, app, &expected.actor)?;
         Ok(())
     }
 
@@ -1527,7 +1575,7 @@ impl<'a> TxBuilder<'a> {
                             values.insert(
                                 field.name.clone(),
                                 ArtifactValue::Bytes(decode_hex(
-                                    &self.observed_contract_ref(observe, contract)?.contract.compiled.template.hash_hex,
+                                    &self.observed_contract_ref(artifact, observe, contract)?.contract.compiled.template.hash_hex,
                                 )?),
                             );
                         }
@@ -1689,7 +1737,7 @@ impl<'a> TxBuilder<'a> {
     }
 
     pub fn route_family_table_bytes(&self, family_id: &str) -> BuilderResult<Vec<u8>> {
-        self.route_family_table_bytes_in_artifact(self.bundle.primary, family_id)
+        self.route_family_table_bytes_in_artifact(self.bundle.primary(), family_id)
     }
 
     fn route_family_table_bytes_in_artifact(&self, artifact: &'a Artifact, family_id: &str) -> BuilderResult<Vec<u8>> {
