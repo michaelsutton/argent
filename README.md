@@ -63,6 +63,12 @@ cargo run -- build examples/open_icc/agent.ag --out examples/build/open_icc_agen
 cargo run -- build examples/open_icc/core.ag --out examples/build/open_icc_core
 ```
 
+When one source file declares multiple apps, select the app to build by name:
+
+```sh
+cargo run -- build contracts.ag --app DexCore --out build/dex-core
+```
+
 Generated outputs include:
 
 - `artifact.json`: the portable Argent artifact

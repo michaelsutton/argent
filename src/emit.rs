@@ -12,11 +12,22 @@ use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
 pub fn emit_build(program: &Program, out_dir: impl AsRef<Path>) -> Result<()> {
+    emit_build_selected(program, None, out_dir)
+}
+
+pub fn emit_build_app(program: &Program, app_name: &str, out_dir: impl AsRef<Path>) -> Result<()> {
+    emit_build_selected(program, Some(app_name), out_dir)
+}
+
+fn emit_build_selected(program: &Program, app_name: Option<&str>, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
     let sil_dir = out_dir.join("sil");
     fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(out_dir, err.to_string()))?;
 
-    let model = Model::from_program(program)?;
+    let model = match app_name {
+        Some(app_name) => Model::from_program_app(program, app_name)?,
+        None => Model::from_program(program)?,
+    };
     let mut actor_sil = BTreeMap::new();
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
@@ -106,6 +117,14 @@ enum RouteRootLeaf {
 
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
+        Self::from_program_selected(program, None)
+    }
+
+    fn from_program_app(program: &'a Program, app_name: &str) -> Result<Self> {
+        Self::from_program_selected(program, Some(app_name))
+    }
+
+    fn from_program_selected(program: &'a Program, app_name: Option<&str>) -> Result<Self> {
         validate_unique_apps(program)?;
         let consts = collect_consts(program)?;
         let functions = collect_functions(program)?;
@@ -113,7 +132,7 @@ impl<'a> Model<'a> {
         let all_actors = collect_actors(program)?;
         let actor_enum_decls = collect_actor_enums(program)?;
 
-        let app = program.apps().next();
+        let app = select_root_app(program, app_name)?;
         let (app_name, template_actors) = if let Some(app) = app {
             (app.name.clone(), app.actors.clone())
         } else {
@@ -800,6 +819,9 @@ fn build_actor_enums(
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut out = BTreeMap::new();
     for actor_enum in actor_enum_decls.values() {
+        if !actor_enum.variants.iter().any(|variant| template_actor_set.contains(variant)) {
+            continue;
+        }
         if actors_by_name.contains_key(&actor_enum.name) || states.contains_key(&actor_enum.name) {
             return Err(ArgentError::new(format!("actor enum `{}` conflicts with an actor or state declaration", actor_enum.name)));
         }
@@ -1162,6 +1184,35 @@ fn validate_unique_apps(program: &Program) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn select_root_app<'a>(program: &'a Program, app_name: Option<&str>) -> Result<Option<&'a AppDecl>> {
+    let root = program
+        .modules
+        .iter()
+        .find(|module| module.path == program.root)
+        .ok_or_else(|| ArgentError::at(&program.root, "root module is missing from the loaded program"))?;
+
+    if let Some(app_name) = app_name {
+        return root
+            .apps
+            .iter()
+            .find(|app| app.name == app_name)
+            .map(Some)
+            .ok_or_else(|| ArgentError::at(&program.root, format!("root module has no app named `{app_name}`")));
+    }
+
+    match root.apps.as_slice() {
+        [] => Ok(None),
+        [app] => Ok(Some(app)),
+        apps => Err(ArgentError::at(
+            &program.root,
+            format!(
+                "root module declares multiple apps ({}); select one with `--app <name>`",
+                apps.iter().map(|app| app.name.as_str()).collect::<Vec<_>>().join(", ")
+            ),
+        )),
+    }
 }
 
 fn compute_state_template_deps<'a>(
