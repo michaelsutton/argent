@@ -509,7 +509,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                BuilderError::ObservedCountMismatch { ref observe, side: "output", expected: 1, found: 2 }
+                BuilderError::ObservedCountMismatch { ref observe, side: Side::Out, expected: 1, found: 2 }
                     if observe == "asset"
             ),
             "unexpected error: {err}"
@@ -544,7 +544,7 @@ mod tests {
                 err,
                 BuilderError::MissingObservedActorMetadata {
                     ref observe,
-                    side: "output",
+                    side: Side::Out,
                     ref handle,
                     index: 1
                 } if observe == "asset" && handle == "badge"
@@ -1309,7 +1309,7 @@ mod tests {
             .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
             .argent_output("kcc20_asset::KCC20", recipient_state.clone(), CovenantBinding::new(1, asset_covenant_id), recipient_value);
         let missing_proxy_err = builder.build(&missing_proxy).expect_err("missing observed input is rejected by the runtime");
-        assert!(matches!(missing_proxy_err, BuilderError::ObservedCountMismatch { side: "input", expected: 1, found: 0, .. }));
+        assert!(matches!(missing_proxy_err, BuilderError::ObservedCountMismatch { side: Side::In, expected: 1, found: 0, .. }));
 
         let wrong_proxy_state = minter_proxy_state(Hash::from_bytes([0xd0; 32]));
         let wrong_proxy = TxContext::new()
@@ -1539,7 +1539,7 @@ mod tests {
         let missing_observed_err = builder.build(&missing_observed).expect_err("the declared observed input/output pair is required");
         assert!(
             matches!(&missing_observed_err, BuilderError::ObservedCountMismatch { observe, side, expected: 1, found: 0 }
-                if observe == "remote" && *side == "input"),
+                if observe == "remote" && *side == Side::In),
             "unexpected error: {missing_observed_err}"
         );
 
@@ -1582,7 +1582,7 @@ mod tests {
             matches!(
                 &bad_layout_err,
                 BuilderError::ObservedStateLayoutMismatch { observe, side, handle, state, actor }
-                    if observe == "remote" && *side == "input" && handle == "agent" && state == "AgentCapsule" && actor == "Agent"
+                    if observe == "remote" && *side == Side::In && handle == "agent" && state == "AgentCapsule" && actor == "Agent"
             ),
             "unexpected error: {bad_layout_err}"
         );

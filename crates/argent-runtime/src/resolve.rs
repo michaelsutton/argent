@@ -14,7 +14,7 @@ use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_scr
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
     ContractRef, EntryArgs, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OrdinaryOutput,
-    TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    Side, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -412,9 +412,9 @@ fn resolve_observation(
     covenant_id: Hash,
 ) -> BuilderResult<ObservedCovenantContext> {
     let matching_inputs = matching_observed_inputs(context, covenant_id);
-    require_observed_count(&observe.name, "input", observe.inputs.len(), matching_inputs.len())?;
+    require_observed_count(&observe.name, Side::In, observe.inputs.len(), matching_inputs.len())?;
     let matching_outputs = matching_observed_outputs(context, covenant_id);
-    require_observed_count(&observe.name, "output", observe.outputs.len(), matching_outputs.len())?;
+    require_observed_count(&observe.name, Side::Out, observe.outputs.len(), matching_outputs.len())?;
 
     // Pair both sides positionally: covenant members are indexed by transaction
     // order, while emitted observe checks assign indexes in declaration order.
@@ -466,7 +466,7 @@ fn matching_observed_outputs(context: &ResolveContext<'_, '_, '_>, covenant_id: 
         .collect()
 }
 
-fn require_observed_count(observe: &str, side: &'static str, expected: usize, found: usize) -> BuilderResult<()> {
+fn require_observed_count(observe: &str, side: Side, expected: usize, found: usize) -> BuilderResult<()> {
     if found != expected {
         return Err(BuilderError::ObservedCountMismatch { observe: observe.to_string(), side, expected, found });
     }
@@ -483,7 +483,7 @@ fn resolve_observed_input(
     let ResolveInput::Argent(candidate) = candidate else {
         return Err(BuilderError::MissingObservedActorMetadata {
             observe: observe.to_string(),
-            side: "input",
+            side: Side::In,
             handle: declaration.name.clone(),
             index,
         });
@@ -509,7 +509,7 @@ fn resolve_observed_output(
     let ResolveOutput::Argent(candidate) = candidate else {
         return Err(BuilderError::MissingObservedActorMetadata {
             observe: observe.to_string(),
-            side: "output",
+            side: Side::Out,
             handle: declaration.name.clone(),
             index,
         });

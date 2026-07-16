@@ -13,7 +13,7 @@
 mod context;
 mod resolve;
 
-use std::{collections::BTreeMap, error::Error};
+use std::{collections::BTreeMap, error::Error, fmt};
 
 pub use argent_artifact::Artifact;
 pub use context::{
@@ -226,6 +226,33 @@ macro_rules! args {
     }};
 }
 
+/// The input or output side of an observed covenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// Observed inputs.
+    In,
+    /// Observed outputs.
+    Out,
+}
+
+impl fmt::Display for Side {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::In => "input",
+            Self::Out => "output",
+        })
+    }
+}
+
+impl From<ObservedActorSideArtifact> for Side {
+    fn from(side: ObservedActorSideArtifact) -> Self {
+        match side {
+            ObservedActorSideArtifact::Input => Self::In,
+            ObservedActorSideArtifact::Output => Self::Out,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum BuilderError {
     #[error(transparent)]
@@ -293,13 +320,13 @@ pub enum BuilderError {
     #[error("missing observed covenant context `{observe}`")]
     MissingObservedCovenant { observe: String },
     #[error("missing observed {side} `{observe}.{handle}`")]
-    MissingObservedActor { observe: String, side: &'static str, handle: String },
+    MissingObservedActor { observe: String, side: Side, handle: String },
     #[error("unknown observed {side} `{observe}.{handle}`")]
-    UnknownObservedActor { observe: String, side: &'static str, handle: String },
+    UnknownObservedActor { observe: String, side: Side, handle: String },
     #[error("observed {side} `{observe}.{handle}` expected actor `{expected}`, got `{found}`")]
-    ObservedActorMismatch { observe: String, side: &'static str, handle: String, expected: String, found: String },
+    ObservedActorMismatch { observe: String, side: Side, handle: String, expected: String, found: String },
     #[error("observed {side} `{observe}.{handle}` state `{state}` layout does not match attached actor `{actor}`")]
-    ObservedStateLayoutMismatch { observe: String, side: &'static str, handle: String, state: String, actor: String },
+    ObservedStateLayoutMismatch { observe: String, side: Side, handle: String, state: String, actor: String },
     #[error("attached actor `{actor}` does not expose actor_type<{state}>")]
     MissingActorTypeHandle { actor: String, state: String },
     #[error("artifact `{app}` has no state `{state}`")]
@@ -309,9 +336,9 @@ pub enum BuilderError {
     #[error("observe `{observe}` covenant id source must resolve to exactly 32 bytes")]
     InvalidObservedCovenantId { observe: String },
     #[error("observe `{observe}` expects {expected} {side}s for its covenant id, found {found}")]
-    ObservedCountMismatch { observe: String, side: &'static str, expected: usize, found: usize },
+    ObservedCountMismatch { observe: String, side: Side, expected: usize, found: usize },
     #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no Argent actor metadata")]
-    MissingObservedActorMetadata { observe: String, side: &'static str, handle: String, index: usize },
+    MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -1066,7 +1093,7 @@ impl<'a> TxBuilder<'a> {
         };
         actors.iter().find(|actor| actor.name == handle).ok_or_else(|| BuilderError::MissingObservedActor {
             observe: observe_name.to_string(),
-            side: observed_side_label(side),
+            side: side.into(),
             handle: handle.to_string(),
         })
     }
@@ -1113,7 +1140,7 @@ impl<'a> TxBuilder<'a> {
             if expected.iter().all(|input| &input.name != handle) {
                 return Err(BuilderError::UnknownObservedActor {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(ObservedActorSideArtifact::Input),
+                    side: Side::In,
                     handle: handle.clone(),
                 });
             }
@@ -1121,7 +1148,7 @@ impl<'a> TxBuilder<'a> {
         for input in expected {
             let observed = context.inputs.get(&input.name).ok_or_else(|| BuilderError::MissingObservedActor {
                 observe: observe_name.to_string(),
-                side: observed_side_label(ObservedActorSideArtifact::Input),
+                side: Side::In,
                 handle: input.name.clone(),
             })?;
             self.validate_observed_actor(
@@ -1157,7 +1184,7 @@ impl<'a> TxBuilder<'a> {
             if expected.iter().all(|output| &output.name != handle) {
                 return Err(BuilderError::UnknownObservedActor {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(ObservedActorSideArtifact::Output),
+                    side: Side::Out,
                     handle: handle.clone(),
                 });
             }
@@ -1165,7 +1192,7 @@ impl<'a> TxBuilder<'a> {
         for output in expected {
             let observed = context.outputs.get(&output.name).ok_or_else(|| BuilderError::MissingObservedActor {
                 observe: observe_name.to_string(),
-                side: observed_side_label(ObservedActorSideArtifact::Output),
+                side: Side::Out,
                 handle: output.name.clone(),
             })?;
             self.validate_observed_actor(
@@ -1196,7 +1223,7 @@ impl<'a> TxBuilder<'a> {
             if !state_satisfies(found.artifact, &found.actor.state, expected_state) {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(side),
+                    side: side.into(),
                     handle: expected.name.clone(),
                     actor: found_actor.to_string(),
                     state: expected_state.to_string(),
@@ -1207,7 +1234,7 @@ impl<'a> TxBuilder<'a> {
             if expected_layout.fields != found_layout.fields {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(side),
+                    side: side.into(),
                     handle: expected.name.clone(),
                     state: expected_state.to_string(),
                     actor: found_actor.to_string(),
@@ -1218,7 +1245,7 @@ impl<'a> TxBuilder<'a> {
         if expected.actor != found_actor {
             return Err(BuilderError::ObservedActorMismatch {
                 observe: observe_name.to_string(),
-                side: observed_side_label(side),
+                side: side.into(),
                 handle: expected.name.clone(),
                 expected: expected.actor.clone(),
                 found: found_actor.to_string(),
@@ -1353,14 +1380,14 @@ impl<'a> TxBuilder<'a> {
             .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
         let output = context.outputs.get(handle).ok_or_else(|| BuilderError::MissingObservedActor {
             observe: observe.clone(),
-            side: observed_side_label(ObservedActorSideArtifact::Output),
+            side: Side::Out,
             handle: handle.clone(),
         })?;
         let contract_ref = self.contract_ref_in_app(&context.app, &output.actor)?;
         if !state_satisfies(contract_ref.artifact, &contract_ref.contract.runtime_state.source, state) {
             return Err(BuilderError::ObservedStateLayoutMismatch {
                 observe: observe.clone(),
-                side: observed_side_label(ObservedActorSideArtifact::Output),
+                side: Side::Out,
                 handle: handle.clone(),
                 state: state.clone(),
                 actor: output.actor.clone(),
@@ -1568,13 +1595,6 @@ fn route_leaf_label(leaf: &RouteTemplateLeafArtifact) -> String {
     match leaf {
         RouteTemplateLeafArtifact::Template { actor, .. } => actor.clone(),
         RouteTemplateLeafArtifact::RouteFamily { family_id, .. } => family_id.clone(),
-    }
-}
-
-fn observed_side_label(side: ObservedActorSideArtifact) -> &'static str {
-    match side {
-        ObservedActorSideArtifact::Input => "input",
-        ObservedActorSideArtifact::Output => "output",
     }
 }
 
