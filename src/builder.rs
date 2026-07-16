@@ -106,6 +106,7 @@ mod tests {
                 EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
                 outpoint,
                 input_utxo.clone(),
+                0,
             )
             .argent_output("Ticket", redeemed_state, CovenantBinding::new(0, covenant_id), input_value);
         builder.build(&context).expect("valid redeem tx passes");
@@ -118,6 +119,7 @@ mod tests {
                 EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), wrong_pk.clone()]),
                 outpoint,
                 input_utxo.clone(),
+                0,
             )
             .argent_output("Ticket", ticket_state(owner_hash.clone(), 7, 1), CovenantBinding::new(0, covenant_id), input_value);
         assert!(builder.build(&bad_args).is_err());
@@ -129,6 +131,7 @@ mod tests {
                 EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
                 outpoint,
                 input_utxo,
+                0,
             )
             .argent_output("Ticket", initial_state, CovenantBinding::new(0, covenant_id), input_value);
         assert!(builder.build(&stale_output).is_err());
@@ -152,6 +155,7 @@ mod tests {
                 EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
                 TransactionOutpoint::new(TransactionId::from_bytes([0x22; 32]), 0),
                 input_utxo,
+                0,
             )
             .argent_output("Ticket", ticket_state(blake2b32(&owner_pk), 11, 1), CovenantBinding::new(0, covenant_id), 1_000);
         let transaction = builder.build(&context).expect("ticket transaction builds");
@@ -205,13 +209,14 @@ mod tests {
             .covenant_utxo("ReserveAsset", state.clone(), 1_000, 0, false, Some(asset_covenant_id))
             .expect("ReserveAsset UTXO builds");
         let context = TxContext::new()
-            .input(TransactionOutpoint::new(TransactionId::from_bytes([0x33; 32]), 0), owner_utxo, Vec::new())
+            .input(TransactionOutpoint::new(TransactionId::from_bytes([0x33; 32]), 0), owner_utxo, Vec::new(), 0)
             .argent_input(
                 "ReserveAsset",
                 state,
                 EntryCall::new("settle").args(args![100]),
                 TransactionOutpoint::new(TransactionId::from_bytes([0x34; 32]), 0),
                 asset_utxo,
+                0,
             )
             .argent_output("ReserveAsset", next_state, CovenantBinding::new(1, asset_covenant_id), 1_000);
         let transaction = builder.build(&context).expect("expanded actor transaction builds");
@@ -258,6 +263,7 @@ mod tests {
             EntryCall::new("redeem").args(args![vec![1; 65], owner_pk, vec![2; 32], vec![3; 32]]),
             TransactionOutpoint::new(TransactionId::from_bytes([0x42; 32]), 0),
             input_utxo,
+            0,
         );
         let err = builder.build(&context).expect_err("user must not provide hidden prefix/suffix witnesses");
 
@@ -310,6 +316,7 @@ mod tests {
                 EntryCall::new("bump").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3]),
                 outpoint,
                 input_utxo.clone(),
+                0,
             )
             .argent_output("Counter", next, CovenantBinding::new(0, covenant_id), input_value);
         let transaction = builder.build(&context).expect("context builds");
@@ -328,10 +335,11 @@ mod tests {
                 EntryCall::new("bump").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), 3]),
                 outpoint,
                 input_utxo,
+                0,
             )
             .argent_output("Counter", initial, CovenantBinding::new(0, covenant_id), input_value);
         let err = builder.build(&wrong_state).expect_err("incorrect expected state must fail contract execution");
-        assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
+        assert!(matches!(err, BuilderError::InputScript { input_index: 0, .. }), "unexpected error: {err}");
     }
 
     #[test]
@@ -389,6 +397,7 @@ mod tests {
                 EntryCall::new("shift").args(args![3]),
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x61; 32]), index: 0 },
                 left_utxo,
+                0,
             )
             .argent_input(
                 "Right",
@@ -396,6 +405,7 @@ mod tests {
                 "accept_shift",
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x62; 32]), index: 0 },
                 right_utxo,
+                0,
             )
             .argent_output("Left", state! { units: 7 }, CovenantBinding::new(0, covenant_id), 3_000)
             .argent_output("Right", state! { units: 4 }, CovenantBinding::new(0, covenant_id), 2_000);
@@ -456,6 +466,7 @@ mod tests {
                 EntryCall::new("mint").args(args![asset_covenant_id, 7]),
                 controller_outpoint,
                 controller_utxo.clone(),
+                0,
             )
             .argent_input(
                 "badge_asset::Badge",
@@ -463,6 +474,7 @@ mod tests {
                 EntryCall::new("apply").args_with(|tx, input_idx| args![17, sign_mutable_input(tx, input_idx, &badge_owner)]),
                 badge_outpoint,
                 badge_utxo.clone(),
+                0,
             )
             .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
             .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
@@ -480,6 +492,7 @@ mod tests {
                 EntryCall::new("mint").args(args![asset_covenant_id, 7]),
                 controller_outpoint,
                 controller_utxo.clone(),
+                0,
             )
             .argent_input(
                 "badge_asset::Badge",
@@ -487,6 +500,7 @@ mod tests {
                 EntryCall::new("apply").args(args![17, vec![0; 65]]),
                 badge_outpoint,
                 badge_utxo.clone(),
+                0,
             )
             .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
             .argent_output("badge_asset::Badge", badge_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000)
@@ -512,6 +526,7 @@ mod tests {
                 EntryCall::new("mint").args(args![asset_covenant_id, 7]),
                 controller_outpoint,
                 controller_utxo,
+                0,
             )
             .argent_input(
                 "badge_asset::Badge",
@@ -519,6 +534,7 @@ mod tests {
                 EntryCall::new("apply").args(args![17, vec![0; 65]]),
                 badge_outpoint,
                 badge_utxo,
+                0,
             )
             .argent_output("Controller", controller_next, CovenantBinding::new(0, controller_covenant_id), 4_000)
             .output(ordinary_badge_script, Some(CovenantBinding::new(1, asset_covenant_id)), 2_000);
@@ -574,6 +590,7 @@ mod tests {
                 EntryCall::new("swap").args(args![asset_covenant_id, next_owner_pk.clone()]),
                 controller_outpoint,
                 controller_utxo.clone(),
+                0,
             )
             .argent_input(
                 "asset_app::Asset",
@@ -582,6 +599,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![next_owner_pk.clone(), sign_mutable_input(tx, input_idx, &owner)]),
                 asset_outpoint,
                 asset_utxo.clone(),
+                0,
             )
             .argent_output("Controller", controller_next.clone(), CovenantBinding::new(0, controller_covenant_id), 4_000)
             .argent_output("asset_app::Asset", asset_next.clone(), CovenantBinding::new(1, asset_covenant_id), 2_000);
@@ -598,6 +616,7 @@ mod tests {
                 EntryCall::new("swap").args(args![asset_covenant_id, next_owner_pk.clone()]),
                 controller_outpoint,
                 controller_utxo,
+                0,
             )
             .argent_input(
                 "asset_app::Asset",
@@ -605,11 +624,12 @@ mod tests {
                 EntryCall::new("transfer").args(args![next_owner_pk.clone(), vec![0; 65]]),
                 asset_outpoint,
                 asset_utxo,
+                0,
             )
             .argent_output("Controller", controller_next, CovenantBinding::new(0, controller_covenant_id), 4_000)
             .argent_output("asset_app::Asset", asset_next, CovenantBinding::new(1, asset_covenant_id), 2_000);
         let err = builder.build(&invalid_signature).expect_err("invalid observed co-spend signature must fail");
-        assert!(matches!(err, BuilderError::TxScript(_)), "unexpected error: {err}");
+        assert!(matches!(err, BuilderError::InputScript { input_index: 1, .. }), "unexpected error: {err}");
     }
 
     #[test]
@@ -695,6 +715,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
                 outpoint_a,
                 player_a_utxo.clone(),
+                0,
             )
             .argent_input(
                 "Player",
@@ -703,6 +724,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_b), owner_b_pk.clone()]),
                 outpoint_b,
                 player_b_utxo.clone(),
+                0,
             )
             .argent_output("Player", next_a.clone(), CovenantBinding::new(0, covenant_id), input_a_value)
             .argent_output("Player", next_b.clone(), CovenantBinding::new(0, covenant_id), input_b_value)
@@ -751,6 +773,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
                 outpoint_a,
                 player_a_utxo.clone(),
+                0,
             )
             .argent_input(
                 "Player",
@@ -759,6 +782,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_b), owner_b_pk.clone()]),
                 outpoint_b,
                 player_b_utxo,
+                0,
             )
             .argent_output("Player", next_b, CovenantBinding::new(0, covenant_id), input_b_value)
             .argent_output("Player", next_a, CovenantBinding::new(0, covenant_id), input_a_value)
@@ -776,8 +800,9 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner_a), owner_a_pk.clone(), 0, 7, 3]),
                 outpoint_a,
                 player_a_utxo,
+                0,
             )
-            .input(outpoint_b, wrong_peer, Vec::new())
+            .input(outpoint_b, wrong_peer, Vec::new(), 0)
             .argent_output(
                 "Player",
                 player_state(owner_a_hash, player_a_id, 1, 0, 0, 0),
@@ -808,7 +833,7 @@ mod tests {
             .covenant_utxo("Player", player_initial.clone(), input_value, 0, false, Some(covenant_id))
             .expect("Player utxo builds");
         let enter_mux = TxContext::new()
-            .argent_input("Player", player_initial.clone(), "enter_mux", player_outpoint, player_utxo.clone())
+            .argent_input("Player", player_initial.clone(), "enter_mux", player_outpoint, player_utxo.clone(), 0)
             .argent_output("Mux", mux_initial.clone(), CovenantBinding::new(0, covenant_id), input_value);
         let enter_mux_tx = builder.build(&enter_mux).expect("Player can enter the mux family");
 
@@ -846,7 +871,7 @@ mod tests {
         let mux_utxo =
             builder.covenant_utxo("Mux", mux_initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
         let choose_pawn = TxContext::new()
-            .argent_input("Mux", mux_initial.clone(), "choose_pawn", mux_outpoint, mux_utxo.clone())
+            .argent_input("Mux", mux_initial.clone(), "choose_pawn", mux_outpoint, mux_utxo.clone(), 0)
             .argent_output("Pawn", pawn_next.clone(), CovenantBinding::new(0, covenant_id), input_value);
         builder.build(&choose_pawn).expect("Mux can route to Pawn by table slice");
 
@@ -858,6 +883,7 @@ mod tests {
                 EntryCall::new("choose").args(args![actor("Pawn")]),
                 mux_outpoint,
                 mux_utxo.clone(),
+                0,
             )
             .argent_output("Pawn", dynamic_pawn_next.clone(), CovenantBinding::new(0, covenant_id), input_value);
         let context_tx = builder.build(&context).expect("context builder resolves the dynamic route witnesses");
@@ -870,12 +896,13 @@ mod tests {
                 EntryCall::new("choose").args(args![actor("Knight")]),
                 mux_outpoint,
                 mux_utxo.clone(),
+                0,
             )
             .argent_output("Knight", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
         builder.build(&dynamic_knight).expect("Mux selector can choose the second table entry");
 
         let missing_selector = TxContext::new()
-            .argent_input("Mux", mux_initial.clone(), EntryCall::new("choose").args(args![0]), mux_outpoint, mux_utxo.clone())
+            .argent_input("Mux", mux_initial.clone(), EntryCall::new("choose").args(args![0]), mux_outpoint, mux_utxo.clone(), 0)
             .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
         let missing_selector = builder.build(&missing_selector).expect_err("selector entries require an explicit template choice");
         assert!(
@@ -890,6 +917,7 @@ mod tests {
                 EntryCall::new("choose").args(args![actor("League")]),
                 mux_outpoint,
                 mux_utxo.clone(),
+                0,
             )
             .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
         let invalid_selector = builder.build(&invalid_selector).expect_err("selector must choose one of the actor enum variants");
@@ -909,21 +937,22 @@ mod tests {
                 EntryCall::new("choose").args(args![actor("Knight")]),
                 mux_outpoint,
                 mux_utxo.clone(),
+                0,
             )
             .argent_output("Pawn", dynamic_pawn_next, CovenantBinding::new(0, covenant_id), input_value);
         assert!(builder.build(&wrong_selector).is_err(), "selector witness must match the actor selected by table index");
 
         let const_knight = TxContext::new()
-            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone())
+            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone(), 0)
             .argent_output("Knight", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
         builder.build(&const_knight).expect("fixed actor enum selector can route to Knight without caller selector metadata");
 
         let const_wrong_output = TxContext::new()
-            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone())
+            .argent_input("Mux", mux_initial.clone(), "choose_knight_const", mux_outpoint, mux_utxo.clone(), 0)
             .argent_output("Pawn", board_state(7, 1), CovenantBinding::new(0, covenant_id), input_value);
         assert!(builder.build(&const_wrong_output).is_err(), "fixed actor enum selector must reject a non-Knight output");
 
-        let wrong_worker = TxContext::new().argent_input("Mux", mux_initial, "choose_pawn", mux_outpoint, mux_utxo).argent_output(
+        let wrong_worker = TxContext::new().argent_input("Mux", mux_initial, "choose_pawn", mux_outpoint, mux_utxo, 0).argent_output(
             "Knight",
             pawn_next,
             CovenantBinding::new(0, covenant_id),
@@ -1059,12 +1088,12 @@ mod tests {
         let input_utxo =
             builder.covenant_utxo("Foo", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("foo utxo builds");
         let context = TxContext::new()
-            .argent_input("Foo", initial.clone(), EntryCall::new("bump").args(args![5]), outpoint, input_utxo.clone())
+            .argent_input("Foo", initial.clone(), EntryCall::new("bump").args(args![5]), outpoint, input_utxo.clone(), 0)
             .argent_output("Foo", next.clone(), CovenantBinding::new(0, covenant_id), input_value);
         builder.build(&context).expect("same-template transition passes");
 
         let wrong_template = TxContext::new()
-            .argent_input("Foo", initial, EntryCall::new("bump").args(args![5]), outpoint, input_utxo)
+            .argent_input("Foo", initial, EntryCall::new("bump").args(args![5]), outpoint, input_utxo, 0)
             .argent_output("Bar", next, CovenantBinding::new(0, covenant_id), input_value);
         assert!(builder.build(&wrong_template).is_err(), "same-template validation must reject a different actor template");
     }
@@ -1102,6 +1131,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
                 outpoint,
                 league_utxo.clone(),
+                0,
             )
             .argent_output("League", league_initial.clone(), CovenantBinding::new(0, covenant_id), input_value)
             .argent_output("Player", player_next.clone(), CovenantBinding::new(0, covenant_id), player_value);
@@ -1150,6 +1180,7 @@ mod tests {
                     .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
                 outpoint,
                 league_utxo,
+                0,
             )
             .argent_output("League", changed_league_state, CovenantBinding::new(0, covenant_id), input_value)
             .argent_output("Player", player_next, CovenantBinding::new(0, covenant_id), player_value);
@@ -1214,6 +1245,7 @@ mod tests {
                 }),
                 minter_outpoint,
                 minter_utxo.clone(),
+                0,
             )
             .argent_input(
                 "kcc20_asset::MinterProxy",
@@ -1221,6 +1253,7 @@ mod tests {
                 EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
                 proxy_outpoint,
                 proxy_utxo.clone(),
+                0,
             )
             .argent_output("Minter", minter_next.clone(), CovenantBinding::new(0, controller_covenant_id), minter_value)
             .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
@@ -1270,6 +1303,7 @@ mod tests {
                 EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
                 minter_outpoint,
                 minter_utxo.clone(),
+                0,
             )
             .argent_output("Minter", minter_next.clone(), CovenantBinding::new(0, controller_covenant_id), minter_value)
             .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
@@ -1285,6 +1319,7 @@ mod tests {
                 EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
                 minter_outpoint,
                 minter_utxo.clone(),
+                0,
             )
             .argent_input(
                 "kcc20_asset::MinterProxy",
@@ -1292,6 +1327,7 @@ mod tests {
                 EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
                 proxy_outpoint,
                 proxy_utxo.clone(),
+                0,
             );
         let wrong_proxy_err = builder.build(&wrong_proxy).expect_err("observed input state must match its UTXO script");
         assert!(matches!(wrong_proxy_err, BuilderError::ArgentInputScriptMismatch { input_index: 1, .. }));
@@ -1305,6 +1341,7 @@ mod tests {
                 }),
                 minter_outpoint,
                 minter_utxo.clone(),
+                0,
             )
             .argent_input(
                 "kcc20_asset::MinterProxy",
@@ -1312,6 +1349,7 @@ mod tests {
                 EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
                 proxy_outpoint,
                 proxy_utxo.clone(),
+                0,
             )
             .argent_output("Minter", minter_next, CovenantBinding::new(0, controller_covenant_id), minter_value)
             .argent_output("kcc20_asset::MinterProxy", proxy_state.clone(), CovenantBinding::new(1, asset_covenant_id), proxy_value)
@@ -1335,6 +1373,7 @@ mod tests {
                 EntryCall::new("mint").args(args![vec![0; 65], recipient_owner.clone(), minted_amount]),
                 minter_outpoint,
                 wrong_asset_minter_utxo,
+                0,
             )
             .argent_input(
                 "kcc20_asset::MinterProxy",
@@ -1342,6 +1381,7 @@ mod tests {
                 EntryCall::new("mint").args(args![proxy_state.clone(), recipient_state.clone()]),
                 proxy_outpoint,
                 proxy_utxo,
+                0,
             )
             .argent_output("Minter", wrong_asset_minter_next, CovenantBinding::new(0, controller_covenant_id), minter_value)
             .argent_output("kcc20_asset::MinterProxy", proxy_state, CovenantBinding::new(1, asset_covenant_id), proxy_value)
@@ -1475,13 +1515,14 @@ mod tests {
             .expect("cell UTXO builds");
 
         let context = TxContext::new()
-            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo.clone())
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo.clone(), 0)
             .argent_input(
                 "open_agent::Agent",
                 agent_initial.clone(),
                 EntryCall::new("step").args(args![agent_next.clone()]),
                 agent_outpoint,
                 agent_utxo.clone(),
+                0,
             )
             .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Agent", agent_next.clone(), CovenantBinding::new(1, agent_covenant_id), agent_value);
@@ -1493,7 +1534,7 @@ mod tests {
         assert!(transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
 
         let missing_observed = TxContext::new()
-            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo)
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, cell_utxo, 0)
             .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value);
         let missing_observed_err = builder.build(&missing_observed).expect_err("the declared observed input/output pair is required");
         assert!(
@@ -1524,13 +1565,14 @@ mod tests {
             .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("bad-layout bundle still builds the Agent UTXO");
         let bad_layout_context = TxContext::new()
-            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, bad_layout_cell_utxo)
+            .argent_input("Cell", cell_initial.clone(), "advance", cell_outpoint, bad_layout_cell_utxo, 0)
             .argent_input(
                 "open_agent::Agent",
                 agent_initial.clone(),
                 EntryCall::new("step").args(args![agent_next.clone()]),
                 agent_outpoint,
                 bad_layout_agent_utxo,
+                0,
             )
             .argent_output("Cell", cell_next.clone(), CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Agent", agent_next.clone(), CovenantBinding::new(1, agent_covenant_id), agent_value);
@@ -1565,8 +1607,15 @@ mod tests {
             .covenant_utxo("open_agent::Forager", expanded_agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("expanded agent utxo builds");
         let expanded_context = TxContext::new()
-            .argent_input("Cell", expanded_cell_initial, "advance", cell_outpoint, expanded_cell_utxo)
-            .argent_input("open_agent::Forager", expanded_agent_initial.clone(), "step", agent_outpoint, expanded_agent_utxo.clone())
+            .argent_input("Cell", expanded_cell_initial, "advance", cell_outpoint, expanded_cell_utxo, 0)
+            .argent_input(
+                "open_agent::Forager",
+                expanded_agent_initial.clone(),
+                "step",
+                agent_outpoint,
+                expanded_agent_utxo.clone(),
+                0,
+            )
             .argent_output("Cell", expanded_cell_next, CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Forager", expanded_agent_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
         expanded_builder.build(&expanded_context).expect("open ICC accepts an actor state that expands the observed capsule");
@@ -1576,8 +1625,14 @@ mod tests {
         flattened_forager_state.insert("hunger".to_string(), ArtifactValue::Int(2));
         flattened_forager_state.insert("mood".to_string(), ArtifactValue::Int(1));
         flattened_forager_state.insert("target_agent_id".to_string(), ArtifactValue::Bytes(vec![0x55; 32]));
-        let flattened_context =
-            TxContext::new().argent_input("open_agent::Forager", flattened_forager_state, "step", agent_outpoint, expanded_agent_utxo);
+        let flattened_context = TxContext::new().argent_input(
+            "open_agent::Forager",
+            flattened_forager_state,
+            "step",
+            agent_outpoint,
+            expanded_agent_utxo,
+            0,
+        );
         let flattened_err =
             expanded_builder.build(&flattened_context).expect_err("expanded agent state must provide slot-qualified source fields");
         assert!(
@@ -1599,13 +1654,14 @@ mod tests {
             .covenant_utxo("open_agent::Forager", forager_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("Forager utxo builds");
         let forager_context = TxContext::new()
-            .argent_input("Cell", forager_cell_initial.clone(), "advance", cell_outpoint, forager_cell_utxo)
+            .argent_input("Cell", forager_cell_initial.clone(), "advance", cell_outpoint, forager_cell_utxo, 0)
             .argent_input(
                 "open_agent::Forager",
                 forager_initial,
                 EntryCall::new("step").args(args![0, 0, 4]),
                 forager_outpoint,
                 forager_utxo,
+                0,
             )
             .argent_output("Cell", forager_cell_initial, CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Forager", forager_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
@@ -1619,13 +1675,14 @@ mod tests {
             .covenant_utxo("open_agent::Agent", agent_initial.clone(), agent_value, 0, false, Some(agent_covenant_id))
             .expect("wrong-output Agent UTXO builds");
         let wrong_context = TxContext::new()
-            .argent_input("Cell", cell_initial, "advance", cell_outpoint, wrong_cell_utxo)
+            .argent_input("Cell", cell_initial, "advance", cell_outpoint, wrong_cell_utxo, 0)
             .argent_input(
                 "open_agent::Agent",
                 agent_initial,
                 EntryCall::new("step").args(args![wrong_agent_next.clone()]),
                 agent_outpoint,
                 wrong_agent_utxo,
+                0,
             )
             .argent_output("Cell", cell_next, CovenantBinding::new(0, controller_covenant_id), cell_value)
             .argent_output("open_agent::Agent", wrong_agent_next, CovenantBinding::new(1, agent_covenant_id), agent_value);
@@ -1699,6 +1756,7 @@ mod tests {
                 "advance",
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x55; 32]), index: 0 },
                 cell_utxo,
+                0,
             )
             .argent_input(
                 "agent_app::Agent",
@@ -1706,6 +1764,7 @@ mod tests {
                 EntryCall::new("step").args(args![next_agent_state.clone()]),
                 TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x66; 32]), index: 0 },
                 agent_utxo,
+                0,
             )
             .argent_output("Cell", next_cell_state, CovenantBinding::new(0, controller_covenant_id), 2_000)
             .argent_output("agent_app::Agent", next_agent_state, CovenantBinding::new(1, agent_covenant_id), 1_000);

@@ -13,7 +13,7 @@
 mod context;
 mod resolve;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, error::Error};
 
 pub use argent_artifact::Artifact;
 pub use context::{
@@ -320,10 +320,30 @@ pub enum BuilderError {
     MissingArgentInputCovenantId { input_index: usize, actor: String },
     #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
     ArgentInputScriptMismatch { input_index: usize, actor: String },
+    #[error("failed to build arguments for Argent input {input_index} `{actor}::{entry}`: {source}")]
+    EntryArgsCallback {
+        input_index: usize,
+        actor: String,
+        entry: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
+    #[error("failed to build signature script for input {input_index}: {source}")]
+    InputSigScriptCallback {
+        input_index: usize,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
     #[error("cannot build transition `{actor}::{entry}`: {message}")]
     InvalidTransition { actor: String, entry: String, message: String },
     #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
     ComputeBudgetOverflow { input_index: usize, script_units: u64 },
+    #[error("input {input_index} script failed: {source}")]
+    InputScript {
+        input_index: usize,
+        #[source]
+        source: TxScriptError,
+    },
     #[error("transaction has {input_count} inputs but {entry_count} UTXO entries")]
     InputEntryCountMismatch { input_count: usize, entry_count: usize },
     #[error("transaction version {found} is not supported; expected {expected}")]
@@ -1641,9 +1661,14 @@ pub fn execute_transaction_with_covenants(tx: &mut Transaction, entries: Vec<Utx
         let sig_cache = Cache::new(100);
         let populated = PopulatedTransaction::new(tx, entries);
         let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
-        (0..tx.inputs.len())
-            .map(|input_idx| measure_input_script_units_with_covenants(&populated, input_idx, &sig_cache, &reused_values, &cov_ctx))
-            .collect::<Result<Vec<_>, _>>()?
+        let mut used_script_units = Vec::with_capacity(tx.inputs.len());
+        for input_index in 0..tx.inputs.len() {
+            let script_units =
+                measure_input_script_units_with_covenants(&populated, input_index, &sig_cache, &reused_values, &cov_ctx)
+                    .map_err(|source| BuilderError::InputScript { input_index, source })?;
+            used_script_units.push(script_units);
+        }
+        used_script_units
     };
 
     for (input_idx, script_units) in used_script_units.into_iter().enumerate() {
@@ -1693,6 +1718,9 @@ pub fn covenant_engine_flags() -> EngineFlags {
 
 #[cfg(test)]
 mod tests {
+    use kaspa_consensus_core::tx::{ScriptPublicKey, TransactionId};
+    use kaspa_txscript::opcodes::codes::OpFalse;
+
     use super::*;
 
     #[test]
@@ -1730,6 +1758,17 @@ mod tests {
                 ArgValue::Actor("Alpha".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn transaction_execution_reports_the_failing_input_index() {
+        let outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x33; 32]), 0);
+        let input = TransactionInput::new_with_compute_budget(outpoint, Vec::new(), 0, 0);
+        let mut transaction = Transaction::new(TX_VERSION_TOCCATA, vec![input], Vec::new(), 0, Default::default(), 0, Vec::new());
+        let utxo = UtxoEntry::new(1_000, ScriptPublicKey::new(0, vec![OpFalse].into()), 0, false, None);
+
+        let error = execute_transaction_with_covenants(&mut transaction, vec![utxo]).expect_err("false script fails");
+        assert!(matches!(error, BuilderError::InputScript { input_index: 0, .. }));
     }
 
     #[test]

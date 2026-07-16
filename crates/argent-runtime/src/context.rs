@@ -1,6 +1,9 @@
-use std::{collections::BTreeMap, fmt};
+use std::{collections::BTreeMap, error::Error, fmt};
 
-use kaspa_consensus_core::tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionOutpoint, UtxoEntry};
+use kaspa_consensus_core::{
+    subnets::SubnetworkId,
+    tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionOutpoint, UtxoEntry},
+};
 
 use crate::{ArgValue, ArtifactValue};
 
@@ -48,7 +51,8 @@ impl fmt::Display for ActorPath {
     }
 }
 
-type EntryArgsCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Vec<ArgValue> + 'a;
+type CallbackError = Box<dyn Error + Send + Sync + 'static>;
+type EntryArgsCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<ArgValue>, CallbackError> + 'a;
 
 /// User arguments for an Argent entry call.
 pub enum EntryArgs<'a> {
@@ -88,7 +92,18 @@ impl<'a> EntryCall<'a> {
 
     /// Build arguments from the unsigned transaction and this input's index.
     pub fn args_with(mut self, build: impl Fn(&MutableTransaction<Transaction>, usize) -> Vec<ArgValue> + 'a) -> Self {
-        self.args = EntryArgs::WithTransaction(Box::new(build));
+        self.args = EntryArgs::WithTransaction(Box::new(move |tx, input_index| Ok(build(tx, input_index))));
+        self
+    }
+
+    /// Fallibly build arguments from the unsigned transaction and this input's index.
+    pub fn try_args_with<E>(mut self, build: impl Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<ArgValue>, E> + 'a) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        self.args = EntryArgs::WithTransaction(Box::new(move |tx, input_index| {
+            build(tx, input_index).map_err(|error| Box::new(error) as CallbackError)
+        }));
         self
     }
 }
@@ -105,7 +120,7 @@ impl<'a> From<String> for EntryCall<'a> {
     }
 }
 
-type InputSigScriptCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Vec<u8> + 'a;
+type InputSigScriptCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<u8>, CallbackError> + 'a;
 
 /// Signature script supplied for a non-Argent input.
 pub enum InputSigScript<'a> {
@@ -118,7 +133,17 @@ pub enum InputSigScript<'a> {
 impl<'a> InputSigScript<'a> {
     /// Build a signature script from the unsigned transaction and input index.
     pub fn with_transaction(build: impl Fn(&MutableTransaction<Transaction>, usize) -> Vec<u8> + 'a) -> Self {
-        Self::WithTransaction(Box::new(build))
+        Self::WithTransaction(Box::new(move |tx, input_index| Ok(build(tx, input_index))))
+    }
+
+    /// Fallibly build a signature script from the unsigned transaction and input index.
+    pub fn try_with_transaction<E>(build: impl Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<u8>, E> + 'a) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self::WithTransaction(Box::new(move |tx, input_index| {
+            build(tx, input_index).map_err(|error| Box::new(error) as CallbackError)
+        }))
     }
 }
 
@@ -145,6 +170,7 @@ pub struct ArgentInput<'a> {
     pub entry: EntryCall<'a>,
     pub outpoint: TransactionOutpoint,
     pub utxo: UtxoEntry,
+    pub sequence: u64,
 }
 
 /// One non-Argent input in a transaction context.
@@ -153,6 +179,7 @@ pub struct OrdinaryInput<'a> {
     pub outpoint: TransactionOutpoint,
     pub utxo: UtxoEntry,
     pub signature_script: InputSigScript<'a>,
+    pub sequence: u64,
 }
 
 /// An ordered input in a transaction context.
@@ -194,15 +221,41 @@ pub enum ContextOutput {
 /// Callers provide only user-visible entry arguments and signature callbacks;
 /// the builder derives compiler-generated witness material from the context
 /// and artifact bundle.
+///
+/// Transaction-wide metadata defaults to lock time zero, the native lane with
+/// zero gas, and an empty payload. Each input sequence is explicit.
 #[derive(Debug, Default)]
 pub struct TxContext<'a> {
     pub inputs: Vec<ContextInput<'a>>,
     pub outputs: Vec<ContextOutput>,
+    pub lock_time: u64,
+    pub subnetwork_id: SubnetworkId,
+    pub gas: u64,
+    pub payload: Vec<u8>,
 }
 
 impl<'a> TxContext<'a> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Set the transaction lock time.
+    pub fn lock_time(mut self, lock_time: u64) -> Self {
+        self.lock_time = lock_time;
+        self
+    }
+
+    /// Set the transaction lane and its gas value together.
+    pub fn lane(mut self, id: SubnetworkId, gas: u64) -> Self {
+        self.subnetwork_id = id;
+        self.gas = gas;
+        self
+    }
+
+    /// Set the transaction payload.
+    pub fn payload(mut self, payload: impl Into<Vec<u8>>) -> Self {
+        self.payload = payload.into();
+        self
     }
 
     /// Append an Argent covenant input.
@@ -213,14 +266,33 @@ impl<'a> TxContext<'a> {
         entry: impl Into<EntryCall<'a>>,
         outpoint: TransactionOutpoint,
         utxo: UtxoEntry,
+        sequence: u64,
     ) -> Self {
-        self.inputs.push(ContextInput::Argent(ArgentInput { actor: actor.into(), state, entry: entry.into(), outpoint, utxo }));
+        self.inputs.push(ContextInput::Argent(ArgentInput {
+            actor: actor.into(),
+            state,
+            entry: entry.into(),
+            outpoint,
+            utxo,
+            sequence,
+        }));
         self
     }
 
     /// Append a non-Argent input.
-    pub fn input(mut self, outpoint: TransactionOutpoint, utxo: UtxoEntry, signature_script: impl Into<InputSigScript<'a>>) -> Self {
-        self.inputs.push(ContextInput::Ordinary(OrdinaryInput { outpoint, utxo, signature_script: signature_script.into() }));
+    pub fn input(
+        mut self,
+        outpoint: TransactionOutpoint,
+        utxo: UtxoEntry,
+        signature_script: impl Into<InputSigScript<'a>>,
+        sequence: u64,
+    ) -> Self {
+        self.inputs.push(ContextInput::Ordinary(OrdinaryInput {
+            outpoint,
+            utxo,
+            signature_script: signature_script.into(),
+            sequence,
+        }));
         self
     }
 
@@ -275,17 +347,27 @@ mod tests {
                 EntryCall::new("bump").args(vec![ArgValue::Value(ArtifactValue::Int(3))]),
                 outpoint(1),
                 utxo(Some(covenant_id)),
+                3,
             )
-            .input(outpoint(2), utxo(None), vec![0xaa])
+            .input(outpoint(2), utxo(None), vec![0xaa], 4)
             .argent_output("Counter", BTreeMap::from([("count".to_string(), ArtifactValue::Int(5))]), binding, 900)
-            .output(ScriptPublicKey::default(), None, 100);
+            .output(ScriptPublicKey::default(), None, 100)
+            .lock_time(5)
+            .lane(SubnetworkId::from_namespace([1, 2, 3, 4]), 6)
+            .payload([0xaa, 0xbb]);
 
-        assert!(matches!(&context.inputs[0], ContextInput::Argent(input) if input.actor == ActorPath::primary("Counter")));
         assert!(
-            matches!(&context.inputs[1], ContextInput::Ordinary(input) if matches!(input.signature_script, InputSigScript::Static(ref script) if script == &[0xaa]))
+            matches!(&context.inputs[0], ContextInput::Argent(input) if input.actor == ActorPath::primary("Counter") && input.sequence == 3)
+        );
+        assert!(
+            matches!(&context.inputs[1], ContextInput::Ordinary(input) if input.sequence == 4 && matches!(input.signature_script, InputSigScript::Static(ref script) if script == &[0xaa]))
         );
         assert!(matches!(&context.outputs[0], ContextOutput::Argent(output) if output.covenant == binding));
         assert!(matches!(&context.outputs[1], ContextOutput::Ordinary(output) if output.value == 100));
+        assert_eq!(context.lock_time, 5);
+        assert_eq!(context.subnetwork_id, SubnetworkId::from_namespace([1, 2, 3, 4]));
+        assert_eq!(context.gas, 6);
+        assert_eq!(context.payload, [0xaa, 0xbb]);
     }
 
     #[test]
