@@ -716,6 +716,19 @@ mod tests {
         execute_input_with_covenants(&dynamic_pawn_tx, vec![mux_utxo.clone()], 0)
             .expect("Mux can route through an actor enum selector");
 
+        let context = TxContext::new()
+            .argent_input(
+                "Mux",
+                mux_initial.clone(),
+                EntryCall::new("choose").args(args![actor("Pawn")]),
+                mux_outpoint,
+                mux_utxo.clone(),
+            )
+            .argent_output("Pawn", dynamic_pawn_next.clone(), CovenantBinding::new(0, covenant_id), input_value);
+        let context_tx = builder.build(&context).expect("context builder resolves the dynamic route witnesses");
+        assert!(context_tx.inputs[0].compute_commit.compute_budget().is_some());
+        assert_eq!(context_tx.inputs[0].signature_script, dynamic_pawn_sigscript);
+
         let dynamic_knight_output =
             builder.covenant_output("Knight", board_state(7, 1), input_value, 0, covenant_id).expect("dynamic Knight output builds");
         let dynamic_knight_sigscript = builder

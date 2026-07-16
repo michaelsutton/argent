@@ -770,32 +770,59 @@ impl<'a> TxBuilder<'a> {
             self.validate_observed_contexts(actor_name, entry_name, argent_entry, observed)?;
         }
         let mut args = self.runtime_entry_args(contract_ref.artifact, contract, sil_entry, user_args)?;
+        args.extend(self.resolve_hidden_args_in_artifact(
+            entry_ref.artifact,
+            contract,
+            argent_entry,
+            &input_source_state,
+            template_selectors,
+            observed,
+        )?);
+
+        let sigscript = encode_entry_sig_script(&contract_ref.artifact.sil_abi, contract, sil_entry, &args)?;
+        Ok(pay_to_script_hash_signature_script_with_flags(
+            self.redeem_script_for_contract(contract_ref, input_source_state)?,
+            sigscript,
+            covenant_engine_flags(),
+        )?)
+    }
+
+    fn resolve_hidden_args_in_artifact(
+        &self,
+        artifact: &'a Artifact,
+        contract: &'a SilContractArtifact,
+        argent_entry: &'a EntryArtifact,
+        input_source_state: &BTreeMap<String, ArtifactValue>,
+        template_selectors: &BTreeMap<String, String>,
+        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+    ) -> BuilderResult<Vec<ArtifactValue>> {
+        let mut args = Vec::with_capacity(argent_entry.hidden_params.len());
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Bytes(decode_hex(&template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Bytes(decode_hex(&template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Int(decode_hex(&template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Int(decode_hex(&template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateHash => {
-                    let template = self.hidden_template(entry_ref.artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
                     ArtifactValue::Bytes(decode_hex(&template.hash_hex)?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
                     let actor = hidden_actor_subject(hidden)?;
                     ArtifactValue::Bytes(decode_hex(
-                        &self.contract_ref_in_artifact(entry_ref.artifact, actor)?.contract.compiled.template.hash_hex,
+                        &self.contract_ref_in_artifact(artifact, actor)?.contract.compiled.template.hash_hex,
                     )?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateProof => {
@@ -804,11 +831,11 @@ impl<'a> TxBuilder<'a> {
                         .route_proof_id
                         .as_deref()
                         .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
-                    ArtifactValue::Bytes(self.route_template_proof_bytes_for_actor(entry_ref.artifact, route_proof_id, actor)?)
+                    ArtifactValue::Bytes(self.route_template_proof_bytes_for_actor(artifact, route_proof_id, actor)?)
                 }
                 HiddenParamPurposeArtifact::RouteFamilyTable => {
                     let family_id = hidden_family_subject(hidden)?;
-                    ArtifactValue::Bytes(self.route_family_table_bytes_in_artifact(entry_ref.artifact, family_id)?)
+                    ArtifactValue::Bytes(self.route_family_table_bytes_in_artifact(artifact, family_id)?)
                 }
                 HiddenParamPurposeArtifact::RouteFamilyProof => {
                     let family_id = hidden_family_subject(hidden)?;
@@ -817,7 +844,7 @@ impl<'a> TxBuilder<'a> {
                         .as_deref()
                         .ok_or_else(|| BuilderError::MissingHiddenRouteProof { param: hidden.name.clone() })?;
                     ArtifactValue::Bytes(self.route_template_proof_bytes(
-                        entry_ref.artifact,
+                        artifact,
                         route_proof_id,
                         &RouteTemplateLeafArtifact::RouteFamily {
                             family_id: family_id.to_string(),
@@ -826,18 +853,12 @@ impl<'a> TxBuilder<'a> {
                     )?)
                 }
                 HiddenParamPurposeArtifact::StateExpansionPreimage => {
-                    self.state_expansion_preimage_arg(entry_ref.artifact, contract, hidden, &input_source_state)?
+                    self.state_expansion_preimage_arg(artifact, contract, hidden, input_source_state)?
                 }
                 HiddenParamPurposeArtifact::ObservedOutputFieldValue => self.observed_output_field_arg(hidden, observed)?,
             });
         }
-
-        let sigscript = encode_entry_sig_script(&contract_ref.artifact.sil_abi, contract, sil_entry, &args)?;
-        Ok(pay_to_script_hash_signature_script_with_flags(
-            self.redeem_script_for_contract(contract_ref, input_source_state)?,
-            sigscript,
-            covenant_engine_flags(),
-        )?)
+        Ok(args)
     }
 
     fn lower_arg_values(

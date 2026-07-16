@@ -4,22 +4,20 @@ use kaspa_consensus_core::{
     constants::TX_VERSION_TOCCATA,
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
 };
-use kaspa_txscript::pay_to_script_hash_script;
+use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
+use silverscript_abi::encode_entry_sig_script;
 
 use crate::{
     ActorPath, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs, EntryRef,
-    TxBuilder, TxContext,
+    InputSigScript, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
 pub(crate) struct ResolvedEntryArgs {
     pub values: Vec<ArtifactValue>,
     pub template_selectors: BTreeMap<String, String>,
 }
 
-// This internal pass is wired to the public transaction API in a later stage.
-#[allow(dead_code)]
 impl<'artifact> TxBuilder<'artifact> {
     fn context_artifact(&self, actor: &ActorPath) -> BuilderResult<&'artifact Artifact> {
         match &actor.app {
@@ -140,6 +138,93 @@ impl<'artifact> TxBuilder<'artifact> {
         }
 
         Ok(resolved)
+    }
+
+    /// Resolve compiler-generated arguments that depend only on the current
+    /// app artifact, source state, and user-selected route actors.
+    fn resolve_context_hidden_args(
+        &self,
+        context: &TxContext<'_>,
+        resolved_args: &[Option<ResolvedEntryArgs>],
+    ) -> BuilderResult<Vec<Option<Vec<ArtifactValue>>>> {
+        let mut resolved = Vec::with_capacity(context.inputs.len());
+
+        for (input_index, input) in context.inputs.iter().enumerate() {
+            let ContextInput::Argent(input) = input else {
+                resolved.push(None);
+                continue;
+            };
+
+            let contract_ref = self.context_contract_ref(&input.actor)?;
+            let entry_ref = self.context_entry_ref(&input.actor, &input.entry.name)?;
+            if !entry_ref.entry.observes.is_empty() {
+                return Err(BuilderError::InvalidTransition {
+                    actor: input.actor.to_string(),
+                    entry: input.entry.name.clone(),
+                    message: "context observation resolution is not implemented yet".to_string(),
+                });
+            }
+            let args = resolved_args[input_index].as_ref().expect("Argent inputs have aligned resolved arguments");
+            resolved.push(Some(self.resolve_hidden_args_in_artifact(
+                contract_ref.artifact,
+                contract_ref.contract,
+                entry_ref.entry,
+                &input.state,
+                &args.template_selectors,
+                None,
+            )?));
+        }
+
+        Ok(resolved)
+    }
+
+    /// Build, validate, and finalize the transaction described by `context`.
+    ///
+    /// Observation-dependent hidden arguments are added by a later resolution
+    /// pass. Artifact-local routes, selectors, proofs, and state expansions are
+    /// resolved here.
+    pub fn build(&self, context: &TxContext<'_>) -> BuilderResult<Transaction> {
+        let unsigned = self.unsigned_transaction(context)?;
+        let resolved_args = self.resolve_context_args(context, &unsigned)?;
+        let hidden_args = self.resolve_context_hidden_args(context, &resolved_args)?;
+        let mut signature_scripts = Vec::with_capacity(context.inputs.len());
+
+        for (input_index, input) in context.inputs.iter().enumerate() {
+            let signature_script = match input {
+                ContextInput::Argent(input) => {
+                    let contract_ref = self.context_contract_ref(&input.actor)?;
+                    let sil_entry = contract_ref.contract.entry(&input.entry.name).ok_or_else(|| BuilderError::UnknownEntry {
+                        actor: input.actor.to_string(),
+                        entry: input.entry.name.clone(),
+                    })?;
+                    let mut args =
+                        resolved_args[input_index].as_ref().expect("Argent inputs have aligned resolved arguments").values.clone();
+                    args.extend(
+                        hidden_args[input_index].as_ref().expect("Argent inputs have aligned hidden arguments").iter().cloned(),
+                    );
+                    let abi_script = encode_entry_sig_script(&contract_ref.artifact.sil_abi, contract_ref.contract, sil_entry, &args)?;
+                    pay_to_script_hash_signature_script_with_flags(
+                        self.redeem_script_for_contract(contract_ref, input.state.clone())?,
+                        abi_script,
+                        covenant_engine_flags(),
+                    )?
+                }
+                ContextInput::Ordinary(input) => match &input.signature_script {
+                    InputSigScript::Static(script) => script.clone(),
+                    InputSigScript::WithTransaction(build) => build(&unsigned, input_index),
+                },
+            };
+            signature_scripts.push(signature_script);
+        }
+
+        let mut transaction = unsigned.tx;
+        for (input, signature_script) in transaction.inputs.iter_mut().zip(signature_scripts) {
+            input.signature_script = signature_script;
+        }
+        let entries =
+            unsigned.entries.into_iter().map(|entry| entry.expect("context transaction inputs always carry UTXO entries")).collect();
+        execute_transaction_with_covenants(&mut transaction, entries)?;
+        Ok(transaction)
     }
 }
 
