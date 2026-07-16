@@ -1160,12 +1160,20 @@ fn verify_actor_type_handle(
     let canonical_suffix = decode_hex_for_template(&template.id, &contract.compiled.template.suffix_hex)?;
     let handle_prefix = decode_hex_for_template(&template.id, &handle.template.prefix_hex)?;
     let handle_suffix = decode_hex_for_template(&template.id, &handle.template.suffix_hex)?;
-    decode_hash_hex(&template.id, &handle.template.hash_hex)?;
+    let handle_hash = decode_hash_hex(&template.id, &handle.template.hash_hex)?;
     if !handle_prefix.starts_with(&canonical_prefix) {
         return Err(mismatch("prefix does not extend the canonical template prefix".to_string()));
     }
     if handle_suffix != canonical_suffix {
         return Err(mismatch("suffix differs from the canonical template suffix".to_string()));
+    }
+    let expected_handle_hash = silverscript_abi::template_hash(&handle_prefix, &handle_suffix);
+    if handle_hash != expected_handle_hash {
+        return Err(mismatch(format!(
+            "template hash does not match its prefix and suffix: expected `{}`, found `{}`",
+            encode_hex(&expected_handle_hash),
+            handle.template.hash_hex
+        )));
     }
 
     let context_state =

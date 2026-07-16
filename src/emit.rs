@@ -6293,6 +6293,19 @@ mod tests {
         handle.template.prefix_hex = encode_hex(&prefix);
         let err = corrupted.verify_template_plan().expect_err("corrupted capsule context is rejected");
         assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
+
+        let mut corrupted = artifact.clone();
+        let handle = corrupted
+            .argent
+            .template_plan
+            .templates
+            .iter_mut()
+            .find(|template| template.actor == "ReserveAsset")
+            .and_then(|template| template.actor_type_handle.as_mut())
+            .expect("ReserveAsset capsule handle exists");
+        handle.template.hash_hex = "00".repeat(32);
+        let err = corrupted.verify_template_plan().expect_err("corrupted capsule hash is rejected");
+        assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
     }
 
     #[test]
