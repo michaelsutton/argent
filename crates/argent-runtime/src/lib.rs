@@ -13,7 +13,7 @@
 mod context;
 mod resolve;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, error::Error, fmt};
 
 pub use argent_artifact::Artifact;
 pub use context::{
@@ -226,6 +226,33 @@ macro_rules! args {
     }};
 }
 
+/// The input or output side of an observed covenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// Observed inputs.
+    In,
+    /// Observed outputs.
+    Out,
+}
+
+impl fmt::Display for Side {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::In => "input",
+            Self::Out => "output",
+        })
+    }
+}
+
+impl From<ObservedActorSideArtifact> for Side {
+    fn from(side: ObservedActorSideArtifact) -> Self {
+        match side {
+            ObservedActorSideArtifact::Input => Self::In,
+            ObservedActorSideArtifact::Output => Self::Out,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum BuilderError {
     #[error(transparent)]
@@ -293,13 +320,13 @@ pub enum BuilderError {
     #[error("missing observed covenant context `{observe}`")]
     MissingObservedCovenant { observe: String },
     #[error("missing observed {side} `{observe}.{handle}`")]
-    MissingObservedActor { observe: String, side: &'static str, handle: String },
+    MissingObservedActor { observe: String, side: Side, handle: String },
     #[error("unknown observed {side} `{observe}.{handle}`")]
-    UnknownObservedActor { observe: String, side: &'static str, handle: String },
+    UnknownObservedActor { observe: String, side: Side, handle: String },
     #[error("observed {side} `{observe}.{handle}` expected actor `{expected}`, got `{found}`")]
-    ObservedActorMismatch { observe: String, side: &'static str, handle: String, expected: String, found: String },
+    ObservedActorMismatch { observe: String, side: Side, handle: String, expected: String, found: String },
     #[error("observed {side} `{observe}.{handle}` state `{state}` layout does not match attached actor `{actor}`")]
-    ObservedStateLayoutMismatch { observe: String, side: &'static str, handle: String, state: String, actor: String },
+    ObservedStateLayoutMismatch { observe: String, side: Side, handle: String, state: String, actor: String },
     #[error("attached actor `{actor}` does not expose actor_type<{state}>")]
     MissingActorTypeHandle { actor: String, state: String },
     #[error("artifact `{app}` has no state `{state}`")]
@@ -309,9 +336,9 @@ pub enum BuilderError {
     #[error("observe `{observe}` covenant id source must resolve to exactly 32 bytes")]
     InvalidObservedCovenantId { observe: String },
     #[error("observe `{observe}` expects {expected} {side}s for its covenant id, found {found}")]
-    ObservedCountMismatch { observe: String, side: &'static str, expected: usize, found: usize },
+    ObservedCountMismatch { observe: String, side: Side, expected: usize, found: usize },
     #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no Argent actor metadata")]
-    MissingObservedActorMetadata { observe: String, side: &'static str, handle: String, index: usize },
+    MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -320,10 +347,30 @@ pub enum BuilderError {
     MissingArgentInputCovenantId { input_index: usize, actor: String },
     #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
     ArgentInputScriptMismatch { input_index: usize, actor: String },
+    #[error("failed to build arguments for Argent input {input_index} `{actor}::{entry}`: {source}")]
+    EntryArgsCallback {
+        input_index: usize,
+        actor: String,
+        entry: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
+    #[error("failed to build signature script for input {input_index}: {source}")]
+    InputSigScriptCallback {
+        input_index: usize,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
     #[error("cannot build transition `{actor}::{entry}`: {message}")]
     InvalidTransition { actor: String, entry: String, message: String },
     #[error("input {input_index} requires {script_units} script units, which do not fit a compute budget")]
     ComputeBudgetOverflow { input_index: usize, script_units: u64 },
+    #[error("input {input_index} script failed: {source}")]
+    InputScript {
+        input_index: usize,
+        #[source]
+        source: TxScriptError,
+    },
     #[error("transaction has {input_count} inputs but {entry_count} UTXO entries")]
     InputEntryCountMismatch { input_count: usize, entry_count: usize },
     #[error("transaction version {found} is not supported; expected {expected}")]
@@ -1046,7 +1093,7 @@ impl<'a> TxBuilder<'a> {
         };
         actors.iter().find(|actor| actor.name == handle).ok_or_else(|| BuilderError::MissingObservedActor {
             observe: observe_name.to_string(),
-            side: observed_side_label(side),
+            side: side.into(),
             handle: handle.to_string(),
         })
     }
@@ -1093,7 +1140,7 @@ impl<'a> TxBuilder<'a> {
             if expected.iter().all(|input| &input.name != handle) {
                 return Err(BuilderError::UnknownObservedActor {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(ObservedActorSideArtifact::Input),
+                    side: Side::In,
                     handle: handle.clone(),
                 });
             }
@@ -1101,7 +1148,7 @@ impl<'a> TxBuilder<'a> {
         for input in expected {
             let observed = context.inputs.get(&input.name).ok_or_else(|| BuilderError::MissingObservedActor {
                 observe: observe_name.to_string(),
-                side: observed_side_label(ObservedActorSideArtifact::Input),
+                side: Side::In,
                 handle: input.name.clone(),
             })?;
             self.validate_observed_actor(
@@ -1137,7 +1184,7 @@ impl<'a> TxBuilder<'a> {
             if expected.iter().all(|output| &output.name != handle) {
                 return Err(BuilderError::UnknownObservedActor {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(ObservedActorSideArtifact::Output),
+                    side: Side::Out,
                     handle: handle.clone(),
                 });
             }
@@ -1145,7 +1192,7 @@ impl<'a> TxBuilder<'a> {
         for output in expected {
             let observed = context.outputs.get(&output.name).ok_or_else(|| BuilderError::MissingObservedActor {
                 observe: observe_name.to_string(),
-                side: observed_side_label(ObservedActorSideArtifact::Output),
+                side: Side::Out,
                 handle: output.name.clone(),
             })?;
             self.validate_observed_actor(
@@ -1176,7 +1223,7 @@ impl<'a> TxBuilder<'a> {
             if !state_satisfies(found.artifact, &found.actor.state, expected_state) {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(side),
+                    side: side.into(),
                     handle: expected.name.clone(),
                     actor: found_actor.to_string(),
                     state: expected_state.to_string(),
@@ -1187,7 +1234,7 @@ impl<'a> TxBuilder<'a> {
             if expected_layout.fields != found_layout.fields {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
-                    side: observed_side_label(side),
+                    side: side.into(),
                     handle: expected.name.clone(),
                     state: expected_state.to_string(),
                     actor: found_actor.to_string(),
@@ -1198,7 +1245,7 @@ impl<'a> TxBuilder<'a> {
         if expected.actor != found_actor {
             return Err(BuilderError::ObservedActorMismatch {
                 observe: observe_name.to_string(),
-                side: observed_side_label(side),
+                side: side.into(),
                 handle: expected.name.clone(),
                 expected: expected.actor.clone(),
                 found: found_actor.to_string(),
@@ -1333,14 +1380,14 @@ impl<'a> TxBuilder<'a> {
             .ok_or_else(|| BuilderError::MissingObservedCovenant { observe: observe.clone() })?;
         let output = context.outputs.get(handle).ok_or_else(|| BuilderError::MissingObservedActor {
             observe: observe.clone(),
-            side: observed_side_label(ObservedActorSideArtifact::Output),
+            side: Side::Out,
             handle: handle.clone(),
         })?;
         let contract_ref = self.contract_ref_in_app(&context.app, &output.actor)?;
         if !state_satisfies(contract_ref.artifact, &contract_ref.contract.runtime_state.source, state) {
             return Err(BuilderError::ObservedStateLayoutMismatch {
                 observe: observe.clone(),
-                side: observed_side_label(ObservedActorSideArtifact::Output),
+                side: Side::Out,
                 handle: handle.clone(),
                 state: state.clone(),
                 actor: output.actor.clone(),
@@ -1551,13 +1598,6 @@ fn route_leaf_label(leaf: &RouteTemplateLeafArtifact) -> String {
     }
 }
 
-fn observed_side_label(side: ObservedActorSideArtifact) -> &'static str {
-    match side {
-        ObservedActorSideArtifact::Input => "input",
-        ObservedActorSideArtifact::Output => "output",
-    }
-}
-
 fn state_artifact<'a>(artifact: &'a Artifact, state: &str) -> BuilderResult<&'a StateArtifact> {
     artifact
         .argent
@@ -1641,9 +1681,14 @@ pub fn execute_transaction_with_covenants(tx: &mut Transaction, entries: Vec<Utx
         let sig_cache = Cache::new(100);
         let populated = PopulatedTransaction::new(tx, entries);
         let cov_ctx = CovenantsContext::from_tx(&populated).map_err(TxScriptError::from)?;
-        (0..tx.inputs.len())
-            .map(|input_idx| measure_input_script_units_with_covenants(&populated, input_idx, &sig_cache, &reused_values, &cov_ctx))
-            .collect::<Result<Vec<_>, _>>()?
+        let mut used_script_units = Vec::with_capacity(tx.inputs.len());
+        for input_index in 0..tx.inputs.len() {
+            let script_units =
+                measure_input_script_units_with_covenants(&populated, input_index, &sig_cache, &reused_values, &cov_ctx)
+                    .map_err(|source| BuilderError::InputScript { input_index, source })?;
+            used_script_units.push(script_units);
+        }
+        used_script_units
     };
 
     for (input_idx, script_units) in used_script_units.into_iter().enumerate() {
@@ -1693,6 +1738,9 @@ pub fn covenant_engine_flags() -> EngineFlags {
 
 #[cfg(test)]
 mod tests {
+    use kaspa_consensus_core::tx::{ScriptPublicKey, TransactionId};
+    use kaspa_txscript::opcodes::codes::OpFalse;
+
     use super::*;
 
     #[test]
@@ -1730,6 +1778,17 @@ mod tests {
                 ArgValue::Actor("Alpha".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn transaction_execution_reports_the_failing_input_index() {
+        let outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x33; 32]), 0);
+        let input = TransactionInput::new_with_compute_budget(outpoint, Vec::new(), 0, 0);
+        let mut transaction = Transaction::new(TX_VERSION_TOCCATA, vec![input], Vec::new(), 0, Default::default(), 0, Vec::new());
+        let utxo = UtxoEntry::new(1_000, ScriptPublicKey::new(0, vec![OpFalse].into()), 0, false, None);
+
+        let error = execute_transaction_with_covenants(&mut transaction, vec![utxo]).expect_err("false script fails");
+        assert!(matches!(error, BuilderError::InputScript { input_index: 0, .. }));
     }
 
     #[test]

@@ -215,6 +215,27 @@ app RightApp {
     }
 
     #[test]
+    fn build_file_app_removes_stale_selected_app_contracts() {
+        let temp = std::env::temp_dir().join(format!("argent-build-file-app-clean-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).expect("temp dir created");
+
+        let input = temp.join("pair.ag");
+        let out_dir = temp.join("build");
+        std::fs::write(&input, TWO_APPS).expect("source written");
+
+        build_file_app(&input, "LeftApp", &out_dir).expect("left app builds");
+        assert!(out_dir.join("sil/Left.sil").exists());
+
+        build_file_app(&input, "RightApp", &out_dir).expect("right app builds");
+        assert!(!out_dir.join("sil/Left.sil").exists());
+        assert!(out_dir.join("sil/Right.sil").exists());
+        assert!(out_dir.join("sil/RightAlt.sil").exists());
+
+        let _ = std::fs::remove_dir_all(temp);
+    }
+
+    #[test]
     fn build_file_requires_selection_for_multiple_root_apps() {
         let temp = std::env::temp_dir().join(format!("argent-build-file-ambiguous-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&temp);

@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use blake2b_simd::Params as Blake2bParams;
 use kaspa_txscript::{
     EngineFlags, deserialize_i64 as deserialize_script_i64,
     opcodes::codes::{
@@ -25,6 +26,27 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 pub const SIL_ABI_SCHEMA_VERSION: u32 = 1;
+const TEMPLATE_PART_LENGTH_BYTES: usize = 8;
+
+/// Calculate the canonical hash of a state-bearing Silverscript template.
+pub fn template_hash(prefix: &[u8], suffix: &[u8]) -> [u8; 32] {
+    let prefix_len = i64::try_from(prefix.len()).unwrap();
+    let suffix_len = i64::try_from(suffix.len()).unwrap();
+    let encoded_prefix_len = serialize_script_i64(prefix_len, Some(TEMPLATE_PART_LENGTH_BYTES)).unwrap();
+    let encoded_suffix_len = serialize_script_i64(suffix_len, Some(TEMPLATE_PART_LENGTH_BYTES)).unwrap();
+
+    Blake2bParams::new()
+        .hash_length(32)
+        .to_state()
+        .update(encoded_prefix_len.as_ref())
+        .update(prefix)
+        .update(encoded_suffix_len.as_ref())
+        .update(suffix)
+        .finalize()
+        .as_bytes()
+        .try_into()
+        .unwrap()
+}
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 #[error("unsupported {artifact} schema version {found}; expected {supported}")]
@@ -778,6 +800,17 @@ fn type_name(ty: &TypeArtifact) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Locks the ABI copy to Sil's canonical implementation. Ideally, Sil will
+    // expose this from a small shared core crate instead of requiring a copy.
+    #[test]
+    fn template_hash_matches_silverscript() {
+        let cases: &[(&[u8], &[u8])] = &[(b"", b""), (b"a", b"bc"), (b"ab", b"c"), (&[0, 1, 2, 3], &[0xff, 0x80, 0x40])];
+
+        for (prefix, suffix) in cases {
+            assert_eq!(template_hash(prefix, suffix), silverscript_lang::template::template_hash(prefix, suffix));
+        }
+    }
 
     #[test]
     fn encodes_pushes_like_silverscript_builder() {

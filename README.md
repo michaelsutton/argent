@@ -172,6 +172,7 @@ let context = TxContext::new()
         EntryCall::new("bump").args(args![3]),
         outpoint,
         input_utxo,
+        0, // sequence
     )
     .argent_output(
         "Counter",
@@ -182,6 +183,9 @@ let context = TxContext::new()
 
 let tx = builder.build(&context)?;
 ```
+
+Each input declares its sequence. Lock time, lane and gas, and payload can be
+set fluently on `TxContext`; their defaults produce a native transaction.
 
 The runtime API is Argent-specific while the language settles. The lower-level
 Silverscript ABI and artifact boundaries are split into small crates so they can

@@ -6,6 +6,7 @@ use argent_artifact::{
 use kaspa_consensus_core::{
     Hash,
     constants::TX_VERSION_TOCCATA,
+    subnets::SubnetworkId,
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
 };
 use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
@@ -13,7 +14,7 @@ use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_scr
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
     ContractRef, EntryArgs, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OrdinaryOutput,
-    TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    Side, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -24,9 +25,19 @@ struct ResolvedEntryArgs {
     template_selectors: BTreeMap<String, String>,
 }
 
+/// Artifact-bound working representation of a [`TxContext`].
+///
+/// Actor paths are resolved once into concrete app, contract, and entry
+/// metadata while transaction ordering and transaction-wide fields are
+/// preserved. Subsequent passes populate entry arguments, observations, and
+/// hidden witnesses before the final signature scripts are assembled.
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
     outputs: Vec<ResolveOutput<'artifact, 'context>>,
+    lock_time: u64,
+    subnetwork_id: SubnetworkId,
+    gas: u64,
+    payload: &'context [u8],
 }
 
 enum ResolveInput<'artifact, 'context, 'args> {
@@ -124,7 +135,14 @@ impl<'artifact> TxBuilder<'artifact> {
             }
         }
 
-        Ok(ResolveContext { inputs, outputs })
+        Ok(ResolveContext {
+            inputs,
+            outputs,
+            lock_time: context.lock_time,
+            subnetwork_id: context.subnetwork_id,
+            gas: context.gas,
+            payload: &context.payload,
+        })
     }
 
     /// Materialize the unsigned transaction described by `context`.
@@ -147,11 +165,16 @@ impl<'artifact> TxBuilder<'artifact> {
                     if input.source.utxo.script_public_key != expected_script {
                         return Err(BuilderError::ArgentInputScriptMismatch { input_index, actor: input.source.actor.to_string() });
                     }
-                    inputs.push(TransactionInput::new_with_compute_budget(input.source.outpoint, Vec::new(), 0, 0));
+                    inputs.push(TransactionInput::new_with_compute_budget(
+                        input.source.outpoint,
+                        Vec::new(),
+                        input.source.sequence,
+                        0,
+                    ));
                     entries.push(input.source.utxo.clone());
                 }
                 ResolveInput::Ordinary(input) => {
-                    inputs.push(TransactionInput::new_with_compute_budget(input.outpoint, Vec::new(), 0, 0));
+                    inputs.push(TransactionInput::new_with_compute_budget(input.outpoint, Vec::new(), input.sequence, 0));
                     entries.push(input.utxo.clone());
                 }
             }
@@ -176,7 +199,15 @@ impl<'artifact> TxBuilder<'artifact> {
             }
         }
 
-        let transaction = Transaction::new(TX_VERSION_TOCCATA, inputs, outputs, 0, Default::default(), 0, Vec::new());
+        let transaction = Transaction::new(
+            TX_VERSION_TOCCATA,
+            inputs,
+            outputs,
+            context.lock_time,
+            context.subnetwork_id,
+            context.gas,
+            context.payload.to_vec(),
+        );
         Ok(MutableTransaction::with_entries(transaction, entries))
     }
 
@@ -208,7 +239,14 @@ impl<'artifact> TxBuilder<'artifact> {
                 })?;
             let source_args = match &input.source.entry.args {
                 EntryArgs::Static(args) => args.clone(),
-                EntryArgs::WithTransaction(build) => build(unsigned, input_index),
+                EntryArgs::WithTransaction(build) => {
+                    build(unsigned, input_index).map_err(|source| BuilderError::EntryArgsCallback {
+                        input_index,
+                        actor: input.source.actor.to_string(),
+                        entry: input.source.entry.name.clone(),
+                        source,
+                    })?
+                }
             };
             if source_args.len() != expected_arg_count {
                 return Err(silverscript_abi::CodecError::WrongArgumentCount {
@@ -325,7 +363,9 @@ impl<'artifact> TxBuilder<'artifact> {
                 }
                 ResolveInput::Ordinary(input) => match &input.signature_script {
                     InputSigScript::Static(script) => script.clone(),
-                    InputSigScript::WithTransaction(build) => build(&unsigned, input_index),
+                    InputSigScript::WithTransaction(build) => {
+                        build(&unsigned, input_index).map_err(|source| BuilderError::InputSigScriptCallback { input_index, source })?
+                    }
                 },
             };
             signature_scripts.push(signature_script);
@@ -372,9 +412,9 @@ fn resolve_observation(
     covenant_id: Hash,
 ) -> BuilderResult<ObservedCovenantContext> {
     let matching_inputs = matching_observed_inputs(context, covenant_id);
-    require_observed_count(&observe.name, "input", observe.inputs.len(), matching_inputs.len())?;
+    require_observed_count(&observe.name, Side::In, observe.inputs.len(), matching_inputs.len())?;
     let matching_outputs = matching_observed_outputs(context, covenant_id);
-    require_observed_count(&observe.name, "output", observe.outputs.len(), matching_outputs.len())?;
+    require_observed_count(&observe.name, Side::Out, observe.outputs.len(), matching_outputs.len())?;
 
     // Pair both sides positionally: covenant members are indexed by transaction
     // order, while emitted observe checks assign indexes in declaration order.
@@ -426,7 +466,7 @@ fn matching_observed_outputs(context: &ResolveContext<'_, '_, '_>, covenant_id: 
         .collect()
 }
 
-fn require_observed_count(observe: &str, side: &'static str, expected: usize, found: usize) -> BuilderResult<()> {
+fn require_observed_count(observe: &str, side: Side, expected: usize, found: usize) -> BuilderResult<()> {
     if found != expected {
         return Err(BuilderError::ObservedCountMismatch { observe: observe.to_string(), side, expected, found });
     }
@@ -443,7 +483,7 @@ fn resolve_observed_input(
     let ResolveInput::Argent(candidate) = candidate else {
         return Err(BuilderError::MissingObservedActorMetadata {
             observe: observe.to_string(),
-            side: "input",
+            side: Side::In,
             handle: declaration.name.clone(),
             index,
         });
@@ -469,7 +509,7 @@ fn resolve_observed_output(
     let ResolveOutput::Argent(candidate) = candidate else {
         return Err(BuilderError::MissingObservedActorMetadata {
             observe: observe.to_string(),
-            side: "output",
+            side: Side::Out,
             handle: declaration.name.clone(),
             index,
         });
@@ -508,6 +548,7 @@ mod tests {
     };
     use kaspa_consensus_core::{
         Hash,
+        subnets::SubnetworkId,
         tx::{CovenantBinding, ScriptPublicKey, TransactionId, TransactionOutpoint, UtxoEntry},
     };
 
@@ -627,6 +668,7 @@ mod tests {
                 }),
                 outpoint(1),
                 counter_utxo.clone(),
+                11,
             )
             .input(
                 outpoint(2),
@@ -635,11 +677,15 @@ mod tests {
                     script_called.set(true);
                     vec![0xaa]
                 }),
+                12,
             )
-            .argent_input("asset::Reserve", state(7), "move", outpoint(3), reserve_utxo.clone())
+            .argent_input("asset::Reserve", state(7), "move", outpoint(3), reserve_utxo.clone(), 13)
             .argent_output("Counter", state(3), CovenantBinding::new(0, counter_id), 900)
             .output(ScriptPublicKey::default(), Some(CovenantBinding::new(0, counter_id)), 100)
-            .argent_output("asset::Reserve", state(8), CovenantBinding::new(2, reserve_id), 2_000);
+            .argent_output("asset::Reserve", state(8), CovenantBinding::new(2, reserve_id), 2_000)
+            .lock_time(14)
+            .lane(SubnetworkId::from_namespace([1, 2, 3, 4]), 15)
+            .payload([0xaa, 0xbb]);
 
         let resolved = builder.bind_context(&context).expect("context binds");
         assert!(matches!(&resolved.inputs[0], ResolveInput::Argent(input) if input.app == "primary"));
@@ -655,6 +701,11 @@ mod tests {
         assert_eq!(unsigned.tx.inputs[0].previous_outpoint, outpoint(1));
         assert_eq!(unsigned.tx.inputs[1].previous_outpoint, outpoint(2));
         assert_eq!(unsigned.tx.inputs[2].previous_outpoint, outpoint(3));
+        assert_eq!(unsigned.tx.inputs.iter().map(|input| input.sequence).collect::<Vec<_>>(), vec![11, 12, 13]);
+        assert_eq!(unsigned.tx.lock_time, 14);
+        assert_eq!(unsigned.tx.subnetwork_id, SubnetworkId::from_namespace([1, 2, 3, 4]));
+        assert_eq!(unsigned.tx.gas, 15);
+        assert_eq!(unsigned.tx.payload, [0xaa, 0xbb]);
         assert_eq!(unsigned.entries, vec![Some(counter_utxo), Some(ordinary_utxo), Some(reserve_utxo)]);
         assert_eq!(
             unsigned.tx.outputs[0].script_public_key,
@@ -687,14 +738,14 @@ mod tests {
         let mut unbound_utxo = matching_utxo.clone();
         unbound_utxo.covenant_id = None;
 
-        let missing_id = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), unbound_utxo);
+        let missing_id = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), unbound_utxo, 0);
         let missing_id = builder.bind_context(&missing_id).expect("context binds");
         assert!(matches!(
             builder.unsigned_transaction(&missing_id),
             Err(BuilderError::MissingArgentInputCovenantId { input_index: 0, actor }) if actor == "Counter"
         ));
 
-        let wrong_state = TxContext::new().argent_input("Counter", state(3), "bump", outpoint(1), matching_utxo);
+        let wrong_state = TxContext::new().argent_input("Counter", state(3), "bump", outpoint(1), matching_utxo, 0);
         let wrong_state = builder.bind_context(&wrong_state).expect("context binds");
         assert!(matches!(
             builder.unsigned_transaction(&wrong_state),
@@ -709,13 +760,13 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x44; 32]);
         let utxo = builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
 
-        let unknown_app = TxContext::new().argent_input("missing::Counter", state(2), "bump", outpoint(1), utxo.clone());
+        let unknown_app = TxContext::new().argent_input("missing::Counter", state(2), "bump", outpoint(1), utxo.clone(), 0);
         assert!(matches!(builder.bind_context(&unknown_app), Err(BuilderError::UnknownAppAlias(app)) if app == "missing"));
 
-        let unknown_actor = TxContext::new().argent_input("Missing", state(2), "bump", outpoint(1), utxo.clone());
+        let unknown_actor = TxContext::new().argent_input("Missing", state(2), "bump", outpoint(1), utxo.clone(), 0);
         assert!(matches!(builder.bind_context(&unknown_actor), Err(BuilderError::UnknownActor(actor)) if actor == "Missing"));
 
-        let unknown_entry = TxContext::new().argent_input("Counter", state(2), "missing", outpoint(1), utxo);
+        let unknown_entry = TxContext::new().argent_input("Counter", state(2), "missing", outpoint(1), utxo, 0);
         assert!(matches!(
             builder.bind_context(&unknown_entry),
             Err(BuilderError::UnknownEntry { actor, entry }) if actor == "Counter" && entry == "missing"
@@ -745,6 +796,7 @@ mod tests {
                 EntryCall::new("bump").args(vec![ArgValue::Value(ArtifactValue::Int(3))]),
                 outpoint(1),
                 counter_utxo.clone(),
+                0,
             )
             .input(
                 outpoint(2),
@@ -753,6 +805,7 @@ mod tests {
                     ordinary_callback_called.set(true);
                     vec![0xaa]
                 }),
+                0,
             )
             .argent_input(
                 "Counter",
@@ -768,6 +821,7 @@ mod tests {
                 }),
                 outpoint(3),
                 counter_utxo,
+                0,
             )
             .argent_output("Counter", state(3), CovenantBinding::new(0, covenant_id), 900);
         let mut resolved = builder.bind_context(&context).expect("context binds");
@@ -806,6 +860,7 @@ mod tests {
             EntryCall::new("choose").args(vec![actor("Beta")]),
             outpoint(1),
             router_utxo,
+            0,
         );
         let mut resolved = builder.bind_context(&context).expect("context binds");
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
@@ -836,6 +891,7 @@ mod tests {
             EntryCall::new("replace").args(vec![ArgValue::Value(ArtifactValue::Object(state(9)))]),
             outpoint(1),
             counter_utxo,
+            0,
         );
         let mut resolved = builder.bind_context(&context).expect("context binds");
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
@@ -858,13 +914,52 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x77; 32]);
         let counter_utxo =
             builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
-        let context = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), counter_utxo);
+        let context = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), counter_utxo, 0);
         let mut resolved = builder.bind_context(&context).expect("context binds");
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
 
         assert!(matches!(
             builder.resolve_context_args(&mut resolved, &unsigned),
             Err(BuilderError::Codec(silverscript_abi::CodecError::WrongArgumentCount { expected: 1, actual: 0, .. }))
+        ));
+    }
+
+    #[test]
+    fn context_reports_fallible_callback_errors_with_input_identity() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x78; 32]);
+        let counter_utxo =
+            builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
+        let context = TxContext::new().argent_input(
+            "Counter",
+            state(2),
+            EntryCall::new("bump").try_args_with(|_, _| Err::<Vec<ArgValue>, _>(std::io::Error::other("signer unavailable"))),
+            outpoint(1),
+            counter_utxo,
+            0,
+        );
+
+        let error = builder.build(&context).expect_err("argument callback fails");
+        assert!(matches!(
+            error,
+            BuilderError::EntryArgsCallback { input_index: 0, actor, entry, source }
+                if actor == "Counter" && entry == "bump" && source.to_string() == "signer unavailable"
+        ));
+
+        let ordinary_utxo = UtxoEntry::new(100, ScriptPublicKey::default(), 0, false, None);
+        let context = TxContext::new().input(
+            outpoint(2),
+            ordinary_utxo,
+            InputSigScript::try_with_transaction(|_, _| Err::<Vec<u8>, _>(std::io::Error::other("script signer unavailable"))),
+            0,
+        );
+
+        let error = builder.build(&context).expect_err("sigscript callback fails");
+        assert!(matches!(
+            error,
+            BuilderError::InputSigScriptCallback { input_index: 0, source }
+                if source.to_string() == "script signer unavailable"
         ));
     }
 }

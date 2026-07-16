@@ -22,7 +22,6 @@ pub fn emit_build_app(program: &Program, app_name: &str, out_dir: impl AsRef<Pat
 fn emit_build_selected(program: &Program, app_name: Option<&str>, out_dir: impl AsRef<Path>) -> Result<()> {
     let out_dir = out_dir.as_ref();
     let sil_dir = out_dir.join("sil");
-    fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(out_dir, err.to_string()))?;
 
     let model = match app_name {
         Some(app_name) => Model::from_program_app(program, app_name)?,
@@ -31,15 +30,24 @@ fn emit_build_selected(program: &Program, app_name: Option<&str>, out_dir: impl 
     let mut actor_sil = BTreeMap::new();
     for actor in &model.actors {
         let sil = emit_actor(actor, &model)?;
-        fs::write(sil_dir.join(format!("{}.sil", actor.name)), &sil)
-            .map_err(|err| ArgentError::at(sil_dir.join(format!("{}.sil", actor.name)), err.to_string()))?;
         actor_sil.insert(actor.name.clone(), sil);
     }
+    let manifest = emit_manifest(program, &model);
+    let artifact = emit_artifact_json(program, &model, &actor_sil)?;
 
-    fs::write(out_dir.join("manifest.json"), emit_manifest(program, &model))
+    if sil_dir.exists() {
+        fs::remove_dir_all(&sil_dir).map_err(|err| ArgentError::at(&sil_dir, err.to_string()))?;
+    }
+    fs::create_dir_all(&sil_dir).map_err(|err| ArgentError::at(&sil_dir, err.to_string()))?;
+    for (actor, sil) in &actor_sil {
+        let path = sil_dir.join(format!("{actor}.sil"));
+        fs::write(&path, sil).map_err(|err| ArgentError::at(path, err.to_string()))?;
+    }
+
+    fs::write(out_dir.join("manifest.json"), manifest)
         .map_err(|err| ArgentError::at(out_dir.join("manifest.json"), err.to_string()))?;
 
-    fs::write(out_dir.join("artifact.json"), emit_artifact_json(program, &model, &actor_sil)?)
+    fs::write(out_dir.join("artifact.json"), artifact)
         .map_err(|err| ArgentError::at(out_dir.join("artifact.json"), err.to_string()))?;
     Ok(())
 }
@@ -6292,6 +6300,19 @@ mod tests {
         *prefix.last_mut().expect("capsule prefix contains context") ^= 1;
         handle.template.prefix_hex = encode_hex(&prefix);
         let err = corrupted.verify_template_plan().expect_err("corrupted capsule context is rejected");
+        assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
+
+        let mut corrupted = artifact.clone();
+        let handle = corrupted
+            .argent
+            .template_plan
+            .templates
+            .iter_mut()
+            .find(|template| template.actor == "ReserveAsset")
+            .and_then(|template| template.actor_type_handle.as_mut())
+            .expect("ReserveAsset capsule handle exists");
+        handle.template.hash_hex = "00".repeat(32);
+        let err = corrupted.verify_template_plan().expect_err("corrupted capsule hash is rejected");
         assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
     }
 

@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.94.0"
 
 [dependencies]
+blake2b_simd = { workspace = true }
 faster-hex = { workspace = true }
 kaspa-txscript = { workspace = true }
 serde = { workspace = true }
@@ -12,3 +13,5 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# Keep the Sil compiler test-only; production ABI code must not depend on it.
+silverscript-lang = { workspace = true }
