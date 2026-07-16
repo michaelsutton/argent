@@ -10,8 +10,6 @@ contract Issuer(
 ) {
     // :: state layouts
     struct TicketState {
-        byte[32] gen__ticket_template;
-        // :: gen__ ^ | src:
         byte[32] owner;
         int serial;
         int redeemed;
@@ -54,8 +52,6 @@ contract Issuer(
             next_serial: next_serial + 1,
         };
         TicketState new_ticket = {
-            gen__ticket_template: gen__ticket_template,
-            // :: gen__ ^ | src:
             owner: owner,
             serial: serial,
             redeemed: 0,

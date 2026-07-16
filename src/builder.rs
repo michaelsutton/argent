@@ -141,40 +141,56 @@ mod tests {
     fn redeem_script_fills_hidden_template_state_from_artifact() {
         let artifact = tickets_artifact();
         let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
-        let actor = artifact.sil_abi.contract("Ticket").expect("ticket contract exists");
-        let owner = keypair_from_byte(3);
-        let owner_pk = owner.x_only_public_key().0.serialize().to_vec();
-        let source_state = ticket_state(blake2b32(&owner_pk), 11, 0);
+        let actor = artifact.sil_abi.contract("Issuer").expect("issuer contract exists");
+        let admin = keypair_from_byte(3);
+        let admin_pk = admin.x_only_public_key().0.serialize().to_vec();
+        let owner_pk = keypair_from_byte(4).x_only_public_key().0.serialize().to_vec();
+        let source_state = state! {
+            admin: blake2b32(&admin_pk),
+            next_serial: 11,
+        };
         let covenant_id = Hash::from_bytes([0x21; 32]);
         let input_utxo =
-            builder.covenant_utxo("Ticket", source_state.clone(), 1_000, 0, false, Some(covenant_id)).expect("ticket UTXO builds");
+            builder.covenant_utxo("Issuer", source_state.clone(), 1_000, 0, false, Some(covenant_id)).expect("issuer UTXO builds");
         let context = TxContext::new()
             .argent_input(
-                "Ticket",
+                "Issuer",
                 source_state.clone(),
-                EntryCall::new("redeem").args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &owner), owner_pk.clone()]),
+                EntryCall::new("issue")
+                    .args_with(|tx, input_idx| args![sign_mutable_input(tx, input_idx, &admin), admin_pk.clone(), owner_pk.clone()]),
                 TransactionOutpoint::new(TransactionId::from_bytes([0x22; 32]), 0),
                 input_utxo,
                 0,
             )
-            .argent_output("Ticket", ticket_state(blake2b32(&owner_pk), 11, 1), CovenantBinding::new(0, covenant_id), 1_000);
-        let transaction = builder.build(&context).expect("ticket transaction builds");
+            .argent_output(
+                "Issuer",
+                state! {
+                    admin: blake2b32(&admin_pk),
+                    next_serial: 12,
+                },
+                CovenantBinding::new(0, covenant_id),
+                1_000,
+            )
+            .argent_output("Ticket", ticket_state(blake2b32(&owner_pk), 11, 0), CovenantBinding::new(0, covenant_id), 500);
+        let transaction = builder.build(&context).expect("issue transaction builds");
         let redeem_script = p2sh_redeem_script(&transaction.inputs[0].signature_script);
         let state_span = &actor.compiled.state_span;
         let state_script = &redeem_script[state_span.offset..state_span.offset + state_span.len];
         let decoded = crate::codec::decode_runtime_state_script(&actor.runtime_state, state_script).expect("state decodes");
 
-        assert_eq!(decoded.get("owner"), source_state.get("owner"));
+        assert_eq!(decoded.get("admin"), source_state.get("admin"));
         assert_eq!(
             decoded.get("gen__ticket_template"),
-            Some(&ArtifactValue::Bytes(decode_hex(&actor.compiled.template.hash_hex).unwrap()))
+            Some(&ArtifactValue::Bytes(
+                decode_hex(&artifact.sil_abi.contract("Ticket").expect("ticket contract exists").compiled.template.hash_hex).unwrap()
+            ))
         );
-        assert!(!decoded.contains_key("gen__issuer_template"), "Ticket state should not carry unrelated Issuer template");
+        assert!(!decoded.contains_key("gen__issuer_template"), "Issuer state should not carry its own template");
 
         let mut explicit_hidden_state = source_state;
         explicit_hidden_state.insert("gen__ticket_template".to_string(), ArtifactValue::Bytes(vec![0; 32]));
         let explicit_hidden =
-            TxContext::new().argent_output("Ticket", explicit_hidden_state, CovenantBinding::new(0, covenant_id), 1_000);
+            TxContext::new().argent_output("Issuer", explicit_hidden_state, CovenantBinding::new(0, covenant_id), 1_000);
         let err = builder.build(&explicit_hidden).expect_err("hidden runtime state fields must be filled by the runtime");
         assert!(
             matches!(err, BuilderError::HiddenRuntimeFieldProvided { ref field, .. } if field == "gen__ticket_template"),

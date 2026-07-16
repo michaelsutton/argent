@@ -22,8 +22,6 @@ contract Minter(
         byte[32] controller_id;
     }
     struct KCC20State {
-        byte[32] gen__kcc20_template;
-        // :: gen__ ^ | src:
         byte[32] owner_identifier;
         byte identifier_type;
         int amount;
@@ -82,8 +80,6 @@ contract Minter(
             controller_id: OpInputCovenantId(this.activeInputIndex),
         };
         KCC20State next_recipient = {
-            gen__kcc20_template: gen__asset_kcc20_template,
-            // :: gen__ ^ | src:
             owner_identifier: recipient_owner,
             identifier_type: IDENTIFIER_PUBKEY,
             amount: minted_amount,

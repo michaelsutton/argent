@@ -11,7 +11,6 @@ contract League(
 ) {
     // :: state layouts
     struct PlayerState {
-        byte[32] gen__player_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:
@@ -44,7 +43,6 @@ contract League(
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Player
 
         PlayerState next_player = {
-            gen__player_template: gen__player_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes_digest: gen__mux_routes_digest,
             // :: gen__ ^ | src:

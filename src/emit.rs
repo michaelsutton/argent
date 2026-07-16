@@ -1230,17 +1230,17 @@ fn compute_state_template_deps<'a>(
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<BTreeMap<String, Vec<String>>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
-    let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
-    let mut adjacency = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut deps = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut routes = BTreeMap::<String, BTreeSet<String>>::new();
 
     for actor in actors {
-        direct.entry(actor.state.clone()).or_default();
-        adjacency.entry(actor.state.clone()).or_default();
+        deps.entry(actor.state.clone()).or_default();
+        routes.entry(actor.state.clone()).or_default();
 
         for entry in &actor.entries {
             for consume in &entry.consumes {
                 if template_actor_set.contains(&consume.actor) {
-                    direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
+                    deps.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
                 }
             }
 
@@ -1248,49 +1248,43 @@ fn compute_state_template_deps<'a>(
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
                 })?;
-                adjacency.entry(actor.state.clone()).or_default().insert(target.state.clone());
-                adjacency.entry(target.state.clone()).or_default().insert(actor.state.clone());
+                routes.entry(actor.state.clone()).or_default().insert(target.state.clone());
+                routes.entry(target.state.clone()).or_default();
+                deps.entry(target.state.clone()).or_default();
 
                 if template_actor_set.contains(&route.actor)
                     && route_validation_kind(actor, &route) == RouteValidationKind::ForeignTemplate
                 {
-                    direct.entry(actor.state.clone()).or_default().insert(route.actor.clone());
+                    deps.entry(actor.state.clone()).or_default().insert(route.actor.clone());
                 }
             }
         }
     }
 
-    let mut result = BTreeMap::new();
-    let mut visited = BTreeSet::new();
-    for state in adjacency.keys() {
-        if visited.contains(state) {
-            continue;
-        }
-        let mut stack = vec![state.clone()];
-        let mut component = BTreeSet::new();
-        while let Some(next) = stack.pop() {
-            if !visited.insert(next.clone()) {
-                continue;
-            }
-            component.insert(next.clone());
-            if let Some(neighbors) = adjacency.get(&next) {
-                stack.extend(neighbors.iter().filter(|neighbor| !visited.contains(*neighbor)).cloned());
+    // A source state must also carry the templates needed to construct any
+    // successor state. Propagate those requirements backward to a fixed point;
+    // this preserves route cycles without leaking them into terminal states.
+    loop {
+        let mut changed = false;
+        for (state, targets) in &routes {
+            let inherited = targets.iter().flat_map(|target| deps.get(target).into_iter().flatten()).cloned().collect::<BTreeSet<_>>();
+            let state_deps = deps.get_mut(state).expect("route source state has dependency storage");
+            for actor in inherited {
+                changed |= state_deps.insert(actor);
             }
         }
-
-        let mut component_deps = BTreeSet::new();
-        for component_state in &component {
-            if let Some(state_deps) = direct.get(component_state) {
-                component_deps.extend(state_deps.iter().cloned());
-            }
-        }
-        for component_state in component {
-            let ordered = template_actors.iter().filter(|actor| component_deps.contains(*actor)).cloned().collect::<Vec<_>>();
-            result.insert(component_state, ordered.clone());
+        if !changed {
+            break;
         }
     }
 
-    Ok(result)
+    Ok(deps
+        .into_iter()
+        .map(|(state, deps)| {
+            let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
+            (state, ordered)
+        })
+        .collect())
 }
 
 fn compute_direct_state_template_deps<'a>(
@@ -1421,7 +1415,9 @@ fn infer_direct_route_families<'a>(
                     stack.extend(neighbors.iter().filter(|neighbor| !visited.contains(*neighbor)).cloned());
                 }
             }
-            if component.len() < 2 {
+            // A two-actor component needs two template hashes either way;
+            // direct fields avoid the extra table hash and slice operations.
+            if component.len() < 3 {
                 continue;
             }
             let actors = template_actors.iter().filter(|actor| component.contains(*actor)).cloned().collect::<Vec<_>>();
@@ -1440,7 +1436,9 @@ fn infer_direct_route_families<'a>(
                 actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
             let table_actors =
                 route_family_table_actors_from_selector_order(&state, &actors, &default_table_actors, &selectors_by_actor)?;
-            if table_actors.is_empty() {
+            // Multiple direct entry actors can leave only one table entry even
+            // in a larger component. Such a table has no storage benefit.
+            if table_actors.len() < 2 {
                 continue;
             }
             families.push(RouteFamily {
@@ -6116,6 +6114,67 @@ mod tests {
     }
 
     #[test]
+    fn terminal_state_does_not_carry_its_own_template() {
+        let path = PathBuf::from("terminal-route.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state SourceState {
+                int count;
+            }
+
+            state TerminalState {
+                int count;
+            }
+
+            actor Source owns SourceState {
+                entry finish() emits one Terminal {
+                    TerminalState next = {
+                        count: count + 1,
+                    };
+                    become Terminal(next);
+                }
+            }
+
+            actor Terminal owns TerminalState {
+                entry step() emits one Terminal {
+                    TerminalState next = {
+                        count: count + 1,
+                    };
+                    become Terminal(next);
+                }
+            }
+
+            app Test {
+                actor Source;
+                actor Terminal;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let terminal = model.actor("Terminal").expect("Terminal actor exists");
+        let terminal_sil = emit_actor(terminal, &model).expect("Terminal emits");
+        let artifact = emit_artifact(&program, &model, &actor_sil_for_model(&model)).expect("artifact emits");
+
+        assert!(!terminal_sil.contains("byte[32] gen__init_terminal_template"), "{terminal_sil}");
+        assert!(!terminal_sil.contains("byte[32] gen__terminal_template ="), "{terminal_sil}");
+        assert!(terminal_sil.contains("validateOutputState(gen__next_output_idx, next);"), "{terminal_sil}");
+        assert!(runtime_state_plan(&artifact, "Terminal").is_none());
+        assert_eq!(
+            runtime_state_plan(&artifact, "Source")
+                .expect("Source carries the target template")
+                .field_roles
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
+            vec![("gen__terminal_template", RuntimeFieldRoleArtifact::Template { contract: "Terminal".to_string() })]
+        );
+    }
+
+    #[test]
     fn emits_portable_artifact_schema() {
         let module = crate::parser::parse_module(
             PathBuf::from("test.ag"),
@@ -6262,6 +6321,10 @@ mod tests {
     #[test]
     fn expanded_actor_records_canonical_and_capsule_template_cuts() {
         let (sil, artifact) = emit_fixture("capsule_route_context", "ReserveAsset");
+        let (wallet_sil, _) = emit_fixture("capsule_route_context", "WalletAsset");
+
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/capsule_route_context/ReserveAsset.sil"));
+        assert_eq!(wallet_sil, include_str!("../tests/fixtures/emit/capsule_route_context/WalletAsset.sil"));
         assert!(sil.contains("byte[32] gen__wallet_asset_template"), "{sil}");
 
         let contract = artifact.sil_abi.contract("ReserveAsset").expect("ReserveAsset Sil ABI exists");
@@ -6394,8 +6457,8 @@ mod tests {
             "examples/tickets.ag",
             "tickets",
             &[
-                ("Issuer", "50e292bdb137981290dec826a6b432c50f5d385141c050c87295794939c7fc11"),
-                ("Ticket", "fe9ed8bd62293091afa65b0520f1175b4cace3f5864232f2fc932c367a42cc25"),
+                ("Issuer", "edcdc16f35a3a5fb4b128879c4d06bb83c83533135aa06b22975334dc0b785b5"),
+                ("Ticket", "701a0a1f8be9e25c8af238ae081dd2a654ed76891e854bc711ac2c293d8c4f40"),
             ],
         );
         assert_example_build_artifact("examples/stones/app.ag", "stones", &[]);
@@ -7271,12 +7334,13 @@ mod tests {
         );
 
         assert_eq!(
-            runtime_state_plan(&artifact, "Player").expect("Player runtime role overlay exists").field_roles[..3]
+            runtime_state_plan(&artifact, "Player")
+                .expect("Player runtime role overlay exists")
+                .field_roles
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
             vec![
-                ("gen__player_template", RuntimeFieldRoleArtifact::Template { contract: "Player".to_string() }),
                 ("gen__mux_template", RuntimeFieldRoleArtifact::Template { contract: "Mux".to_string() }),
                 ("gen__mux_routes_digest", RuntimeFieldRoleArtifact::TemplateDigest { id: "route_family/BoardState/mux".to_string() }),
             ]
@@ -7691,7 +7755,7 @@ mod tests {
     }
 
     #[test]
-    fn route_family_without_external_entry_uses_first_actor_as_anchor() {
+    fn two_actor_routes_use_direct_template_fields() {
         let artifact = inline_artifact(
             "genesis-route-family",
             r#"
@@ -7726,24 +7790,22 @@ mod tests {
             "#,
         );
 
-        let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
-        assert_eq!(family.id, "route_family/BoardState/a");
-        assert_eq!(family.anchor_actor, "A");
-        assert!(family.entry_actors.is_empty());
-        assert_eq!(family.actors, vec!["A", "B"]);
-        assert_eq!(family.table_id, "route_table/BoardState/gen__a_routes");
+        assert!(artifact.argent.template_plan.route_families.is_empty());
+        assert!(artifact.argent.template_plan.route_tables.is_empty());
 
         assert_eq!(
-            runtime_state_plan(&artifact, "A").expect("A runtime role overlay exists").field_roles[..2]
+            runtime_state_plan(&artifact, "A")
+                .expect("A runtime role overlay exists")
+                .field_roles
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
             vec![
                 ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
-                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string()] }),
+                ("gen__b_template", RuntimeFieldRoleArtifact::Template { contract: "B".to_string() }),
             ]
         );
-        artifact.verify_template_plan().expect("zero-entry route family receipt verifies");
+        artifact.verify_template_plan().expect("direct two-actor route plan verifies");
     }
 
     #[test]
@@ -7766,26 +7828,6 @@ mod tests {
             }
 
             actor B owns BoardState {
-                entry to_a() emits one A {
-                    BoardState next = {
-                        n: n + 1,
-                    };
-
-                    become A(next);
-                }
-            }
-
-            actor C owns BoardState {
-                entry to_d() emits one D {
-                    BoardState next = {
-                        n: n + 1,
-                    };
-
-                    become D(next);
-                }
-            }
-
-            actor D owns BoardState {
                 entry to_c() emits one C {
                     BoardState next = {
                         n: n + 1,
@@ -7795,11 +7837,53 @@ mod tests {
                 }
             }
 
+            actor C owns BoardState {
+                entry to_a() emits one A {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become A(next);
+                }
+            }
+
+            actor D owns BoardState {
+                entry to_e() emits one E {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become E(next);
+                }
+            }
+
+            actor E owns BoardState {
+                entry to_f() emits one F {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become F(next);
+                }
+            }
+
+            actor F owns BoardState {
+                entry to_d() emits one D {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become D(next);
+                }
+            }
+
             app MultiFamilyState {
                 actor A;
                 actor B;
                 actor C;
                 actor D;
+                actor E;
+                actor F;
             }
             "#,
         );
@@ -7821,8 +7905,8 @@ mod tests {
         assert_eq!(
             families,
             vec![
-                ("route_family/BoardState/a", "A", vec!["A", "B"], "route_table/BoardState/gen__a_routes"),
-                ("route_family/BoardState/c", "C", vec!["C", "D"], "route_table/BoardState/gen__c_routes"),
+                ("route_family/BoardState/a", "A", vec!["A", "B", "C"], "route_table/BoardState/gen__a_routes"),
+                ("route_family/BoardState/d", "D", vec!["D", "E", "F"], "route_table/BoardState/gen__d_routes"),
             ]
         );
 
@@ -7837,11 +7921,17 @@ mod tests {
             vec![
                 (
                     "route_table/BoardState/gen__a_routes",
-                    vec![RouteTemplateLeafArtifact::Template { actor: "B".to_string(), template_id: "template/b".to_string() }],
+                    vec![
+                        RouteTemplateLeafArtifact::Template { actor: "B".to_string(), template_id: "template/b".to_string() },
+                        RouteTemplateLeafArtifact::Template { actor: "C".to_string(), template_id: "template/c".to_string() },
+                    ],
                 ),
                 (
-                    "route_table/BoardState/gen__c_routes",
-                    vec![RouteTemplateLeafArtifact::Template { actor: "D".to_string(), template_id: "template/d".to_string() }],
+                    "route_table/BoardState/gen__d_routes",
+                    vec![
+                        RouteTemplateLeafArtifact::Template { actor: "E".to_string(), template_id: "template/e".to_string() },
+                        RouteTemplateLeafArtifact::Template { actor: "F".to_string(), template_id: "template/f".to_string() },
+                    ],
                 ),
             ]
         );
@@ -7855,18 +7945,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
-                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string()] }),
-                ("gen__c_template", RuntimeFieldRoleArtifact::Template { contract: "C".to_string() }),
-                ("gen__c_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string()] }),
+                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string(), "C".to_string()] }),
+                ("gen__d_template", RuntimeFieldRoleArtifact::Template { contract: "D".to_string() }),
+                ("gen__d_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["E".to_string(), "F".to_string()] }),
             ]
         );
         artifact.verify_template_plan().expect("multi-family route state receipt verifies");
     }
 
     #[test]
-    fn route_family_with_multiple_external_entries_uses_first_entry_as_anchor() {
+    fn route_family_with_one_table_actor_uses_direct_template_fields() {
         let artifact = inline_artifact(
-            "multi-entry-route-family",
+            "single-entry-route-table",
             r#"
             state PlayerState {
                 int n;
@@ -7917,16 +8007,12 @@ mod tests {
             }
 
             actor Leaf owns BoardState {
-                entry to_a() emits one HubA {
-                    BoardState next = {
-                        n: n + 1,
-                    };
-
-                    become HubA(next);
+                entry idle() emits none {
+                    require(n >= 0);
                 }
             }
 
-            app MultiEntryFamily {
+            app SingleEntryRouteTable {
                 actor PlayerA;
                 actor PlayerB;
                 actor HubB;
@@ -7936,11 +8022,109 @@ mod tests {
             "#,
         );
 
+        assert!(artifact.argent.template_plan.route_families.is_empty());
+        assert!(artifact.argent.template_plan.route_tables.is_empty());
+        assert_eq!(
+            runtime_state_plan(&artifact, "HubB")
+                .expect("HubB runtime role overlay exists")
+                .field_roles
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
+            vec![("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() })]
+        );
+        artifact.verify_template_plan().expect("direct route plan verifies");
+    }
+
+    #[test]
+    fn route_family_with_multiple_external_entries_uses_first_entry_as_anchor() {
+        let artifact = inline_artifact(
+            "multi-entry-route-family",
+            r#"
+            state PlayerState {
+                int n;
+            }
+
+            state BoardState {
+                int n;
+            }
+
+            actor PlayerA owns PlayerState {
+                entry enter_a() emits one HubA {
+                    BoardState next = {
+                        n: n,
+                    };
+
+                    become HubA(next);
+                }
+            }
+
+            actor PlayerB owns PlayerState {
+                entry enter_b() emits one HubB {
+                    BoardState next = {
+                        n: n,
+                    };
+
+                    become HubB(next);
+                }
+            }
+
+            actor HubB owns BoardState {
+                entry to_leaf_a() emits one LeafA {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become LeafA(next);
+                }
+            }
+
+            actor HubA owns BoardState {
+                entry to_leaf_b() emits one LeafB {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become LeafB(next);
+                }
+            }
+
+            actor LeafA owns BoardState {
+                entry to_a() emits one HubA {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become HubA(next);
+                }
+            }
+
+            actor LeafB owns BoardState {
+                entry to_b() emits one HubB {
+                    BoardState next = {
+                        n: n + 1,
+                    };
+
+                    become HubB(next);
+                }
+            }
+
+            app MultiEntryFamily {
+                actor PlayerA;
+                actor PlayerB;
+                actor HubB;
+                actor HubA;
+                actor LeafA;
+                actor LeafB;
+            }
+            "#,
+        );
+
         let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
         assert_eq!(family.id, "route_family/BoardState/hub_b");
         assert_eq!(family.anchor_actor, "HubB");
         assert_eq!(family.entry_actors, vec!["HubB", "HubA"]);
-        assert_eq!(family.actors, vec!["HubB", "HubA", "Leaf"]);
+        assert_eq!(family.actors, vec!["HubB", "HubA", "LeafA", "LeafB"]);
         assert_eq!(family.table_id, "route_table/BoardState/gen__hub_b_routes");
 
         assert_eq!(
@@ -7951,7 +8135,10 @@ mod tests {
             vec![
                 ("gen__hub_b_template", RuntimeFieldRoleArtifact::Template { contract: "HubB".to_string() }),
                 ("gen__hub_a_template", RuntimeFieldRoleArtifact::Template { contract: "HubA".to_string() }),
-                ("gen__hub_b_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["Leaf".to_string()] }),
+                (
+                    "gen__hub_b_routes",
+                    RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["LeafA".to_string(), "LeafB".to_string()] },
+                ),
             ]
         );
         artifact.verify_template_plan().expect("multi-entry route family receipt verifies");

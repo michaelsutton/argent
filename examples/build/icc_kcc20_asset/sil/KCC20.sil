@@ -4,7 +4,6 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract KCC20(
-    byte[32] gen__init_kcc20_template,
     byte[32] init_owner_identifier,
     byte init_identifier_type,
     int init_amount
@@ -21,7 +20,7 @@ contract KCC20(
     }
 
     // :: route templates
-    byte[32] gen__kcc20_template = gen__init_kcc20_template;
+    // No foreign route templates required.
 
     // :: state fields: KCC20
     byte[32] owner_identifier = init_owner_identifier;
@@ -47,8 +46,6 @@ contract KCC20(
             require(false);
         }
         State next_state = {
-            gen__kcc20_template: gen__kcc20_template,
-            // :: gen__ ^ | src:
             owner_identifier: new_owner_identifier,
             identifier_type: new_identifier_type,
             amount: amount,

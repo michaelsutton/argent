@@ -9,8 +9,6 @@ contract Controller(
 ) {
     // :: state layouts
     struct PeerState {
-        byte[32] gen__peer_template;
-        // :: gen__ ^ | src:
         int count;
     }
 
@@ -39,8 +37,6 @@ contract Controller(
         int gen__peer_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output peer: Peer
 
         PeerState next_peer = {
-            gen__peer_template: gen__peer_template,
-            // :: gen__ ^ | src:
             count: peer.count + 1,
         };
         // :: become Peer

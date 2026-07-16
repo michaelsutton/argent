@@ -18,7 +18,6 @@ contract Mux(
         int nonce;
     }
     struct PlayerState {
-        byte[32] gen__player_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
         // :: gen__ ^ | src:

@@ -4,7 +4,6 @@ pragma silverscript ^0.1.0;
 // This is plain Silverscript: no covenant macros are used.
 
 contract Player(
-    byte[32] gen__init_player_template,
     byte[32] gen__init_mux_template,
     byte[32] gen__init_mux_routes_digest,
     int init_nonce
@@ -26,7 +25,6 @@ contract Player(
     }
 
     // :: route templates
-    byte[32] gen__player_template = gen__init_player_template;
     byte[32] gen__mux_template = gen__init_mux_template;
     byte[32] gen__mux_routes_digest = gen__init_mux_routes_digest;
 
