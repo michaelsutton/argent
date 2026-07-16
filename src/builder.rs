@@ -335,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn context_builds_paired_transfer_and_enforces_compute_mass() {
+    fn context_builds_paired_transfer_and_enforces_mass_limits() {
         let artifact = inline_artifact(
             "context-paired-transfer",
             r#"
@@ -413,8 +413,13 @@ mod tests {
 
         let mut oversized = transaction;
         oversized.outputs.extend((0..5).map(|_| TransactionOutput::new(1, ScriptPublicKey::from_vec(0, vec![0; 10_000]))));
-        let err = execute_transaction_with_covenants(&mut oversized, entries).expect_err("oversized compute mass must fail");
+        let err = execute_transaction_with_covenants(&mut oversized, entries.clone()).expect_err("oversized compute mass must fail");
         assert!(matches!(err, BuilderError::ComputeMassLimitExceeded { limit: 500_000, .. }), "unexpected error: {err}");
+
+        oversized.outputs.truncate(2);
+        oversized.payload = vec![0; 250_000];
+        let err = execute_transaction_with_covenants(&mut oversized, entries).expect_err("oversized transient mass must fail");
+        assert!(matches!(err, BuilderError::TransientMassLimitExceeded { limit: 1_000_000, .. }), "unexpected error: {err}");
     }
 
     #[test]

@@ -330,6 +330,8 @@ pub enum BuilderError {
     UnsupportedTransactionVersion { expected: u16, found: u16 },
     #[error("transaction compute mass {compute_mass} exceeds limit {limit}")]
     ComputeMassLimitExceeded { compute_mass: u64, limit: u64 },
+    #[error("transaction transient mass {transient_mass} exceeds limit {limit}")]
+    TransientMassLimitExceeded { transient_mass: u64, limit: u64 },
     #[error("genesis covenant output {0} was not populated")]
     MissingGenesisCovenantOutput(u32),
     #[error("genesis covenant output {0} does not exist")]
@@ -1625,7 +1627,7 @@ pub fn execute_input_with_covenants(tx: &Transaction, entries: Vec<UtxoEntry>, i
 }
 
 /// Execute every covenant input, commit its measured compute budget, and check
-/// the finalized transaction against the consensus compute-mass limit.
+/// the finalized transaction against the consensus non-contextual mass limits.
 pub fn execute_transaction_with_covenants(tx: &mut Transaction, entries: Vec<UtxoEntry>) -> BuilderResult<()> {
     if tx.version != TX_VERSION_TOCCATA {
         return Err(BuilderError::UnsupportedTransactionVersion { expected: TX_VERSION_TOCCATA, found: tx.version });
@@ -1651,10 +1653,13 @@ pub fn execute_transaction_with_covenants(tx: &mut Transaction, entries: Vec<Utx
     }
 
     let mass_calculator = MassCalculator::new_with_consensus_params(&MAINNET_PARAMS);
-    let compute_mass = mass_calculator.calc_non_contextual_masses(tx).compute_mass;
-    let limit = MAINNET_PARAMS.block_mass_limits().after().compute;
-    if compute_mass > limit {
-        return Err(BuilderError::ComputeMassLimitExceeded { compute_mass, limit });
+    let masses = mass_calculator.calc_non_contextual_masses(tx);
+    let limits = MAINNET_PARAMS.block_mass_limits().after();
+    if masses.compute_mass > limits.compute {
+        return Err(BuilderError::ComputeMassLimitExceeded { compute_mass: masses.compute_mass, limit: limits.compute });
+    }
+    if masses.transient_mass > limits.transient {
+        return Err(BuilderError::TransientMassLimitExceeded { transient_mass: masses.transient_mass, limit: limits.transient });
     }
     Ok(())
 }
