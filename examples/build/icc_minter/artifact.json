@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "921d4f29b6e2df512887db5381486cb78971639494d3d1a296fc2b26b84515d6",
+  "id": "c45ae97f17d67402e5b5ab0e20b9989230135562b6b753a057de70d22f5fa158",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -330,6 +330,10 @@
               {
                 "name": "asset",
                 "covenant_expr": "self.kcc20_covid",
+                "covenant_id_source": {
+                  "kind": "state_field",
+                  "field": "kcc20_covid"
+                },
                 "inputs": [
                   {
                     "name": "proxy",

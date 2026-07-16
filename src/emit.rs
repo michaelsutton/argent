@@ -491,6 +491,7 @@ impl<'a> Model<'a> {
                     actor.name, entry.name, observe.name
                 )));
             }
+            observe_covenant_id_source(actor, entry, self, observe)?;
             self.validate_observed_open_bindings(actor, entry, observe)?;
             self.validate_observed_actor_types(actor, entry, observe, "input", &observe.inputs)?;
             self.validate_observed_actor_types(actor, entry, observe, "output", &observe.outputs)?;
@@ -4612,6 +4613,7 @@ fn observe_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, obs
     Ok(ObserveArtifact {
         name: observe.name.clone(),
         covenant_expr: compact_expr(&observe.covenant_expr),
+        covenant_id_source: observe_covenant_id_source(actor, entry, model, observe)?,
         inputs: observe
             .inputs
             .iter()
@@ -4623,6 +4625,86 @@ fn observe_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, obs
             .map(|observed| observed_actor_artifact(actor, entry, model, observe, observed))
             .collect::<Result<Vec<_>>>()?,
     })
+}
+
+fn observe_covenant_id_source(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    model: &Model<'_>,
+    observe: &ObserveDecl,
+) -> Result<CovenantIdSourceArtifact> {
+    let tokens = lex(&observe.covenant_expr).map_err(|err| {
+        ArgentError::new(format!(
+            "failed to lex covenant id source for `{}::{}` observe `{}`: {}",
+            actor.name, entry.name, observe.name, err.message
+        ))
+    })?;
+
+    match tokens.as_slice() {
+        [
+            Token { kind: TokenKind::Ident(self_name), .. },
+            Token { kind: TokenKind::Symbol('.'), .. },
+            Token { kind: TokenKind::Ident(field_name), .. },
+            Token { kind: TokenKind::Eof, .. },
+        ] if self_name == word::SELF => {
+            let field = model.storage_state(&actor.state)?.fields.iter().find(|field| field.name == *field_name).ok_or_else(|| {
+                ArgentError::new(format!(
+                    "entry `{}::{}` observe `{}` references unknown state field `{}.{field_name}`",
+                    actor.name,
+                    entry.name,
+                    observe.name,
+                    word::SELF
+                ))
+            })?;
+            require_covenant_id_source_type(actor, entry, observe, &format!("{}.{field_name}", word::SELF), &field.ty)?;
+            Ok(CovenantIdSourceArtifact::StateField { field: field_name.clone() })
+        }
+        [Token { kind: TokenKind::Ident(argument_name), .. }, Token { kind: TokenKind::Eof, .. }] => {
+            if let Some((index, param)) = entry.params.iter().enumerate().find(|(_, param)| param.name == *argument_name) {
+                require_covenant_id_source_type(actor, entry, observe, argument_name, &param.ty)?;
+                return Ok(CovenantIdSourceArtifact::EntryArgument { index });
+            }
+            let field = model
+                .storage_state(&actor.state)?
+                .fields
+                .iter()
+                .find(|field| field.name == *argument_name)
+                .ok_or_else(|| unsupported_observe_covenant_id_source(actor, entry, observe))?;
+            require_covenant_id_source_type(actor, entry, observe, argument_name, &field.ty)?;
+            Ok(CovenantIdSourceArtifact::StateField { field: argument_name.clone() })
+        }
+        _ => Err(unsupported_observe_covenant_id_source(actor, entry, observe)),
+    }
+}
+
+fn require_covenant_id_source_type(
+    actor: &ActorDecl,
+    entry: &EntryDecl,
+    observe: &ObserveDecl,
+    source: &str,
+    ty: &TypeRef,
+) -> Result<()> {
+    if ty.name == word::COVENANT_ID && ty.array.is_none() && ty.actor_state.is_none() {
+        return Ok(());
+    }
+    Err(ArgentError::new(format!(
+        "entry `{}::{}` observe `{}` covenant id source `{source}` has type `{}`; expected `{}`",
+        actor.name,
+        entry.name,
+        observe.name,
+        source_type_ref(ty),
+        word::COVENANT_ID
+    )))
+}
+
+fn unsupported_observe_covenant_id_source(actor: &ActorDecl, entry: &EntryDecl, observe: &ObserveDecl) -> ArgentError {
+    ArgentError::new(format!(
+        "entry `{}::{}` observe `{}` covenant id source must be a `{}` state field or entry argument",
+        actor.name,
+        entry.name,
+        observe.name,
+        word::COVENANT_ID
+    ))
 }
 
 fn observed_actor_artifact(
@@ -6263,7 +6345,7 @@ mod tests {
             }
 
             state MinterState {
-                byte[32] kcc20_covid;
+                covid kcc20_covid;
                 int amount;
             }
 
@@ -6316,6 +6398,7 @@ mod tests {
         let observe = &mint.observes[0];
         assert_eq!(observe.name, "asset");
         assert_eq!(observe.covenant_expr, "self.kcc20_covid");
+        assert_eq!(observe.covenant_id_source, CovenantIdSourceArtifact::StateField { field: "kcc20_covid".to_string() });
         assert_eq!(
             observe.inputs.iter().map(|input| (input.name.as_str(), input.actor.as_str())).collect::<Vec<_>>(),
             vec![("proxy", "MinterProxy")]
@@ -6406,6 +6489,98 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn observe_entry_argument_source_is_recorded_by_index() {
+        let artifact = inline_artifact(
+            "observe-entry-argument",
+            r#"
+            state ForeignState {
+                int count;
+            }
+            state LocalState {}
+
+            actor Foreign owns ForeignState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            actor Local owns LocalState {
+                entry step(unused: int, target_id: covid)
+                observes asset by target_id {
+                    inputs {
+                        foreign: Foreign;
+                    }
+                }
+                emits none {
+                    require(unused >= 0);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        );
+
+        let local = artifact.argent.actors.iter().find(|actor| actor.name == "Local").expect("Local actor exists");
+        let step = local.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
+        assert_eq!(step.observes[0].covenant_id_source, CovenantIdSourceArtifact::EntryArgument { index: 1 });
+    }
+
+    #[test]
+    fn observe_covenant_id_source_rejects_computed_expressions() {
+        let err = parse_and_validate(
+            r#"
+            state LocalState {}
+
+            actor Local owns LocalState {
+                entry step(first: covid, second: covid)
+                observes asset by first + second {}
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("computed observe covenant ids must be rejected");
+
+        assert!(
+            err.to_string().contains("covenant id source must be a `covid` state field or entry argument"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn observe_covenant_id_source_requires_covid_type() {
+        let err = parse_and_validate(
+            r#"
+            state LocalState {
+                byte[32] target_id;
+            }
+
+            actor Local owns LocalState {
+                entry step()
+                observes asset by self.target_id {}
+                emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        )
+        .expect_err("byte arrays must not stand in for covenant ids");
+
+        assert!(err.to_string().contains("has type `byte[32]`; expected `covid`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -6525,7 +6700,9 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state ForeignState {}
-            state LocalState {}
+            state LocalState {
+                covid target_id;
+            }
 
             actor Foreign owns ForeignState {
                 entry hold() emits none {
@@ -6565,7 +6742,9 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state ForeignState {}
-            state LocalState {}
+            state LocalState {
+                covid target_id;
+            }
 
             actor Foreign owns ForeignState {
                 entry hold() emits none {
@@ -6622,6 +6801,7 @@ mod tests {
 
         let local_actor = artifact.argent.actors.iter().find(|actor| actor.name == "Local").expect("Local artifact actor exists");
         let step = local_actor.entries.iter().find(|entry| entry.name == "step").expect("step entry exists");
+        assert_eq!(step.observes[0].covenant_id_source, CovenantIdSourceArtifact::StateField { field: "target_id".to_string() });
         assert_eq!(
             step.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
             vec!["gen__asset_foreign_prefix_len", "gen__asset_foreign_suffix_len"]
@@ -6747,7 +6927,7 @@ mod tests {
             }
 
             state LocalState {
-                byte[32] target_id;
+                covid target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -6793,7 +6973,7 @@ mod tests {
             }
 
             state LocalState {
-                byte[32] target_id;
+                covid target_id;
             }
 
             actor ForeignA owns ForeignState {

@@ -29,6 +29,7 @@ pub(crate) mod word {
     pub const OUTPUTS: &str = "outputs";
     pub const OWNS: &str = "owns";
     pub const REQUIRE: &str = "require";
+    pub const SELF: &str = "self";
     pub const STATE: &str = "state";
     pub const VIRTUAL: &str = "virtual";
 }

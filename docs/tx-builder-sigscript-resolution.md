@@ -67,7 +67,9 @@ EntryArtifact:
 
 ObserveArtifact:
     name
-    covenant_selector                 evaluable artifact expression
+    covenant_id_source:
+        StateField(field)
+        EntryArgument(index)
     inputs                            ordered observed input declarations
     outputs                           ordered observed output declarations
 
@@ -80,9 +82,8 @@ ObservedActorDeclaration:
         Bound(name)
 ```
 
-`covenant_selector` must be machine-readable artifact data. Source text such as
-`self.quote_id` is useful for display, but is not sufficient as the runtime
-recipe.
+The artifact also retains the original covenant expression for display. The
+runtime uses `covenant_id_source`; it does not parse source text.
 
 ## Metadata validation
 
@@ -136,13 +137,11 @@ function resolve_observations(tx, current_input, entry, lowered_user_args, bundl
     bindings = empty map
 
     for observe in entry.observes in declaration order:
-        covenant_id = evaluate(
-            observe.covenant_selector,
-            transaction = tx,
-            current_input = current_input,
-            self_state = current_input.source_state,
-            user_args = lowered_user_args
-        )
+        covenant_id = match observe.covenant_id_source:
+            StateField(field):
+                current_input.source_state[field]
+            EntryArgument(index):
+                lowered_user_args[index]
 
         actual_inputs = [
             input

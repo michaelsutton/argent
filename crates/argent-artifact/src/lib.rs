@@ -321,8 +321,19 @@ pub struct TemplateSelectorArtifact {
 pub struct ObserveArtifact {
     pub name: String,
     pub covenant_expr: String,
+    pub covenant_id_source: CovenantIdSourceArtifact,
     pub inputs: Vec<ObservedActorArtifact>,
     pub outputs: Vec<ObservedActorArtifact>,
+}
+
+/// Machine-readable source of the covenant id selected by an `observes` clause.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CovenantIdSourceArtifact {
+    /// A field in the actor's source state.
+    StateField { field: String },
+    /// A user-visible entry argument, indexed in source declaration order.
+    EntryArgument { index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
