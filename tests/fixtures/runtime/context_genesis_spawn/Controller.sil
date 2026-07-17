@@ -37,29 +37,22 @@ contract Controller(
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         // :: genesis covenants
-        int gen__new_pair_left_spk_len = OpTxOutputSpkLen(gen__new_pair_left_output_idx);
-        require(gen__new_pair_left_spk_len >= 2);
-        int gen__new_pair_right_spk_len = OpTxOutputSpkLen(gen__new_pair_right_output_idx);
-        require(gen__new_pair_right_spk_len >= 2);
         byte[] gen__new_pair_genesis_preimage =
             OpOutpointTxId(this.activeInputIndex)
             + bytes(OpOutpointIndex(this.activeInputIndex), 8).slice(0, 4)
             + bytes(2, 8)
             + bytes(gen__new_pair_left_output_idx, 8).slice(0, 4)
             + bytes(tx.outputs[gen__new_pair_left_output_idx].value, 8)
-            + OpTxOutputSpkSubstr(gen__new_pair_left_output_idx, 1, 2)
-            + OpTxOutputSpkSubstr(gen__new_pair_left_output_idx, 0, 1)
-            + bytes(gen__new_pair_left_spk_len - 2, 8)
-            + OpTxOutputSpkSubstr(gen__new_pair_left_output_idx, 2, gen__new_pair_left_spk_len)
+            + 0x0000
+            + bytes(35, 8)
+            + OpTxOutputSpkSubstr(gen__new_pair_left_output_idx, 2, 37)
             + bytes(gen__new_pair_right_output_idx, 8).slice(0, 4)
             + bytes(tx.outputs[gen__new_pair_right_output_idx].value, 8)
-            + OpTxOutputSpkSubstr(gen__new_pair_right_output_idx, 1, 2)
-            + OpTxOutputSpkSubstr(gen__new_pair_right_output_idx, 0, 1)
-            + bytes(gen__new_pair_right_spk_len - 2, 8)
-            + OpTxOutputSpkSubstr(gen__new_pair_right_output_idx, 2, gen__new_pair_right_spk_len);
+            + 0x0000
+            + bytes(35, 8)
+            + OpTxOutputSpkSubstr(gen__new_pair_right_output_idx, 2, 37);
         byte[32] pair_id = blake2bWithKey(gen__new_pair_genesis_preimage, bytes("CovenantID"));
         require(OpOutputCovenantId(gen__new_pair_left_output_idx) == pair_id);
-        require(OpOutputCovenantId(gen__new_pair_right_output_idx) == pair_id);
 
         PairState left = {
             // :: generated fields

@@ -1842,6 +1842,12 @@ fn emitted_auth_output_count(emits: &EmitSpec) -> usize {
     }
 }
 
+// Sil's validateOutputState-style builtins require a version-0 P2SH SPK:
+// two version bytes followed by a fixed 35-byte script.
+const P2SH_SPK_VERSION: [u8; 2] = [0, 0];
+const SPK_VERSION_LEN: usize = P2SH_SPK_VERSION.len();
+const P2SH_SCRIPT_LEN: usize = 35;
+
 fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
     if entry.spawns.is_empty() {
         return Ok(());
@@ -1849,13 +1855,6 @@ fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
 
     out.push_str("        // :: genesis covenants\n");
     for (spawn_index, spawn) in entry.spawns.iter().enumerate() {
-        for output in &spawn.outputs {
-            let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
-            let spk_len = hidden_spawn_output_spk_len_name(&spawn.name, &output.name);
-            out.push_str(&format!("        int {spk_len} = OpTxOutputSpkLen({output_idx});\n"));
-            out.push_str(&format!("        require({spk_len} >= 2);\n"));
-        }
-
         let preimage = hidden_spawn_preimage_name(&spawn.name);
         out.push_str(&format!("        byte[] {preimage} =\n"));
         out.push_str("            OpOutpointTxId(this.activeInputIndex)\n");
@@ -1863,23 +1862,23 @@ fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
         out.push_str(&format!("            + bytes({}, 8)\n", spawn.outputs.len()));
         for (output_position, output) in spawn.outputs.iter().enumerate() {
             let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
-            let spk_len = hidden_spawn_output_spk_len_name(&spawn.name, &output.name);
             out.push_str(&format!("            + bytes({output_idx}, 8).slice(0, 4)\n"));
             out.push_str(&format!("            + bytes(tx.outputs[{output_idx}].value, 8)\n"));
-            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 1, 2)\n"));
-            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 0, 1)\n"));
-            out.push_str(&format!("            + bytes({spk_len} - 2, 8)\n"));
+            out.push_str(&format!("            + 0x{:02x}{:02x}\n", P2SH_SPK_VERSION[0], P2SH_SPK_VERSION[1]));
+            out.push_str(&format!("            + bytes({P2SH_SCRIPT_LEN}, 8)\n"));
             let terminator = if output_position + 1 == spawn.outputs.len() { ";" } else { "" };
-            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 2, {spk_len}){terminator}\n"));
+            out.push_str(&format!(
+                "            + OpTxOutputSpkSubstr({output_idx}, {SPK_VERSION_LEN}, {}){terminator}\n",
+                SPK_VERSION_LEN + P2SH_SCRIPT_LEN
+            ));
         }
         out.push_str(&format!("        byte[32] {} = blake2bWithKey({preimage}, bytes(\"CovenantID\"));\n", spawn.covenant));
         for previous in &entry.spawns[..spawn_index] {
             out.push_str(&format!("        require({} != {});\n", spawn.covenant, previous.covenant));
         }
-        for output in &spawn.outputs {
-            let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
-            out.push_str(&format!("        require(OpOutputCovenantId({output_idx}) == {});\n", spawn.covenant));
-        }
+        let first_output = spawn.outputs.first().expect("spawn outputs checked during model validation");
+        let first_output_idx = hidden_spawn_output_idx_name(&spawn.name, &first_output.name);
+        out.push_str(&format!("        require(OpOutputCovenantId({first_output_idx}) == {});\n", spawn.covenant));
     }
     out.push('\n');
     Ok(())
@@ -5982,10 +5981,6 @@ fn hidden_observed_output_idx_name(observe: &str, handle: &str) -> String {
 
 fn hidden_spawn_output_idx_name(spawn: &str, handle: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{spawn}_{handle}_output_idx")
-}
-
-fn hidden_spawn_output_spk_len_name(spawn: &str, handle: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{spawn}_{handle}_spk_len")
 }
 
 fn hidden_spawn_preimage_name(spawn: &str) -> String {
