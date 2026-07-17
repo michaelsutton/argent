@@ -13,8 +13,8 @@ use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_scr
 
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
-    ContractRef, EntryArgs, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OrdinaryOutput,
-    Side, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    ContractRef, EntryArgs, HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput,
+    OrdinaryOutput, Side, SpawnedActorContext, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -54,6 +54,7 @@ struct ResolveArgentInput<'artifact, 'context, 'args> {
     sil_entry: &'artifact SilEntryArtifact,
     args: Option<ResolvedEntryArgs>,
     observations: Option<ResolvedObservations>,
+    spawned_actors: Option<BTreeMap<(String, String), SpawnedActorContext>>,
     hidden_args: Option<Vec<ArtifactValue>>,
 }
 
@@ -112,6 +113,7 @@ impl<'artifact> TxBuilder<'artifact> {
                         sil_entry,
                         args: None,
                         observations: None,
+                        spawned_actors: None,
                         hidden_args: None,
                     }));
                 }
@@ -301,6 +303,74 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
+    /// Resolve each declared spawn from the genesis groups authorized by this input.
+    fn resolve_context_spawns(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
+        for input_index in 0..context.inputs.len() {
+            let ResolveInput::Argent(input) = &context.inputs[input_index] else {
+                continue;
+            };
+
+            let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
+            let mut genesis_groups = Vec::new();
+            let mut genesis_group_indices = BTreeMap::new();
+            for (transaction_index, output) in context.outputs.iter().enumerate() {
+                let binding = match output {
+                    ResolveOutput::Argent(output) => Some(output.source.covenant),
+                    ResolveOutput::Ordinary(output) => output.covenant,
+                };
+                let Some(binding) = binding else {
+                    continue;
+                };
+                if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
+                    continue;
+                }
+                let group_index = genesis_group_indices.get(&binding.covenant_id).copied().unwrap_or_else(|| {
+                    genesis_groups.push((binding.covenant_id, Vec::new()));
+                    let index = genesis_groups.len() - 1;
+                    genesis_group_indices.insert(binding.covenant_id, index);
+                    index
+                });
+                genesis_groups[group_index].1.push((transaction_index, output));
+            }
+            let mut spawned_actors = BTreeMap::new();
+            // Spawn declarations pair with genesis groups by first output order;
+            // handles within a spawn pair with that group's outputs in global order.
+            for (spawn_index, spawn) in input.argent_entry.spawns.iter().enumerate() {
+                let group = genesis_groups.get(spawn_index).map(|(_, outputs)| outputs);
+                for output in &spawn.outputs {
+                    let Some((transaction_index, resolved_output)) =
+                        group.and_then(|outputs| outputs.get(output.group_index)).copied()
+                    else {
+                        return Err(BuilderError::MissingSpawnOutput {
+                            spawn: spawn.name.clone(),
+                            handle: output.name.clone(),
+                            group_index: output.group_index,
+                        });
+                    };
+                    let ResolveOutput::Argent(resolved_output) = resolved_output else {
+                        return Err(BuilderError::MissingSpawnActorMetadata {
+                            spawn: spawn.name.clone(),
+                            handle: output.name.clone(),
+                            index: transaction_index,
+                        });
+                    };
+                    spawned_actors.insert(
+                        (spawn.name.clone(), output.name.clone()),
+                        SpawnedActorContext {
+                            app: resolved_output.app.clone(),
+                            actor: resolved_output.source.actor.actor.clone(),
+                            output_index: transaction_index,
+                        },
+                    );
+                }
+            }
+
+            let ResolveInput::Argent(input) = &mut context.inputs[input_index] else { unreachable!() };
+            input.spawned_actors = Some(spawned_actors);
+        }
+        Ok(())
+    }
+
     /// Resolve compiler-generated arguments from artifact-local routes and the
     /// concrete observed actors selected by the transaction.
     fn resolve_context_hidden_args(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
@@ -311,13 +381,14 @@ impl<'artifact> TxBuilder<'artifact> {
 
             let args = input.args.as_ref().expect("argument resolution precedes hidden-argument resolution");
             let observations = input.observations.as_ref().expect("observation resolution precedes hidden-argument resolution");
+            let spawned_actors = input.spawned_actors.as_ref().expect("spawn resolution precedes hidden-argument resolution");
             input.hidden_args = Some(self.resolve_hidden_args_in_artifact(
                 input.artifact,
                 input.contract,
                 input.argent_entry,
                 &input.source.state,
                 &args.template_selectors,
-                Some(observations),
+                HiddenArgContexts { observed: Some(observations), spawned: Some(spawned_actors) },
             )?);
         }
 
@@ -333,6 +404,7 @@ impl<'artifact> TxBuilder<'artifact> {
         let unsigned = self.unsigned_transaction(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context)?;
+        self.resolve_context_spawns(&mut context)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
 
@@ -593,6 +665,7 @@ mod tests {
                         hidden_params: Vec::new(),
                         template_selectors,
                         observes: Vec::new(),
+                        spawns: Vec::new(),
                         witnesses: Vec::new(),
                         consumes: Vec::new(),
                         emits: EmitArtifact::None,

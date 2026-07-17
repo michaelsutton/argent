@@ -301,10 +301,27 @@ pub struct EntryArtifact {
     pub template_selectors: Vec<TemplateSelectorArtifact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observes: Vec<ObserveArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spawns: Vec<SpawnArtifact>,
     pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
     pub routes: Vec<RouteArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnArtifact {
+    pub name: String,
+    pub covenant: String,
+    pub outputs: Vec<SpawnOutputArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnOutputArtifact {
+    pub name: String,
+    pub actor: String,
+    pub state: String,
+    pub group_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +394,7 @@ pub struct HiddenParamArtifact {
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
     ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
+    SpawnActor { spawn: String, handle: String, actor: String },
     ObservedOutputField { observe: String, handle: String, state: String, field: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
@@ -393,6 +411,7 @@ pub enum ObservedActorSideArtifact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HiddenParamPurposeArtifact {
+    SpawnOutputIndex,
     TemplatePrefixBytes,
     TemplateSuffixBytes,
     TemplatePrefixLen,
@@ -568,6 +587,8 @@ pub enum TemplatePlanError {
     MissingEntryWitnessRecipe { entry: String, param: String, recipe_id: String },
     #[error("entry witness `{entry}::{param}` does not match witness recipe `{recipe_id}`")]
     EntryWitnessRecipeMismatch { entry: String, param: String, recipe_id: String },
+    #[error("spawn metadata for `{entry}` is invalid: {message}")]
+    InvalidSpawnMetadata { entry: String, message: String },
     #[error("route `{entry}` to actor `{actor}` points at missing template receipt `{template_id}`")]
     MissingRouteTemplate { entry: String, actor: String, template_id: String },
     #[error("route `{entry}` to actor `{actor}` points at template receipt `{template_id}` for actor `{template_actor}`")]
@@ -980,6 +1001,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::ObservedActor { .. } => {}
+                HiddenParamSubjectArtifact::SpawnActor { .. } => {}
                 HiddenParamSubjectArtifact::ObservedOutputField { .. } => {}
                 HiddenParamSubjectArtifact::RouteFamily { family_id } => {
                     if !route_families_by_id.contains_key(family_id.as_str()) {
@@ -1008,7 +1030,96 @@ impl TemplatePlanArtifact {
                 let entry_id = format!("{}::{}", actor.name, entry.name);
                 let entry_recipe_ids = entry.hidden_params.iter().map(|param| param.recipe_id.as_str()).collect::<BTreeSet<_>>();
 
+                let mut spawn_names = BTreeSet::new();
+                let mut spawn_covenants = BTreeSet::new();
+                let mut spawn_outputs = BTreeMap::new();
+                for spawn in &entry.spawns {
+                    if !spawn_names.insert(spawn.name.as_str()) {
+                        return Err(TemplatePlanError::InvalidSpawnMetadata {
+                            entry: entry_id.clone(),
+                            message: format!("duplicate spawn `{}`", spawn.name),
+                        });
+                    }
+                    if !spawn_covenants.insert(spawn.covenant.as_str()) {
+                        return Err(TemplatePlanError::InvalidSpawnMetadata {
+                            entry: entry_id.clone(),
+                            message: format!("duplicate covenant binding `{}`", spawn.covenant),
+                        });
+                    }
+                    if spawn.outputs.is_empty() {
+                        return Err(TemplatePlanError::InvalidSpawnMetadata {
+                            entry: entry_id.clone(),
+                            message: format!("spawn `{}` has no outputs", spawn.name),
+                        });
+                    }
+                    for (expected_index, output) in spawn.outputs.iter().enumerate() {
+                        if output.group_index != expected_index {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!(
+                                    "spawn `{}.{}` has group index {}, expected {expected_index}",
+                                    spawn.name, output.name, output.group_index
+                                ),
+                            });
+                        }
+                        if spawn_outputs.insert((spawn.name.as_str(), output.name.as_str()), output).is_some() {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!("spawn `{}` repeats output `{}`", spawn.name, output.name),
+                            });
+                        }
+                    }
+                }
+
+                for ((spawn, handle), output) in &spawn_outputs {
+                    let subject = HiddenParamSubjectArtifact::SpawnActor {
+                        spawn: (*spawn).to_string(),
+                        handle: (*handle).to_string(),
+                        actor: output.actor.clone(),
+                    };
+                    for purpose in [
+                        HiddenParamPurposeArtifact::SpawnOutputIndex,
+                        HiddenParamPurposeArtifact::TemplatePrefixBytes,
+                        HiddenParamPurposeArtifact::TemplateSuffixBytes,
+                    ] {
+                        let count =
+                            entry.hidden_params.iter().filter(|param| param.subject == subject && param.purpose == purpose).count();
+                        if count != 1 {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!("spawn `{spawn}.{handle}` has {count} hidden params for {purpose:?}, expected one"),
+                            });
+                        }
+                    }
+                }
+
                 for param in &entry.hidden_params {
+                    if let HiddenParamSubjectArtifact::SpawnActor { spawn, handle, actor } = &param.subject {
+                        let Some(output) = spawn_outputs.get(&(spawn.as_str(), handle.as_str())) else {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!("hidden param `{}` references unknown spawn output `{spawn}.{handle}`", param.name),
+                            });
+                        };
+                        if actor != &output.actor
+                            || !matches!(
+                                param.purpose,
+                                HiddenParamPurposeArtifact::SpawnOutputIndex
+                                    | HiddenParamPurposeArtifact::TemplatePrefixBytes
+                                    | HiddenParamPurposeArtifact::TemplateSuffixBytes
+                            )
+                        {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!("hidden param `{}` does not match spawn output `{spawn}.{handle}`", param.name),
+                            });
+                        }
+                    } else if param.purpose == HiddenParamPurposeArtifact::SpawnOutputIndex {
+                        return Err(TemplatePlanError::InvalidSpawnMetadata {
+                            entry: entry_id.clone(),
+                            message: format!("spawn output index param `{}` has a non-spawn subject", param.name),
+                        });
+                    }
                     let Some(recipe) = recipes_by_id.get(param.recipe_id.as_str()) else {
                         return Err(TemplatePlanError::MissingHiddenParamRecipe {
                             entry: entry_id.clone(),

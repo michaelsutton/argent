@@ -9,7 +9,7 @@ mod tests {
             route_template_table_receipt_id,
         },
         codec::{CodecError, decode_hex, encode_entry_sig_script},
-        emit::emit_build,
+        emit::{emit_build, emit_build_app},
         loader::load_program,
     };
     use std::{
@@ -22,6 +22,7 @@ mod tests {
     use kaspa_consensus_core::{
         Hash,
         hashing::{
+            covenant_id::covenant_id,
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
             sighash_type::SIG_HASH_ALL,
         },
@@ -39,6 +40,7 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
+            HiddenParamSubjectArtifact::SpawnActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::ObservedOutputField { field, .. } => field,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
@@ -567,6 +569,71 @@ mod tests {
             ),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn context_spawns_genesis_covenant_outputs_with_rusty_kaspa_id() {
+        let source = "tests/fixtures/runtime/context_genesis_spawn/app.ag";
+        let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-genesis-controller");
+        let pair_artifact = selected_app_artifact(source, "PairApp", "context-genesis-pair");
+        let bundle = ArtifactBundle::named("controller_app", &controller_artifact)
+            .expect("controller bundle builds")
+            .with_app("pair_app", &pair_artifact)
+            .expect("pair app attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
+
+        let controller_id = Hash::from_bytes([11; 32]);
+        let controller_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([23; 32]), 17);
+        let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
+        let controller_state = state! {
+            pair_type: pair_type.clone(),
+            launches: 0,
+        };
+        let next_controller_state = state! {
+            pair_type: pair_type,
+            launches: 1,
+        };
+        let left_pair_state = state! { value: 42 };
+        let right_pair_state = state! { value: 43 };
+        let controller_utxo = builder
+            .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
+            .expect("controller UTXO builds");
+
+        let left_pair_output =
+            builder.genesis_output("pair_app::Pair", left_pair_state.clone(), 2_000).expect("left pair genesis output builds");
+        let right_pair_output =
+            builder.genesis_output("pair_app::Pair", right_pair_state.clone(), 2_000).expect("right pair genesis output builds");
+        let pair_id = covenant_id(controller_outpoint, [(1, &left_pair_output), (3, &right_pair_output)].into_iter());
+        let unrelated_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let context = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                controller_state,
+                EntryCall::new("launch").args(args![42, 43]),
+                controller_outpoint,
+                controller_utxo.clone(),
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", left_pair_state.clone(), CovenantBinding::new(0, pair_id), 2_000)
+            .output(unrelated_spk.clone(), None, 1_000)
+            .argent_output("pair_app::Pair", right_pair_state.clone(), CovenantBinding::new(0, pair_id), 2_000);
+        builder.build(&context).expect("generated genesis id matches rusty-kaspa");
+
+        let wrong_context = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                state! { pair_type: builder.actor_type_handle("pair_app::Pair", "PairState").unwrap(), launches: 0 },
+                EntryCall::new("launch").args(args![42, 43]),
+                controller_outpoint,
+                controller_utxo,
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", left_pair_state, CovenantBinding::new(0, Hash::from_bytes([99; 32])), 2_000)
+            .output(unrelated_spk, None, 1_000)
+            .argent_output("pair_app::Pair", right_pair_state, CovenantBinding::new(0, Hash::from_bytes([99; 32])), 2_000);
+        assert!(builder.build(&wrong_context).is_err(), "a non-genesis covenant id must fail in script");
     }
 
     #[test]
@@ -1905,6 +1972,20 @@ mod tests {
 
     fn example_artifact(input: &str, name: &str) -> Artifact {
         example_artifact_from_path(PathBuf::from(input), name)
+    }
+
+    fn selected_app_artifact(input: &str, app: &str, name: &str) -> Artifact {
+        let counter = ARTIFACT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let out_dir = std::env::temp_dir().join(format!("argent-{name}-{}-{counter}", std::process::id()));
+        if out_dir.exists() {
+            fs::remove_dir_all(&out_dir).expect("old temp dir removed");
+        }
+        let program = load_program(PathBuf::from(input).as_path()).expect("fixture source loads");
+        emit_build_app(&program, app, &out_dir).expect("selected app artifact builds");
+        let json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
+        let artifact = serde_json::from_str(&json).expect("artifact deserializes");
+        fs::remove_dir_all(out_dir).expect("temp build dir removed");
+        artifact
     }
 
     fn example_artifact_from_path(input: PathBuf, name: &str) -> Artifact {

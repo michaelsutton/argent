@@ -339,6 +339,10 @@ pub enum BuilderError {
     ObservedCountMismatch { observe: String, side: Side, expected: usize, found: usize },
     #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no Argent actor metadata")]
     MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
+    #[error("spawn `{spawn}` has no genesis output `{handle}` at group index {group_index}")]
+    MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
+    #[error("spawn `{spawn}` output `{handle}` at transaction index {index} has no Argent actor metadata")]
+    MissingSpawnActorMetadata { spawn: String, handle: String, index: usize },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -462,6 +466,19 @@ struct ObservedCovenantContext {
     app: String,
     inputs: BTreeMap<String, ObservedInput>,
     outputs: BTreeMap<String, ObservedOutput>,
+}
+
+#[derive(Clone, Debug)]
+struct SpawnedActorContext {
+    app: String,
+    actor: String,
+    output_index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct HiddenArgContexts<'a> {
+    observed: Option<&'a BTreeMap<String, ObservedCovenantContext>>,
+    spawned: Option<&'a BTreeMap<(String, String), SpawnedActorContext>>,
 }
 
 impl<'a> ArtifactBundle<'a> {
@@ -597,29 +614,50 @@ impl<'a> TxBuilder<'a> {
         argent_entry: &'a EntryArtifact,
         input_source_state: &BTreeMap<String, ArtifactValue>,
         template_selectors: &BTreeMap<String, String>,
-        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+        contexts: HiddenArgContexts<'_>,
     ) -> BuilderResult<Vec<ArtifactValue>> {
         let mut args = Vec::with_capacity(argent_entry.hidden_params.len());
         for hidden in &argent_entry.hidden_params {
             args.push(match &hidden.purpose {
+                HiddenParamPurposeArtifact::SpawnOutputIndex => {
+                    let HiddenParamSubjectArtifact::SpawnActor { spawn, handle, .. } = &hidden.subject else {
+                        return Err(BuilderError::UnexpectedHiddenSubject { param: hidden.name.clone(), expected: "spawn actor" });
+                    };
+                    let output_index = contexts
+                        .spawned
+                        .and_then(|contexts| contexts.get(&(spawn.clone(), handle.clone())))
+                        .ok_or_else(|| BuilderError::MissingSpawnOutput {
+                            spawn: spawn.clone(),
+                            handle: handle.clone(),
+                            group_index: argent_entry
+                                .spawns
+                                .iter()
+                                .find(|candidate| candidate.name == *spawn)
+                                .and_then(|spawn| spawn.outputs.iter().find(|output| output.name == *handle))
+                                .map(|output| output.group_index)
+                                .unwrap_or_default(),
+                        })?
+                        .output_index;
+                    ArtifactValue::Int(output_index as i64)
+                }
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
                     ArtifactValue::Int(decode_hex(&template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
                     ArtifactValue::Int(decode_hex(&template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateHash => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, observed)?;
+                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.hash_hex)?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
@@ -658,7 +696,7 @@ impl<'a> TxBuilder<'a> {
                 HiddenParamPurposeArtifact::StateExpansionPreimage => {
                     self.state_expansion_preimage_arg(artifact, contract, hidden, input_source_state)?
                 }
-                HiddenParamPurposeArtifact::ObservedOutputFieldValue => self.observed_output_field_arg(hidden, observed)?,
+                HiddenParamPurposeArtifact::ObservedOutputFieldValue => self.observed_output_field_arg(hidden, contexts.observed)?,
             });
         }
         Ok(args)
@@ -958,13 +996,19 @@ impl<'a> TxBuilder<'a> {
         hidden: &HiddenParamArtifact,
         entry: &'a EntryArtifact,
         template_selectors: &BTreeMap<String, String>,
-        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+        contexts: HiddenArgContexts<'_>,
     ) -> BuilderResult<&'a CompiledTemplateArtifact> {
-        let contract_ref = self.hidden_template_contract_ref(primary_artifact, hidden, entry, template_selectors, observed)?;
+        let contract_ref = self.hidden_template_contract_ref(primary_artifact, hidden, entry, template_selectors, contexts)?;
         let open_state = match &hidden.subject {
             HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, .. } => {
                 self.observed_actor(entry, observe, *side, handle)?.open_state.as_deref()
             }
+            HiddenParamSubjectArtifact::SpawnActor { spawn, handle, .. } => entry
+                .spawns
+                .iter()
+                .find(|candidate| candidate.name == *spawn)
+                .and_then(|spawn| spawn.outputs.iter().find(|output| output.name == *handle))
+                .map(|output| output.state.as_str()),
             _ => None,
         };
         let Some(open_state) = open_state else {
@@ -1002,12 +1046,12 @@ impl<'a> TxBuilder<'a> {
         hidden: &HiddenParamArtifact,
         entry: &'a EntryArtifact,
         template_selectors: &BTreeMap<String, String>,
-        observed: Option<&BTreeMap<String, ObservedCovenantContext>>,
+        contexts: HiddenArgContexts<'_>,
     ) -> BuilderResult<ContractRef<'a>> {
         match &hidden.subject {
             HiddenParamSubjectArtifact::Actor { actor } => self.contract_ref_in_artifact(primary_artifact, actor),
             HiddenParamSubjectArtifact::ObservedActor { observe, side, handle, actor } => {
-                match observed.and_then(|contexts| contexts.get(observe)) {
+                match contexts.observed.and_then(|contexts| contexts.get(observe)) {
                     Some(context) => {
                         let observed_actor = match side {
                             ObservedActorSideArtifact::Input => context.inputs.get(handle).map(|observed| observed.actor.as_str()),
@@ -1024,6 +1068,23 @@ impl<'a> TxBuilder<'a> {
                         self.observed_contract_ref(primary_artifact, observe, &observed_actor.actor)
                     }
                 }
+            }
+            HiddenParamSubjectArtifact::SpawnActor { spawn, handle, .. } => {
+                let context =
+                    contexts.spawned.and_then(|contexts| contexts.get(&(spawn.clone(), handle.clone()))).ok_or_else(|| {
+                        BuilderError::MissingSpawnOutput {
+                            spawn: spawn.clone(),
+                            handle: handle.clone(),
+                            group_index: entry
+                                .spawns
+                                .iter()
+                                .find(|candidate| candidate.name == *spawn)
+                                .and_then(|spawn| spawn.outputs.iter().find(|output| output.name == *handle))
+                                .map(|output| output.group_index)
+                                .unwrap_or_default(),
+                        }
+                    })?;
+                self.contract_ref_in_app(&context.app, &context.actor)
             }
             HiddenParamSubjectArtifact::TemplateSelector { .. } => {
                 let actor = hidden_template_actor(hidden, entry, template_selectors)?;
@@ -1526,6 +1587,7 @@ fn hidden_actor_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.as_str()),
         HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.as_str()),
+        HiddenParamSubjectArtifact::SpawnActor { actor, .. } => Ok(actor.as_str()),
         HiddenParamSubjectArtifact::RouteFamily { .. }
         | HiddenParamSubjectArtifact::TemplateSelector { .. }
         | HiddenParamSubjectArtifact::ObservedOutputField { .. }
@@ -1540,6 +1602,7 @@ fn hidden_family_subject(hidden: &HiddenParamArtifact) -> BuilderResult<&str> {
         HiddenParamSubjectArtifact::RouteFamily { family_id } => Ok(family_id.as_str()),
         HiddenParamSubjectArtifact::Actor { .. }
         | HiddenParamSubjectArtifact::ObservedActor { .. }
+        | HiddenParamSubjectArtifact::SpawnActor { .. }
         | HiddenParamSubjectArtifact::TemplateSelector { .. }
         | HiddenParamSubjectArtifact::ObservedOutputField { .. }
         | HiddenParamSubjectArtifact::StateExpansion { .. } => {
@@ -1556,6 +1619,7 @@ fn hidden_template_actor(
     match &hidden.subject {
         HiddenParamSubjectArtifact::Actor { actor } => Ok(actor.clone()),
         HiddenParamSubjectArtifact::ObservedActor { actor, .. } => Ok(actor.clone()),
+        HiddenParamSubjectArtifact::SpawnActor { actor, .. } => Ok(actor.clone()),
         HiddenParamSubjectArtifact::TemplateSelector { selector: selector_name } => {
             let selector = entry
                 .template_selectors

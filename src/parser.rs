@@ -172,7 +172,7 @@ impl Parser {
         self.expect_ident(word::ENTRY)?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let (observes, consumes) = self.parse_entry_clauses()?;
+        let (observes, consumes, spawns) = self.parse_entry_clauses()?;
         self.expect_ident(word::EMITS)?;
         let emits = self.parse_emits()?;
         let body = self.consume_block_text()?;
@@ -183,6 +183,7 @@ impl Parser {
             params,
             consumes,
             observes,
+            spawns,
             emits,
             body,
             routes: route_analysis.routes,
@@ -194,7 +195,7 @@ impl Parser {
         self.expect_ident(word::DELEGATE)?;
         let name = self.expect_any_ident()?;
         let params = self.parse_param_list()?;
-        let (observes, consumes) = self.parse_entry_clauses()?;
+        let (observes, consumes, spawns) = self.parse_entry_clauses()?;
         let body = self.consume_block_text()?;
         let route_analysis = analyze_routes(&body).map_err(|err| ArgentError::at(&self.path, err.message))?;
         Ok(EntryDecl {
@@ -203,6 +204,7 @@ impl Parser {
             params,
             consumes,
             observes,
+            spawns,
             emits: EmitSpec::None,
             body,
             routes: route_analysis.routes,
@@ -259,13 +261,16 @@ impl Parser {
         Ok(consumes)
     }
 
-    fn parse_entry_clauses(&mut self) -> Result<(Vec<ObserveDecl>, Vec<ConsumeDecl>)> {
+    fn parse_entry_clauses(&mut self) -> Result<(Vec<ObserveDecl>, Vec<ConsumeDecl>, Vec<SpawnDecl>)> {
         let mut observes = Vec::new();
         let mut consumes = Vec::new();
+        let mut spawns = Vec::new();
         let mut parsed_consumes = false;
         loop {
             if self.check_ident(word::OBSERVES) {
                 observes.push(self.parse_observes()?);
+            } else if self.check_ident(word::SPAWNS) {
+                spawns.push(self.parse_spawns()?);
             } else if self.check_ident(word::CONSUMES) {
                 if parsed_consumes {
                     return Err(self.error("entry declares `consumes` more than once"));
@@ -276,7 +281,28 @@ impl Parser {
                 break;
             }
         }
-        Ok((observes, consumes))
+        Ok((observes, consumes, spawns))
+    }
+
+    fn parse_spawns(&mut self) -> Result<SpawnDecl> {
+        self.expect_ident(word::SPAWNS)?;
+        let name = self.expect_any_ident()?;
+        self.expect_ident(word::BY)?;
+        let covenant = self.expect_any_ident()?;
+        self.expect_symbol('{')?;
+        self.expect_ident(word::OUTPUTS)?;
+        self.expect_symbol('{')?;
+        let mut outputs = Vec::new();
+        while !self.check_symbol('}') {
+            let name = self.expect_any_ident()?;
+            self.expect_symbol(':')?;
+            let actor = self.take_observed_actor_target()?;
+            self.expect_symbol(';')?;
+            outputs.push(SpawnOutputDecl { name, actor, group_index: outputs.len() });
+        }
+        self.expect_symbol('}')?;
+        self.expect_symbol('}')?;
+        Ok(SpawnDecl { name, covenant, outputs })
     }
 
     fn parse_observes(&mut self) -> Result<ObserveDecl> {

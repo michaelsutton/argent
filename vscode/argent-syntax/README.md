@@ -5,7 +5,7 @@ Tiny VS Code syntax extension for `.ag` files.
 It intentionally does only highlighting:
 
 - `.ag` files get the `argent` language id.
-- Argent routing words such as `become`, `emits`, `consumes`, and `observes`
+- Argent routing words such as `become`, `emits`, `consumes`, `observes`, and `spawns`
   use keyword scopes.
 - Current language words such as `delegate`, `actor enum`, `virtual`,
   `expands`, `const`, `inputs`, `outputs`, and `as` are highlighted.

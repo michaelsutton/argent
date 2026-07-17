@@ -388,6 +388,19 @@ impl<'a> Model<'a> {
                         )?;
                     }
                 }
+                for spawn in &entry.spawns {
+                    reject_reserved_identifier(&format!("entry `{}::{}` spawn handle", actor.name, entry.name), &spawn.name)?;
+                    reject_reserved_identifier(
+                        &format!("entry `{}::{}` spawn covenant binding", actor.name, entry.name),
+                        &spawn.covenant,
+                    )?;
+                    for output in &spawn.outputs {
+                        reject_reserved_identifier(
+                            &format!("entry `{}::{}` spawn `{}` output handle", actor.name, entry.name, spawn.name),
+                            &output.name,
+                        )?;
+                    }
+                }
                 if let EmitSpec::Outputs(outputs) = &entry.emits {
                     for output in outputs {
                         reject_reserved_identifier(&format!("entry `{}::{}` output handle", actor.name, entry.name), &output.name)?;
@@ -418,6 +431,7 @@ impl<'a> Model<'a> {
 
     fn validate_entry(&self, actor: &ActorDecl, entry: &EntryDecl, template_actor_set: &BTreeSet<String>) -> Result<()> {
         self.validate_observes(actor, entry)?;
+        self.validate_spawns(actor, entry)?;
 
         for consume in &entry.consumes {
             self.require_template_actor(
@@ -500,6 +514,77 @@ impl<'a> Model<'a> {
             self.validate_route_allowed(actor, entry, route)?;
         }
         self.validate_route_coverage(actor, entry)?;
+        Ok(())
+    }
+
+    fn validate_spawns(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<()> {
+        if entry.kind == EntryKind::Delegate && !entry.spawns.is_empty() {
+            return Err(ArgentError::new(format!("delegate `{}::{}` cannot spawn covenant outputs", actor.name, entry.name)));
+        }
+
+        let observe_names = entry.observes.iter().map(|observe| observe.name.as_str()).collect::<BTreeSet<_>>();
+        let mut source_names = self
+            .storage_state(&actor.state)?
+            .fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .chain(entry.params.iter().map(|param| param.name.as_str()))
+            .chain(entry.consumes.iter().map(|consume| consume.name.as_str()))
+            .collect::<BTreeSet<_>>();
+        for observe in &entry.observes {
+            source_names.extend(observed_open_bindings(observe).into_keys());
+        }
+
+        let mut names = BTreeSet::new();
+        let mut covenant_bindings = BTreeSet::new();
+        for spawn in &entry.spawns {
+            if !names.insert(spawn.name.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` declares spawn `{}` more than once",
+                    actor.name, entry.name, spawn.name
+                )));
+            }
+            if observe_names.contains(spawn.name.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` uses `{}` as both an observe and a spawn",
+                    actor.name, entry.name, spawn.name
+                )));
+            }
+            if !covenant_bindings.insert(spawn.covenant.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` uses spawn covenant binding `{}` more than once",
+                    actor.name, entry.name, spawn.covenant
+                )));
+            }
+            if !source_names.insert(spawn.covenant.as_str()) {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` spawn covenant binding `{}` collides with a source value",
+                    actor.name, entry.name, spawn.covenant
+                )));
+            }
+            if spawn.outputs.is_empty() {
+                return Err(ArgentError::new(format!(
+                    "entry `{}::{}` spawn `{}` must declare at least one output",
+                    actor.name, entry.name, spawn.name
+                )));
+            }
+
+            let mut output_names = BTreeSet::new();
+            for output in &spawn.outputs {
+                if !output_names.insert(output.name.as_str()) {
+                    return Err(ArgentError::new(format!(
+                        "entry `{}::{}` spawn `{}` declares output `{}` more than once",
+                        actor.name, entry.name, spawn.name, output.name
+                    )));
+                }
+                if source_actor_type_state_for_expr(&output.actor, actor, entry, self)?.is_none() {
+                    return Err(ArgentError::new(format!(
+                        "entry `{}::{}` spawn `{}.{}` target `{}` must be an actor_type value",
+                        actor.name, entry.name, spawn.name, output.name, output.actor
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1581,6 +1666,13 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
                 }
             }
         }
+        for spawn in &entry.spawns {
+            for output in &spawn.outputs {
+                let state = source_actor_type_state_for_expr(&output.actor, current_actor, entry, model)?
+                    .expect("spawn target actor_type checked during model validation");
+                state_names.push(state);
+            }
+        }
     }
 
     for state_name in state_names {
@@ -1710,12 +1802,11 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     emit_state_expansion_prelude(out, actor, model)?;
 
     out.push_str("        // :: auth outputs\n");
+    let auth_output_count = emitted_auth_output_count(&entry.emits);
+    out.push_str(&format!("        require(OpAuthOutputCount(this.activeInputIndex) == {auth_output_count});\n"));
     match &entry.emits {
-        EmitSpec::None => {
-            out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 0);\n");
-        }
+        EmitSpec::None => {}
         EmitSpec::One { actors } => {
-            out.push_str("        require(OpAuthOutputCount(this.activeInputIndex) == 1);\n");
             let output_idx = hidden_next_output_idx_name();
             push_generated_statement_with_comment(
                 out,
@@ -1725,7 +1816,6 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             );
         }
         EmitSpec::Outputs(outputs) => {
-            out.push_str(&format!("        require(OpAuthOutputCount(this.activeInputIndex) == {});\n", outputs.len()));
             for output in outputs {
                 let output_idx = hidden_output_idx_name(&output.name);
                 push_generated_statement_with_comment(
@@ -1737,10 +1827,61 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             }
         }
     }
-
     out.push('\n');
+    emit_spawn_prelude(out, entry)?;
     out.push_str(&lower_entry_body(actor, entry, model)?);
     out.push_str("    }\n");
+    Ok(())
+}
+
+fn emitted_auth_output_count(emits: &EmitSpec) -> usize {
+    match emits {
+        EmitSpec::None => 0,
+        EmitSpec::One { .. } => 1,
+        EmitSpec::Outputs(outputs) => outputs.len(),
+    }
+}
+
+fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
+    if entry.spawns.is_empty() {
+        return Ok(());
+    }
+
+    out.push_str("        // :: genesis covenants\n");
+    for (spawn_index, spawn) in entry.spawns.iter().enumerate() {
+        for output in &spawn.outputs {
+            let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
+            let spk_len = hidden_spawn_output_spk_len_name(&spawn.name, &output.name);
+            out.push_str(&format!("        int {spk_len} = OpTxOutputSpkLen({output_idx});\n"));
+            out.push_str(&format!("        require({spk_len} >= 2);\n"));
+        }
+
+        let preimage = hidden_spawn_preimage_name(&spawn.name);
+        out.push_str(&format!("        byte[] {preimage} =\n"));
+        out.push_str("            OpOutpointTxId(this.activeInputIndex)\n");
+        out.push_str("            + bytes(OpOutpointIndex(this.activeInputIndex), 8).slice(0, 4)\n");
+        out.push_str(&format!("            + bytes({}, 8)\n", spawn.outputs.len()));
+        for (output_position, output) in spawn.outputs.iter().enumerate() {
+            let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
+            let spk_len = hidden_spawn_output_spk_len_name(&spawn.name, &output.name);
+            out.push_str(&format!("            + bytes({output_idx}, 8).slice(0, 4)\n"));
+            out.push_str(&format!("            + bytes(tx.outputs[{output_idx}].value, 8)\n"));
+            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 1, 2)\n"));
+            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 0, 1)\n"));
+            out.push_str(&format!("            + bytes({spk_len} - 2, 8)\n"));
+            let terminator = if output_position + 1 == spawn.outputs.len() { ";" } else { "" };
+            out.push_str(&format!("            + OpTxOutputSpkSubstr({output_idx}, 2, {spk_len}){terminator}\n"));
+        }
+        out.push_str(&format!("        byte[32] {} = blake2bWithKey({preimage}, bytes(\"CovenantID\"));\n", spawn.covenant));
+        for previous in &entry.spawns[..spawn_index] {
+            out.push_str(&format!("        require({} != {});\n", spawn.covenant, previous.covenant));
+        }
+        for output in &spawn.outputs {
+            let output_idx = hidden_spawn_output_idx_name(&spawn.name, &output.name);
+            out.push_str(&format!("        require(OpOutputCovenantId({output_idx}) == {});\n", spawn.covenant));
+        }
+    }
+    out.push('\n');
     Ok(())
 }
 
@@ -1970,6 +2111,8 @@ struct BodyLowerer<'a, 'm> {
     output_names: BTreeSet<String>,
     observed_input_state_refs: Vec<(String, String)>,
     observed_output_fields: Vec<ObservedOutputFieldWitnessSpec>,
+    validated_spawns: BTreeSet<String>,
+    conditional_depth: usize,
 }
 
 impl<'a, 'm> BodyLowerer<'a, 'm> {
@@ -2001,6 +2144,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 types.insert(binding.to_string(), "byte[32]".to_string());
                 source_types.insert(binding.to_string(), format!("{}<{state}>", word::ACTOR_TYPE));
             }
+        }
+        for spawn in &entry.spawns {
+            types.insert(spawn.covenant.clone(), "byte[32]".to_string());
+            source_types.insert(spawn.covenant.clone(), word::COVENANT_ID.to_string());
         }
 
         let mut input_names = BTreeSet::new();
@@ -2051,6 +2198,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             output_names,
             observed_input_state_refs,
             observed_output_fields,
+            validated_spawns: BTreeSet::new(),
+            conditional_depth: 0,
         })
     }
 
@@ -2059,6 +2208,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         self.lower_statements(&mut out, 8, None)?;
         if out.trim().is_empty() {
             out.push_str("        require(1 == 1);\n");
+        }
+        for spawn in &self.entry.spawns {
+            if !self.validated_spawns.contains(&spawn.name) {
+                return Err(
+                    self.error(format!("spawn `{}` must be validated with `require {}.outputs become`", spawn.name, spawn.name))
+                );
+            }
         }
         Ok(out)
     }
@@ -2069,8 +2225,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 self.lower_if(out, indent)?;
             } else if self.consume_ident(word::BECOME) {
                 self.lower_become(out, indent)?;
-            } else if self.check_observed_outputs_become_start() {
-                self.lower_observed_outputs_become(out, indent)?;
+            } else if self.check_outputs_become_start() {
+                self.lower_outputs_become(out, indent)?;
             } else if self.check_symbol(';') {
                 self.advance();
             } else {
@@ -2093,7 +2249,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             push_indent(out, indent);
         }
         out.push_str(&format!("if ({}) {{\n", self.lower_expr(&condition, None, indent)?));
+        self.conditional_depth += 1;
         self.lower_statements(out, indent + 4, Some('}'))?;
+        self.conditional_depth -= 1;
         self.expect_symbol('}')?;
         push_indent(out, indent);
         out.push('}');
@@ -2106,7 +2264,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
             self.expect_symbol('{')?;
             out.push_str(" else {\n");
+            self.conditional_depth += 1;
             self.lower_statements(out, indent + 4, Some('}'))?;
+            self.conditional_depth -= 1;
             self.expect_symbol('}')?;
             push_indent(out, indent);
             out.push('}');
@@ -2292,13 +2452,23 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Err(self.error("unterminated become target"))
     }
 
-    fn lower_observed_outputs_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
+    fn lower_outputs_become(&mut self, out: &mut String, indent: usize) -> Result<()> {
         self.expect_ident(word::REQUIRE)?;
         let observe_name = self.expect_any_ident()?;
         self.expect_symbol('.')?;
         self.expect_ident(word::OUTPUTS)?;
         self.expect_ident(word::BECOME)?;
         let routes = self.parse_become_routes()?;
+
+        if let Some(spawn) = self.entry.spawns.iter().find(|spawn| spawn.name == observe_name) {
+            if self.conditional_depth != 0 {
+                return Err(self.error(format!("spawn `{observe_name}` output validation must be unconditional")));
+            }
+            if !self.validated_spawns.insert(observe_name.clone()) {
+                return Err(self.error(format!("spawn `{observe_name}` outputs are validated more than once")));
+            }
+            return self.lower_spawn_outputs_become(out, indent, spawn, routes);
+        }
 
         let observe = self
             .entry
@@ -2333,6 +2503,85 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 return Err(self.error(format!("observe `{observe_name}` does not validate output `{}`", observed_output.name)));
             }
         }
+        Ok(())
+    }
+
+    fn lower_spawn_outputs_become(
+        &mut self,
+        out: &mut String,
+        indent: usize,
+        spawn: &SpawnDecl,
+        routes: Vec<RouteCall>,
+    ) -> Result<()> {
+        let outputs_by_name = spawn.outputs.iter().map(|output| (output.name.as_str(), output)).collect::<BTreeMap<_, _>>();
+        let mut seen = BTreeSet::new();
+
+        for route in routes {
+            let Some(handle) = route.output.as_deref() else {
+                return Err(self.error(format!("spawned output route to `{}` is missing an output handle", route.actor)));
+            };
+            let Some(spawned_output) = outputs_by_name.get(handle).copied() else {
+                return Err(self.error(format!("spawn `{}` has no output `{handle}`", spawn.name)));
+            };
+            if !seen.insert(handle.to_string()) {
+                return Err(self.error(format!("spawn `{}` validates output `{handle}` more than once", spawn.name)));
+            }
+            if route.actor != spawned_output.actor {
+                return Err(self.error(format!(
+                    "spawn `{}` output `{handle}` expects `{}`, but route uses `{}`",
+                    spawn.name, spawned_output.actor, route.actor
+                )));
+            }
+            self.lower_spawn_output_route(out, indent, spawn, spawned_output, route)?;
+        }
+
+        for output in &spawn.outputs {
+            if !seen.contains(&output.name) {
+                return Err(self.error(format!("spawn `{}` does not validate output `{}`", spawn.name, output.name)));
+            }
+        }
+        Ok(())
+    }
+
+    fn lower_spawn_output_route(
+        &mut self,
+        out: &mut String,
+        indent: usize,
+        spawn: &SpawnDecl,
+        output: &SpawnOutputDecl,
+        route: RouteCall,
+    ) -> Result<()> {
+        let state_name = source_actor_type_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
+            .expect("spawn target actor_type checked during model validation");
+        let state_ty = if state_name == self.actor.state { "State".to_string() } else { state_name };
+        let state_expr = route.state.trim();
+        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+            self.lower_expr(state_expr, Some(&state_ty), indent)?
+        } else {
+            let name = generated_state_name(&route, &state_ty);
+            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            push_indent(out, indent);
+            out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
+            name
+        };
+        let spec = SpawnActorWitnessSpec { spawn: spawn.name.clone(), handle: output.name.clone(), actor: output.actor.clone() };
+        let template = self.lower_expr(&output.actor, Some("byte[32]"), indent)?;
+
+        push_indent(out, indent);
+        out.push_str(&format!("// :: spawned become {}.{} -> {}\n", spawn.name, output.name, output.actor));
+        push_generated_call(
+            out,
+            indent,
+            "",
+            "validateOutputStateWithTemplate",
+            &[
+                hidden_spawn_output_idx_name(&spawn.name, &output.name),
+                state_arg,
+                hidden_spawn_actor_prefix_name(&spec),
+                hidden_spawn_actor_suffix_name(&spec),
+                template,
+            ],
+        );
         Ok(())
     }
 
@@ -2938,7 +3187,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         matches!(self.current().kind, TokenKind::Symbol(actual) if actual == expected)
     }
 
-    fn check_observed_outputs_become_start(&self) -> bool {
+    fn check_outputs_become_start(&self) -> bool {
         matches!(&self.current().kind, TokenKind::Ident(actual) if actual == word::REQUIRE)
             && matches!(self.peek_kind(1), Some(TokenKind::Ident(_)))
             && matches!(self.peek_kind(2), Some(TokenKind::Symbol('.')))
@@ -3291,6 +3540,13 @@ struct ObservedActorWitnessSpec {
     actor: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+struct SpawnActorWitnessSpec {
+    spawn: String,
+    handle: String,
+    actor: String,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct StateExpansionWitnessSpec {
     state: String,
@@ -3312,6 +3568,7 @@ struct EntryWitnessSpecs {
     families: Vec<RouteFamilyWitnessSpec>,
     selectors: Vec<TemplateSelectorWitnessSpec>,
     observed_actors: Vec<ObservedActorWitnessSpec>,
+    spawn_actors: Vec<SpawnActorWitnessSpec>,
     state_expansions: Vec<StateExpansionWitnessSpec>,
     observed_output_fields: Vec<ObservedOutputFieldWitnessSpec>,
 }
@@ -3378,6 +3635,11 @@ fn lower_entry_params(actor: &ActorDecl, entry: &EntryDecl, witness_specs: &Entr
             }
         }
     }
+    for spec in &witness_specs.spawn_actors {
+        out.push(format!("int {}", hidden_spawn_output_idx_name(&spec.spawn, &spec.handle)));
+        out.push(format!("byte[] {}", hidden_spawn_actor_prefix_name(spec)));
+        out.push(format!("byte[] {}", hidden_spawn_actor_suffix_name(spec)));
+    }
     for spec in &witness_specs.state_expansions {
         let len = state_packed_len(&spec.memory_state, model).expect("state expansion memory fields were validated before codegen");
         out.push(format!("byte[{len}] {}", hidden_state_expansion_preimage_name(spec)));
@@ -3410,6 +3672,7 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
     let mut specs = template_witness_specs_for_actor(actor, model, read_actors, write_actors);
     specs.selectors = selector_specs;
     specs.observed_actors = observed_actor_witness_specs(actor, entry, model);
+    specs.spawn_actors = spawn_actor_witness_specs(entry);
     specs.state_expansions = state_expansion_witness_specs_for_actor(actor, model);
     specs.observed_output_fields = observed_output_field_witness_specs(actor, entry, model);
     specs
@@ -3417,6 +3680,20 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
 
 fn observed_actor_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Vec<ObservedActorWitnessSpec> {
     entry.observes.iter().flat_map(|observe| observed_actor_witness_specs_for_observe(actor, entry, observe, model)).collect()
+}
+
+fn spawn_actor_witness_specs(entry: &EntryDecl) -> Vec<SpawnActorWitnessSpec> {
+    entry
+        .spawns
+        .iter()
+        .flat_map(|spawn| {
+            spawn.outputs.iter().map(|output| SpawnActorWitnessSpec {
+                spawn: spawn.name.clone(),
+                handle: output.name.clone(),
+                actor: output.actor.clone(),
+            })
+        })
+        .collect()
 }
 
 fn observed_output_field_witness_specs(
@@ -3477,6 +3754,7 @@ fn template_witness_specs_for_actor(
         families: family_specs.into_values().collect(),
         selectors: Vec::new(),
         observed_actors: Vec::new(),
+        spawn_actors: Vec::new(),
         state_expansions: Vec::new(),
         observed_output_fields: Vec::new(),
     }
@@ -4028,6 +4306,7 @@ fn template_plan_artifact(
                         template_id: match &param.subject {
                             HiddenParamSubjectArtifact::Actor { actor } => Some(template_receipt_id(actor)),
                             HiddenParamSubjectArtifact::ObservedActor { .. } => None,
+                            HiddenParamSubjectArtifact::SpawnActor { .. } => None,
                             HiddenParamSubjectArtifact::ObservedOutputField { .. } => None,
                             HiddenParamSubjectArtifact::RouteFamily { .. } => None,
                             HiddenParamSubjectArtifact::TemplateSelector { .. } => None,
@@ -4587,6 +4866,37 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             }
         }
     }
+    for spec in &witness_specs.spawn_actors {
+        let subject = HiddenParamSubjectArtifact::SpawnActor {
+            spawn: spec.spawn.clone(),
+            handle: spec.handle.clone(),
+            actor: spec.actor.clone(),
+        };
+        hidden_params.push(HiddenParamArtifact {
+            recipe_id: spawn_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::SpawnOutputIndex),
+            name: hidden_spawn_output_idx_name(&spec.spawn, &spec.handle),
+            ty: TypeArtifact::Int,
+            subject: subject.clone(),
+            purpose: HiddenParamPurposeArtifact::SpawnOutputIndex,
+            route_proof_id: None,
+        });
+        hidden_params.push(HiddenParamArtifact {
+            recipe_id: spawn_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplatePrefixBytes),
+            name: hidden_spawn_actor_prefix_name(spec),
+            ty: TypeArtifact::Bytes,
+            subject: subject.clone(),
+            purpose: HiddenParamPurposeArtifact::TemplatePrefixBytes,
+            route_proof_id: None,
+        });
+        hidden_params.push(HiddenParamArtifact {
+            recipe_id: spawn_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplateSuffixBytes),
+            name: hidden_spawn_actor_suffix_name(spec),
+            ty: TypeArtifact::Bytes,
+            subject,
+            purpose: HiddenParamPurposeArtifact::TemplateSuffixBytes,
+            route_proof_id: None,
+        });
+    }
     for spec in &witness_specs.state_expansions {
         let len = state_packed_len(&spec.memory_state, model)
             .expect("state expansion memory fields were validated before artifact emission");
@@ -4656,6 +4966,7 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             })
             .collect(),
         observes: entry.observes.iter().map(|observe| observe_artifact(actor, entry, model, observe)).collect::<Result<Vec<_>>>()?,
+        spawns: entry.spawns.iter().map(|spawn| spawn_artifact(actor, entry, model, spawn)).collect::<Result<Vec<_>>>()?,
         witnesses,
         consumes: entry
             .consumes
@@ -4664,6 +4975,31 @@ fn entry_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Re
             .collect(),
         emits: emit_spec_artifact(&entry.emits, model),
         routes: expanded_routes.iter().map(route_artifact).collect(),
+    })
+}
+
+fn spawn_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, spawn: &SpawnDecl) -> Result<SpawnArtifact> {
+    Ok(SpawnArtifact {
+        name: spawn.name.clone(),
+        covenant: spawn.covenant.clone(),
+        outputs: spawn
+            .outputs
+            .iter()
+            .map(|output| {
+                let state = source_actor_type_state_for_expr(&output.actor, actor, entry, model)?.ok_or_else(|| {
+                    ArgentError::new(format!(
+                        "spawn `{}.{}` target `{}` is not an actor_type value",
+                        spawn.name, output.name, output.actor
+                    ))
+                })?;
+                Ok(SpawnOutputArtifact {
+                    name: output.name.clone(),
+                    actor: compact_expr(&output.actor),
+                    state,
+                    group_index: output.group_index,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?,
     })
 }
 
@@ -5490,6 +5826,10 @@ fn observed_actor_witness_recipe_id(spec: &ObservedActorWitnessSpec, purpose: Hi
     )
 }
 
+fn spawn_actor_witness_recipe_id(spec: &SpawnActorWitnessSpec, purpose: HiddenParamPurposeArtifact) -> String {
+    format!("witness/spawn/{}/{}/{}", spec.spawn, spec.handle, hidden_param_purpose_id(purpose))
+}
+
 fn state_expansion_witness_recipe_id(spec: &StateExpansionWitnessSpec) -> String {
     format!(
         "witness/state_expansion/{}/{}/{}/{}",
@@ -5513,6 +5853,7 @@ fn observed_output_field_witness_recipe_id(spec: &ObservedOutputFieldWitnessSpec
 
 fn hidden_param_purpose_id(purpose: HiddenParamPurposeArtifact) -> &'static str {
     match purpose {
+        HiddenParamPurposeArtifact::SpawnOutputIndex => "spawn_output_index",
         HiddenParamPurposeArtifact::TemplatePrefixBytes => "template_prefix_bytes",
         HiddenParamPurposeArtifact::TemplateSuffixBytes => "template_suffix_bytes",
         HiddenParamPurposeArtifact::TemplatePrefixLen => "template_prefix_len",
@@ -5568,15 +5909,19 @@ fn hidden_template_selector_template_name(selector: &str) -> String {
 }
 
 fn observed_actor_spec_suffix(spec: &ObservedActorWitnessSpec) -> String {
-    if let Some(field) = spec.actor.strip_prefix("self.")
+    actor_expr_suffix(&spec.actor)
+}
+
+fn actor_expr_suffix(actor: &str) -> String {
+    if let Some(field) = actor.strip_prefix("self.")
         && is_identifier(field)
     {
         return to_snake(field);
     }
-    if is_identifier(&spec.actor) {
-        return hidden_actor_suffix(&spec.actor);
+    if is_identifier(actor) {
+        return hidden_actor_suffix(actor);
     }
-    to_snake(&compact_expr(&spec.actor).replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_', "_"))
+    to_snake(&compact_expr(actor).replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_', "_"))
 }
 
 fn hidden_observed_actor_prefix_name(spec: &ObservedActorWitnessSpec) -> String {
@@ -5603,6 +5948,14 @@ fn hidden_observed_actor_template_init_name(spec: &ObservedActorWitnessSpec) -> 
     format!("{RESERVED_GENERATED_PREFIX}init_{}_{}_template", spec.observe, observed_actor_spec_suffix(spec))
 }
 
+fn hidden_spawn_actor_prefix_name(spec: &SpawnActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix", spec.spawn, spec.handle)
+}
+
+fn hidden_spawn_actor_suffix_name(spec: &SpawnActorWitnessSpec) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix", spec.spawn, spec.handle)
+}
+
 fn hidden_state_expansion_preimage_name(spec: &StateExpansionWitnessSpec) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{}_{}_preimage", to_snake(&spec.field), to_snake(&spec.memory_state))
 }
@@ -5625,6 +5978,18 @@ fn hidden_observed_input_idx_name(observe: &str, handle: &str) -> String {
 
 fn hidden_observed_output_idx_name(observe: &str, handle: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{observe}_{handle}_output_idx")
+}
+
+fn hidden_spawn_output_idx_name(spawn: &str, handle: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{spawn}_{handle}_output_idx")
+}
+
+fn hidden_spawn_output_spk_len_name(spawn: &str, handle: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{spawn}_{handle}_spk_len")
+}
+
+fn hidden_spawn_preimage_name(spawn: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{spawn}_genesis_preimage")
 }
 
 fn hidden_observed_input_state_name(observe: &str, handle: &str) -> String {
@@ -8145,6 +8510,159 @@ mod tests {
         emit_artifact(&program, &model, &actor_sil).expect("artifact emits")
     }
 
+    #[test]
+    fn genesis_spawn_lowers_to_pinned_sil_and_artifact_metadata() {
+        let (controller_sil, controller_artifact) =
+            emit_selected_fixture("tests/fixtures/runtime/context_genesis_spawn/app.ag", "ControllerApp", "Controller");
+        assert_eq!(controller_sil, include_str!("../tests/fixtures/runtime/context_genesis_spawn/Controller.sil"));
+        let launch =
+            controller_artifact.argent.actors[0].entries.iter().find(|entry| entry.name == "launch").expect("launch entry exists");
+        assert_eq!(launch.spawns.len(), 1);
+        assert_eq!(launch.spawns[0].name, "new_pair");
+        assert_eq!(launch.spawns[0].covenant, "pair_id");
+        assert_eq!(
+            launch.spawns[0].outputs.iter().map(|output| (output.name.as_str(), output.group_index)).collect::<Vec<_>>(),
+            vec![("left", 0), ("right", 1)]
+        );
+        assert_eq!(
+            launch.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            vec![
+                "gen__new_pair_left_output_idx",
+                "gen__new_pair_left_prefix",
+                "gen__new_pair_left_suffix",
+                "gen__new_pair_right_output_idx",
+                "gen__new_pair_right_prefix",
+                "gen__new_pair_right_suffix",
+            ]
+        );
+        controller_artifact.verify_template_plan().expect("spawn metadata verifies");
+        let mut malformed = controller_artifact.clone();
+        malformed.argent.actors[0].entries[0].spawns[0].outputs[1].group_index = 2;
+        assert!(
+            matches!(malformed.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+            "malformed spawn output order must be rejected"
+        );
+
+        let (pair_sil, _) = emit_selected_fixture("tests/fixtures/runtime/context_genesis_spawn/app.ag", "PairApp", "Pair");
+        assert_eq!(pair_sil, include_str!("../tests/fixtures/runtime/context_genesis_spawn/Pair.sil"));
+    }
+
+    #[test]
+    fn genesis_spawn_groups_must_have_distinct_covenant_ids() {
+        let source = r#"
+            state PairState {
+                int value;
+            }
+
+            state LauncherState {
+                actor_type<PairState> pair_type;
+            }
+
+            actor Launcher owns LauncherState {
+                entry launch()
+                spawns first by first_id {
+                    outputs {
+                        pair: self.pair_type;
+                    }
+                }
+                spawns second by second_id {
+                    outputs {
+                        pair: self.pair_type;
+                    }
+                }
+                emits one Launcher {
+                    PairState pair = { value: 1 };
+                    require first.outputs become {
+                        pair <- self.pair_type(pair);
+                    };
+                    require second.outputs become {
+                        pair <- self.pair_type(pair);
+                    };
+                    become Launcher(self.state);
+                }
+            }
+
+            app Test {
+                actor Launcher;
+            }
+        "#;
+        let path = PathBuf::from("test.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let sil = emit_actor(model.actor("Launcher").expect("launcher exists"), &model).expect("Launcher emits");
+        assert!(sil.contains("require(second_id != first_id);"), "{sil}");
+        let actor_sil = actor_sil_for_model(&model);
+        emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
+    }
+
+    #[test]
+    fn rejects_spawn_name_shared_with_observe() {
+        let err = parse_and_validate(
+            r#"
+            state PairState {}
+            state LauncherState {
+                covid observed_id;
+                actor_type<PairState> pair_type;
+            }
+
+            actor Launcher owns LauncherState {
+                entry launch()
+                observes pair by observed_id {}
+                spawns pair by pair_id {
+                    outputs {
+                        next_pair: self.pair_type;
+                    }
+                }
+                emits one Launcher {
+                    require(1 == 1);
+                    become Launcher(self.state);
+                }
+            }
+
+            app Test {
+                actor Launcher;
+            }
+            "#,
+        )
+        .expect_err("observe and spawn names must not be ambiguous");
+
+        assert!(err.to_string().contains("uses `pair` as both an observe and a spawn"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_spawn_covenant_binding_shared_with_source_value() {
+        let err = parse_and_validate(
+            r#"
+            state PairState {}
+            state LauncherState {
+                covid pair_id;
+                actor_type<PairState> pair_type;
+            }
+
+            actor Launcher owns LauncherState {
+                entry launch()
+                spawns pair by pair_id {
+                    outputs {
+                        next_pair: self.pair_type;
+                    }
+                }
+                emits one Launcher {
+                    require(1 == 1);
+                    become Launcher(self.state);
+                }
+            }
+
+            app Test {
+                actor Launcher;
+            }
+            "#,
+        )
+        .expect_err("spawn covenant bindings must not shadow source values");
+
+        assert!(err.to_string().contains("spawn covenant binding `pair_id` collides with a source value"), "unexpected error: {err}");
+    }
+
     fn emit_fixture(case: &str, actor: &str) -> (String, Artifact) {
         let path = PathBuf::from("tests/fixtures/emit").join(case).join("app.ag");
         let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(&path)).expect("fixture source exists");
@@ -8155,6 +8673,19 @@ mod tests {
         let sil = emit_actor(actor, &model).expect("fixture actor emits");
         let actor_sil = actor_sil_for_model(&model);
         let artifact = emit_artifact(&program, &model, &actor_sil).expect("fixture artifact emits");
+        (sil, artifact)
+    }
+
+    fn emit_selected_fixture(path: &str, app: &str, actor: &str) -> (String, Artifact) {
+        let path = PathBuf::from(path);
+        let source = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(&path)).expect("fixture source exists");
+        let module = crate::parser::parse_module(path.clone(), source).expect("fixture source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program_app(&program, app).expect("selected fixture model validates");
+        let actor = model.actor(actor).expect("selected fixture actor exists");
+        let sil = emit_actor(actor, &model).expect("selected fixture actor emits");
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("selected fixture artifact emits");
         (sil, artifact)
     }
 
@@ -8491,6 +9022,7 @@ mod tests {
         match subject {
             HiddenParamSubjectArtifact::Actor { actor } => actor,
             HiddenParamSubjectArtifact::ObservedActor { actor, .. } => actor,
+            HiddenParamSubjectArtifact::SpawnActor { actor, .. } => actor,
             HiddenParamSubjectArtifact::ObservedOutputField { field, .. } => field,
             HiddenParamSubjectArtifact::RouteFamily { family_id } => family_id,
             HiddenParamSubjectArtifact::TemplateSelector { selector } => selector,
@@ -8520,6 +9052,7 @@ mod tests {
                             params: Vec::new(),
                             consumes: Vec::new(),
                             observes: Vec::new(),
+                            spawns: Vec::new(),
                             emits: EmitSpec::Outputs(vec![EmitOutput {
                                 name: "next".to_string(),
                                 actors: vec!["Player".to_string()],
