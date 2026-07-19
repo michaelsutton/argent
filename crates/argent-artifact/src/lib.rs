@@ -9,6 +9,8 @@
 //! families, or hidden-field roles into `silverscript-abi`. Store them here as
 //! metadata that points at Sil ABI contract and field names.
 
+mod verify_spawns;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -610,9 +612,18 @@ pub enum ArtifactIdentityError {
 }
 
 impl TemplatePlanArtifact {
+    /// Verifies that this template plan is a complete and internally consistent
+    /// coordination view of the containing artifact.
+    ///
+    /// The Sil ABI is authoritative for compiled templates and runtime layouts.
+    /// This validates that template receipts, actor-type handles, route metadata,
+    /// spawn groups, and witness recipes agree with that ABI and with each other,
+    /// so the runtime can resolve hidden arguments without relying on dangling,
+    /// ambiguous, or stale metadata.
     pub fn verify(&self, artifact: &Artifact) -> std::result::Result<(), TemplatePlanError> {
         use std::collections::{BTreeMap, BTreeSet};
 
+        // TODO: Extract template receipt and actor-type handle verification into dedicated helpers.
         let mut template_ids = BTreeSet::new();
         let mut templates_by_id = BTreeMap::new();
         for template in &self.templates {
@@ -672,6 +683,7 @@ impl TemplatePlanArtifact {
 
         let actor_states =
             artifact.argent.actors.iter().map(|actor| (actor.name.as_str(), actor.state.as_str())).collect::<BTreeMap<_, _>>();
+        // TODO: Extract route-family membership and anchor verification into dedicated helpers.
         let mut route_family_ids = BTreeSet::new();
         let mut route_families_by_id = BTreeMap::new();
         for family in &self.route_families {
@@ -723,6 +735,7 @@ impl TemplatePlanArtifact {
 
         let sil_contracts_by_name =
             artifact.sil_abi.contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+        // TODO: Extract runtime-state field-role verification into dedicated helpers.
         let mut runtime_states_by_contract = BTreeMap::new();
         for runtime_state in &self.runtime_states {
             if runtime_states_by_contract.insert(runtime_state.contract.as_str(), runtime_state).is_some() {
@@ -759,6 +772,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract route-table structure and template-reference verification into dedicated helpers.
         let mut route_table_ids = BTreeSet::new();
         let mut route_tables_by_id = BTreeMap::new();
         for table in &self.route_tables {
@@ -832,6 +846,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract runtime-state-to-route-table binding verification into dedicated helpers.
         let mut referenced_route_table_ids = BTreeSet::new();
         for runtime_state in &self.runtime_states {
             let contract = sil_contracts_by_name
@@ -909,6 +924,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract route-proof and route-family table verification into dedicated helpers.
         let mut route_proof_ids = BTreeSet::new();
         let mut route_proofs_by_id = BTreeMap::new();
         for proof in &self.route_proofs {
@@ -975,6 +991,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract witness recipe registry verification into dedicated helpers.
         let mut recipe_ids = BTreeSet::new();
         let mut recipes_by_id = BTreeMap::new();
         for recipe in &self.witness_recipes {
@@ -1025,140 +1042,15 @@ impl TemplatePlanArtifact {
             recipes_by_id.insert(recipe.id.as_str(), recipe);
         }
 
+        // TODO: Extract generic per-entry recipe, witness, and route verification into dedicated helpers.
         for actor in &artifact.argent.actors {
             for entry in &actor.entries {
                 let entry_id = format!("{}::{}", actor.name, entry.name);
                 let entry_recipe_ids = entry.hidden_params.iter().map(|param| param.recipe_id.as_str()).collect::<BTreeSet<_>>();
 
-                let mut spawn_names = BTreeSet::new();
-                let mut spawn_covenants = BTreeSet::new();
-                let mut spawn_outputs = BTreeMap::new();
-                let mut spawn_templates = BTreeMap::new();
-                for spawn in &entry.spawns {
-                    if !spawn_names.insert(spawn.name.as_str()) {
-                        return Err(TemplatePlanError::InvalidSpawnMetadata {
-                            entry: entry_id.clone(),
-                            message: format!("duplicate spawn `{}`", spawn.name),
-                        });
-                    }
-                    if !spawn_covenants.insert(spawn.covenant.as_str()) {
-                        return Err(TemplatePlanError::InvalidSpawnMetadata {
-                            entry: entry_id.clone(),
-                            message: format!("duplicate covenant binding `{}`", spawn.covenant),
-                        });
-                    }
-                    if spawn.outputs.is_empty() {
-                        return Err(TemplatePlanError::InvalidSpawnMetadata {
-                            entry: entry_id.clone(),
-                            message: format!("spawn `{}` has no outputs", spawn.name),
-                        });
-                    }
-                    for (expected_index, output) in spawn.outputs.iter().enumerate() {
-                        if output.group_index != expected_index {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!(
-                                    "spawn `{}.{}` has group index {}, expected {expected_index}",
-                                    spawn.name, output.name, output.group_index
-                                ),
-                            });
-                        }
-                        if spawn_outputs.insert((spawn.name.as_str(), output.name.as_str()), output).is_some() {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!("spawn `{}` repeats output `{}`", spawn.name, output.name),
-                            });
-                        }
-                        spawn_templates.entry(output.actor.as_str()).or_insert((spawn.name.as_str(), output.name.as_str()));
-                    }
-                }
-
-                for ((spawn, handle), output) in &spawn_outputs {
-                    let subject = HiddenParamSubjectArtifact::SpawnActor {
-                        spawn: (*spawn).to_string(),
-                        handle: (*handle).to_string(),
-                        actor: output.actor.clone(),
-                    };
-                    let count = entry
-                        .hidden_params
-                        .iter()
-                        .filter(|param| param.subject == subject && param.purpose == HiddenParamPurposeArtifact::SpawnOutputIndex)
-                        .count();
-                    if count != 1 {
-                        return Err(TemplatePlanError::InvalidSpawnMetadata {
-                            entry: entry_id.clone(),
-                            message: format!(
-                                "spawn `{spawn}.{handle}` has {count} hidden params for {:?}, expected one",
-                                HiddenParamPurposeArtifact::SpawnOutputIndex
-                            ),
-                        });
-                    }
-                }
-
-                for (actor_expr, (spawn, handle)) in spawn_templates {
-                    let subject = HiddenParamSubjectArtifact::SpawnActor {
-                        spawn: spawn.to_string(),
-                        handle: handle.to_string(),
-                        actor: actor_expr.to_string(),
-                    };
-                    for purpose in [HiddenParamPurposeArtifact::TemplatePrefixBytes, HiddenParamPurposeArtifact::TemplateSuffixBytes] {
-                        let params = entry
-                            .hidden_params
-                            .iter()
-                            .filter(|param| {
-                                matches!(
-                                    &param.subject,
-                                    HiddenParamSubjectArtifact::SpawnActor { actor, .. } if actor == actor_expr
-                                ) && param.purpose == purpose
-                            })
-                            .collect::<Vec<_>>();
-                        if params.len() != 1 {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!(
-                                    "spawn actor expression `{actor_expr}` has {} hidden params for {purpose:?}, expected one",
-                                    params.len()
-                                ),
-                            });
-                        }
-                        if params[0].subject != subject {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!(
-                                    "spawn actor expression `{actor_expr}` {purpose:?} must use first output `{spawn}.{handle}` as its subject"
-                                ),
-                            });
-                        }
-                    }
-                }
+                verify_spawns::verify_entry_spawns(&entry_id, entry)?;
 
                 for param in &entry.hidden_params {
-                    if let HiddenParamSubjectArtifact::SpawnActor { spawn, handle, actor } = &param.subject {
-                        let Some(output) = spawn_outputs.get(&(spawn.as_str(), handle.as_str())) else {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!("hidden param `{}` references unknown spawn output `{spawn}.{handle}`", param.name),
-                            });
-                        };
-                        if actor != &output.actor
-                            || !matches!(
-                                param.purpose,
-                                HiddenParamPurposeArtifact::SpawnOutputIndex
-                                    | HiddenParamPurposeArtifact::TemplatePrefixBytes
-                                    | HiddenParamPurposeArtifact::TemplateSuffixBytes
-                            )
-                        {
-                            return Err(TemplatePlanError::InvalidSpawnMetadata {
-                                entry: entry_id.clone(),
-                                message: format!("hidden param `{}` does not match spawn output `{spawn}.{handle}`", param.name),
-                            });
-                        }
-                    } else if param.purpose == HiddenParamPurposeArtifact::SpawnOutputIndex {
-                        return Err(TemplatePlanError::InvalidSpawnMetadata {
-                            entry: entry_id.clone(),
-                            message: format!("spawn output index param `{}` has a non-spawn subject", param.name),
-                        });
-                    }
                     let Some(recipe) = recipes_by_id.get(param.recipe_id.as_str()) else {
                         return Err(TemplatePlanError::MissingHiddenParamRecipe {
                             entry: entry_id.clone(),
