@@ -26,14 +26,10 @@ contract Controller(
         int first_right_value,
         int second_value,
         int gen__first_pair_left_output_idx,
-        byte[] gen__first_pair_left_prefix,
-        byte[] gen__first_pair_left_suffix,
         int gen__first_pair_right_output_idx,
-        byte[] gen__first_pair_right_prefix,
-        byte[] gen__first_pair_right_suffix,
         int gen__second_pair_pair_output_idx,
-        byte[] gen__second_pair_pair_prefix,
-        byte[] gen__second_pair_pair_suffix
+        byte[] gen__spawn_self_pair_type_prefix,
+        byte[] gen__spawn_self_pair_type_suffix
     ) {
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -99,24 +95,24 @@ contract Controller(
         validateOutputStateWithTemplate(
             gen__first_pair_left_output_idx,
             first_left,
-            gen__first_pair_left_prefix,
-            gen__first_pair_left_suffix,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
             pair_type
         );
         // :: spawned become first_pair.right -> self.pair_type
         validateOutputStateWithTemplate(
             gen__first_pair_right_output_idx,
             first_right,
-            gen__first_pair_right_prefix,
-            gen__first_pair_right_suffix,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
             pair_type
         );
         // :: spawned become second_pair.pair -> self.pair_type
         validateOutputStateWithTemplate(
             gen__second_pair_pair_output_idx,
             second,
-            gen__second_pair_pair_prefix,
-            gen__second_pair_pair_suffix,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
             pair_type
         );
         // :: become Controller

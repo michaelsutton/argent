@@ -3567,7 +3567,8 @@ struct EntryWitnessSpecs {
     families: Vec<RouteFamilyWitnessSpec>,
     selectors: Vec<TemplateSelectorWitnessSpec>,
     observed_actors: Vec<ObservedActorWitnessSpec>,
-    spawn_actors: Vec<SpawnActorWitnessSpec>,
+    spawn_outputs: Vec<SpawnActorWitnessSpec>,
+    spawn_templates: Vec<SpawnActorWitnessSpec>,
     state_expansions: Vec<StateExpansionWitnessSpec>,
     observed_output_fields: Vec<ObservedOutputFieldWitnessSpec>,
 }
@@ -3634,8 +3635,10 @@ fn lower_entry_params(actor: &ActorDecl, entry: &EntryDecl, witness_specs: &Entr
             }
         }
     }
-    for spec in &witness_specs.spawn_actors {
+    for spec in &witness_specs.spawn_outputs {
         out.push(format!("int {}", hidden_spawn_output_idx_name(&spec.spawn, &spec.handle)));
+    }
+    for spec in &witness_specs.spawn_templates {
         out.push(format!("byte[] {}", hidden_spawn_actor_prefix_name(spec)));
         out.push(format!("byte[] {}", hidden_spawn_actor_suffix_name(spec)));
     }
@@ -3671,7 +3674,8 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
     let mut specs = template_witness_specs_for_actor(actor, model, read_actors, write_actors);
     specs.selectors = selector_specs;
     specs.observed_actors = observed_actor_witness_specs(actor, entry, model);
-    specs.spawn_actors = spawn_actor_witness_specs(entry);
+    specs.spawn_outputs = spawn_output_witness_specs(entry);
+    specs.spawn_templates = spawn_template_witness_specs(&specs.spawn_outputs);
     specs.state_expansions = state_expansion_witness_specs_for_actor(actor, model);
     specs.observed_output_fields = observed_output_field_witness_specs(actor, entry, model);
     specs
@@ -3681,7 +3685,7 @@ fn observed_actor_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     entry.observes.iter().flat_map(|observe| observed_actor_witness_specs_for_observe(actor, entry, observe, model)).collect()
 }
 
-fn spawn_actor_witness_specs(entry: &EntryDecl) -> Vec<SpawnActorWitnessSpec> {
+fn spawn_output_witness_specs(entry: &EntryDecl) -> Vec<SpawnActorWitnessSpec> {
     entry
         .spawns
         .iter()
@@ -3693,6 +3697,11 @@ fn spawn_actor_witness_specs(entry: &EntryDecl) -> Vec<SpawnActorWitnessSpec> {
             })
         })
         .collect()
+}
+
+fn spawn_template_witness_specs(outputs: &[SpawnActorWitnessSpec]) -> Vec<SpawnActorWitnessSpec> {
+    let mut seen = BTreeSet::new();
+    outputs.iter().filter(|spec| seen.insert(compact_expr(&spec.actor))).cloned().collect()
 }
 
 fn observed_output_field_witness_specs(
@@ -3753,7 +3762,8 @@ fn template_witness_specs_for_actor(
         families: family_specs.into_values().collect(),
         selectors: Vec::new(),
         observed_actors: Vec::new(),
-        spawn_actors: Vec::new(),
+        spawn_outputs: Vec::new(),
+        spawn_templates: Vec::new(),
         state_expansions: Vec::new(),
         observed_output_fields: Vec::new(),
     }
@@ -4865,7 +4875,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             }
         }
     }
-    for spec in &witness_specs.spawn_actors {
+    for spec in &witness_specs.spawn_outputs {
         let subject = HiddenParamSubjectArtifact::SpawnActor {
             spawn: spec.spawn.clone(),
             handle: spec.handle.clone(),
@@ -4879,6 +4889,13 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
             purpose: HiddenParamPurposeArtifact::SpawnOutputIndex,
             route_proof_id: None,
         });
+    }
+    for spec in &witness_specs.spawn_templates {
+        let subject = HiddenParamSubjectArtifact::SpawnActor {
+            spawn: spec.spawn.clone(),
+            handle: spec.handle.clone(),
+            actor: spec.actor.clone(),
+        };
         hidden_params.push(HiddenParamArtifact {
             recipe_id: spawn_actor_witness_recipe_id(spec, HiddenParamPurposeArtifact::TemplatePrefixBytes),
             name: hidden_spawn_actor_prefix_name(spec),
@@ -5948,11 +5965,15 @@ fn hidden_observed_actor_template_init_name(spec: &ObservedActorWitnessSpec) -> 
 }
 
 fn hidden_spawn_actor_prefix_name(spec: &SpawnActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_prefix", spec.spawn, spec.handle)
+    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_prefix", spawn_actor_expr_suffix(&spec.actor))
 }
 
 fn hidden_spawn_actor_suffix_name(spec: &SpawnActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{}_{}_suffix", spec.spawn, spec.handle)
+    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_suffix", spawn_actor_expr_suffix(&spec.actor))
+}
+
+fn spawn_actor_expr_suffix(actor: &str) -> String {
+    to_snake(&compact_expr(actor).replace(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_', "_"))
 }
 
 fn hidden_state_expansion_preimage_name(spec: &StateExpansionWitnessSpec) -> String {
@@ -8523,11 +8544,9 @@ mod tests {
             launch.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
             vec![
                 "gen__new_pair_left_output_idx",
-                "gen__new_pair_left_prefix",
-                "gen__new_pair_left_suffix",
                 "gen__new_pair_right_output_idx",
-                "gen__new_pair_right_prefix",
-                "gen__new_pair_right_suffix",
+                "gen__spawn_self_pair_type_prefix",
+                "gen__spawn_self_pair_type_suffix",
             ]
         );
         controller_artifact.verify_template_plan().expect("spawn metadata verifies");
@@ -8536,6 +8555,20 @@ mod tests {
         assert!(
             matches!(malformed.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
             "malformed spawn output order must be rejected"
+        );
+        let mut noncanonical_template_subject = controller_artifact.clone();
+        let prefix = noncanonical_template_subject.argent.actors[0].entries[0]
+            .hidden_params
+            .iter_mut()
+            .find(|param| param.purpose == HiddenParamPurposeArtifact::TemplatePrefixBytes)
+            .expect("spawn prefix witness exists");
+        let HiddenParamSubjectArtifact::SpawnActor { handle, .. } = &mut prefix.subject else {
+            panic!("spawn prefix has a spawn actor subject");
+        };
+        *handle = "right".to_string();
+        assert!(
+            matches!(noncanonical_template_subject.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+            "shared spawn template witnesses must use their first output as subject"
         );
 
         let (pair_sil, _) = emit_selected_fixture("tests/fixtures/runtime/context_genesis_spawn/app.ag", "PairApp", "Pair");
@@ -8561,6 +8594,16 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
             vec![("first_pair", vec![("left", 0), ("right", 1)]), ("second_pair", vec![("pair", 0)])]
+        );
+        assert_eq!(
+            launch.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            vec![
+                "gen__first_pair_left_output_idx",
+                "gen__first_pair_right_output_idx",
+                "gen__second_pair_pair_output_idx",
+                "gen__spawn_self_pair_type_prefix",
+                "gen__spawn_self_pair_type_suffix",
+            ]
         );
         controller_artifact.verify_template_plan().expect("multiple-spawn metadata verifies");
 

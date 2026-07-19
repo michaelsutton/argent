@@ -1033,6 +1033,7 @@ impl TemplatePlanArtifact {
                 let mut spawn_names = BTreeSet::new();
                 let mut spawn_covenants = BTreeSet::new();
                 let mut spawn_outputs = BTreeMap::new();
+                let mut spawn_templates = BTreeMap::new();
                 for spawn in &entry.spawns {
                     if !spawn_names.insert(spawn.name.as_str()) {
                         return Err(TemplatePlanError::InvalidSpawnMetadata {
@@ -1068,6 +1069,7 @@ impl TemplatePlanArtifact {
                                 message: format!("spawn `{}` repeats output `{}`", spawn.name, output.name),
                             });
                         }
+                        spawn_templates.entry(output.actor.as_str()).or_insert((spawn.name.as_str(), output.name.as_str()));
                     }
                 }
 
@@ -1077,17 +1079,54 @@ impl TemplatePlanArtifact {
                         handle: (*handle).to_string(),
                         actor: output.actor.clone(),
                     };
-                    for purpose in [
-                        HiddenParamPurposeArtifact::SpawnOutputIndex,
-                        HiddenParamPurposeArtifact::TemplatePrefixBytes,
-                        HiddenParamPurposeArtifact::TemplateSuffixBytes,
-                    ] {
-                        let count =
-                            entry.hidden_params.iter().filter(|param| param.subject == subject && param.purpose == purpose).count();
-                        if count != 1 {
+                    let count = entry
+                        .hidden_params
+                        .iter()
+                        .filter(|param| param.subject == subject && param.purpose == HiddenParamPurposeArtifact::SpawnOutputIndex)
+                        .count();
+                    if count != 1 {
+                        return Err(TemplatePlanError::InvalidSpawnMetadata {
+                            entry: entry_id.clone(),
+                            message: format!(
+                                "spawn `{spawn}.{handle}` has {count} hidden params for {:?}, expected one",
+                                HiddenParamPurposeArtifact::SpawnOutputIndex
+                            ),
+                        });
+                    }
+                }
+
+                for (actor_expr, (spawn, handle)) in spawn_templates {
+                    let subject = HiddenParamSubjectArtifact::SpawnActor {
+                        spawn: spawn.to_string(),
+                        handle: handle.to_string(),
+                        actor: actor_expr.to_string(),
+                    };
+                    for purpose in [HiddenParamPurposeArtifact::TemplatePrefixBytes, HiddenParamPurposeArtifact::TemplateSuffixBytes] {
+                        let params = entry
+                            .hidden_params
+                            .iter()
+                            .filter(|param| {
+                                matches!(
+                                    &param.subject,
+                                    HiddenParamSubjectArtifact::SpawnActor { actor, .. } if actor == actor_expr
+                                ) && param.purpose == purpose
+                            })
+                            .collect::<Vec<_>>();
+                        if params.len() != 1 {
                             return Err(TemplatePlanError::InvalidSpawnMetadata {
                                 entry: entry_id.clone(),
-                                message: format!("spawn `{spawn}.{handle}` has {count} hidden params for {purpose:?}, expected one"),
+                                message: format!(
+                                    "spawn actor expression `{actor_expr}` has {} hidden params for {purpose:?}, expected one",
+                                    params.len()
+                                ),
+                            });
+                        }
+                        if params[0].subject != subject {
+                            return Err(TemplatePlanError::InvalidSpawnMetadata {
+                                entry: entry_id.clone(),
+                                message: format!(
+                                    "spawn actor expression `{actor_expr}` {purpose:?} must use first output `{spawn}.{handle}` as its subject"
+                                ),
                             });
                         }
                     }

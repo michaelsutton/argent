@@ -25,11 +25,9 @@ contract Controller(
         int left_value,
         int right_value,
         int gen__new_pair_left_output_idx,
-        byte[] gen__new_pair_left_prefix,
-        byte[] gen__new_pair_left_suffix,
         int gen__new_pair_right_output_idx,
-        byte[] gen__new_pair_right_prefix,
-        byte[] gen__new_pair_right_suffix
+        byte[] gen__spawn_self_pair_type_prefix,
+        byte[] gen__spawn_self_pair_type_suffix
     ) {
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -77,16 +75,16 @@ contract Controller(
         validateOutputStateWithTemplate(
             gen__new_pair_left_output_idx,
             left,
-            gen__new_pair_left_prefix,
-            gen__new_pair_left_suffix,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
             pair_type
         );
         // :: spawned become new_pair.right -> self.pair_type
         validateOutputStateWithTemplate(
             gen__new_pair_right_output_idx,
             right,
-            gen__new_pair_right_prefix,
-            gen__new_pair_right_suffix,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
             pair_type
         );
         // :: become Controller
