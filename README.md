@@ -257,6 +257,7 @@ What is still being built:
 
 Design notes can be found in [docs/argent-design.md](docs/argent-design.md).
 ICC semantics can be found in [docs/icc-semantics.md](docs/icc-semantics.md).
+Subtle generated-code security arguments are documented in [SECURITY.md](SECURITY.md).
 
 ## Contributing
 

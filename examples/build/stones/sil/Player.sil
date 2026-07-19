@@ -252,6 +252,10 @@ contract Player(
     }
 
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
+        // :: cov inputs
+        byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(gen__cov_id) == 1);
+
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
 

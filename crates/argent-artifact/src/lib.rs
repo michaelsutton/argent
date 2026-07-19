@@ -282,7 +282,24 @@ pub struct ActorArtifact {
     pub name: String,
     pub state: String,
     pub abi: ActorAbiRefArtifact,
+    /// Present when this actor is trusted as covenant input zero by one or
+    /// more delegate entries. Every non-delegate entry must then constrain the
+    /// complete same-covenant input group to itself and its declared consumes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegate_leader: Option<DelegateLeaderArtifact>,
     pub entries: Vec<EntryArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegateLeaderArtifact {
+    /// Delegate entries whose first consumed actor is this leader.
+    pub delegated_by: Vec<DelegatingEntryArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DelegatingEntryArtifact {
+    pub actor: String,
+    pub entry: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1973,6 +1990,7 @@ mod tests {
                         name: actor.to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: actor.to_string() },
+                        delegate_leader: None,
                         entries: Vec::new(),
                     })
                     .collect(),
@@ -2033,12 +2051,14 @@ mod tests {
                         name: "Mux".to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Mux".to_string() },
+                        delegate_leader: None,
                         entries: Vec::new(),
                     },
                     ActorArtifact {
                         name: "Player".to_string(),
                         state: "PlayerState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Player".to_string() },
+                        delegate_leader: None,
                         entries: Vec::new(),
                     },
                 ],

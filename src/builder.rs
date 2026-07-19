@@ -1069,6 +1069,25 @@ mod tests {
             .covenant_utxo("Player", initial_b.clone(), input_b_value, 0, false, Some(covenant_id))
             .expect("player B utxo builds");
         let entries = vec![player_a_utxo.clone(), player_b_utxo.clone()];
+
+        let undeclared_delegate = TxContext::new()
+            .argent_input("Player", initial_a.clone(), EntryCall::new("retire"), outpoint_a, player_a_utxo.clone(), 0)
+            .argent_input("Player", initial_b.clone(), EntryCall::new("accept_start"), outpoint_b, player_b_utxo.clone(), 0);
+        let err = builder.build(&undeclared_delegate).expect_err("standalone leader entry must reject an undeclared delegate");
+        assert!(
+            matches!(
+                err,
+                BuilderError::DelegateLeaderInputCountMismatch {
+                    input_index: 0,
+                    expected: 1,
+                    found: 2,
+                    ref delegated_by,
+                    ..
+                } if delegated_by == &["Player::accept_start"]
+            ),
+            "unexpected error: {err}"
+        );
+
         let context = TxContext::new()
             .argent_input(
                 "Player",

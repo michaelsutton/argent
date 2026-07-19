@@ -351,6 +351,17 @@ pub enum BuilderError {
     MissingArgentInputCovenantId { input_index: usize, actor: String },
     #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
     ArgentInputScriptMismatch { input_index: usize, actor: String },
+    #[error(
+        "Argent input {input_index} `{actor}::{entry}` requires exactly {expected} same-covenant inputs, found {found}; actor is a delegate leader for {delegated_by:?}"
+    )]
+    DelegateLeaderInputCountMismatch {
+        input_index: usize,
+        actor: String,
+        entry: String,
+        expected: usize,
+        found: usize,
+        delegated_by: Vec<String>,
+    },
     #[error("failed to build arguments for Argent input {input_index} `{actor}::{entry}`: {source}")]
     EntryArgsCallback {
         input_index: usize,
@@ -443,6 +454,7 @@ struct ContractRef<'a> {
     contract: &'a SilContractArtifact,
 }
 
+#[derive(Clone, Copy)]
 struct ActorRef<'a> {
     artifact: &'a Artifact,
     actor: &'a ActorArtifact,
@@ -1110,11 +1122,6 @@ impl<'a> TxBuilder<'a> {
             .find(|actor| actor.name == name)
             .map(|actor| ActorRef { artifact, actor })
             .ok_or_else(|| BuilderError::UnknownActor(name.to_string()))
-    }
-
-    fn entry_ref_in_artifact(&self, artifact: &'a Artifact, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {
-        let actor_ref = self.argent_actor_ref_in_artifact(artifact, actor_name)?;
-        self.entry_ref_for_actor(actor_ref, actor_name, entry_name)
     }
 
     fn entry_ref_for_actor(&self, actor_ref: ActorRef<'a>, actor_name: &str, entry_name: &str) -> BuilderResult<&'a EntryArtifact> {

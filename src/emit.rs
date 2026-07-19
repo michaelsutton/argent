@@ -220,6 +220,30 @@ impl<'a> Model<'a> {
         self.route_families.iter().filter(|family| family.state == state).collect()
     }
 
+    fn delegate_leader_reasons(&self, leader: &str) -> Vec<DelegatingEntryArtifact> {
+        self.actors
+            .iter()
+            .flat_map(|actor| {
+                actor
+                    .entries
+                    .iter()
+                    .filter(move |entry| {
+                        entry.kind == EntryKind::Delegate && entry.consumes.first().is_some_and(|consume| consume.actor == leader)
+                    })
+                    .map(|entry| DelegatingEntryArtifact { actor: actor.name.clone(), entry: entry.name.clone() })
+            })
+            .collect()
+    }
+
+    fn is_delegate_leader(&self, actor: &str) -> bool {
+        self.actors.iter().any(|candidate| {
+            candidate
+                .entries
+                .iter()
+                .any(|entry| entry.kind == EntryKind::Delegate && entry.consumes.first().is_some_and(|consume| consume.actor == actor))
+        })
+    }
+
     fn template_selectors_for_entry(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<BTreeMap<String, TemplateSelector>> {
         template_selectors_for_entry(actor, entry, &self.actor_enums)
     }
@@ -432,6 +456,13 @@ impl<'a> Model<'a> {
     fn validate_entry(&self, actor: &ActorDecl, entry: &EntryDecl, template_actor_set: &BTreeSet<String>) -> Result<()> {
         self.validate_observes(actor, entry)?;
         self.validate_spawns(actor, entry)?;
+
+        if entry.kind == EntryKind::Delegate && entry.consumes.is_empty() {
+            return Err(ArgentError::new(format!(
+                "delegate `{}::{}` must declare its leader as the first `consumes` actor",
+                actor.name, entry.name
+            )));
+        }
 
         for consume in &entry.consumes {
             self.require_template_actor(
@@ -1749,7 +1780,12 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         out.push('\n');
     }
 
-    if !entry.consumes.is_empty() {
+    // A delegate authenticates its leader by reading covenant input zero with
+    // the leader's static template. Once an actor is trusted in that role, all
+    // of its non-delegate entries must reject undeclared same-covenant inputs;
+    // otherwise an unrelated entry could be mistaken for the coordinated one.
+    let closes_delegate_leader_group = entry.kind == EntryKind::Leader && model.is_delegate_leader(&actor.name);
+    if !entry.consumes.is_empty() || closes_delegate_leader_group {
         out.push_str("        // :: cov inputs\n");
         let cov_id = hidden_cov_id_name();
         out.push_str(&format!("        byte[32] {cov_id} = OpInputCovenantId(this.activeInputIndex);\n"));
@@ -1757,7 +1793,9 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             EntryKind::Leader => {
                 let count = entry.consumes.len() + 1;
                 out.push_str(&format!("        require(OpCovInputCount({cov_id}) == {count});\n"));
-                out.push_str(&format!("        require(OpCovInputIdx({cov_id}, 0) == this.activeInputIndex);\n"));
+                if !entry.consumes.is_empty() {
+                    out.push_str(&format!("        require(OpCovInputIdx({cov_id}, 0) == this.activeInputIndex);\n"));
+                }
             }
             EntryKind::Delegate => {
                 let min_count = entry.consumes.len() + 1;
@@ -4689,11 +4727,13 @@ fn route_template_proofs_artifact(
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
     let entries = actor.entries.iter().map(|entry| entry_artifact(actor, entry, model)).collect::<Result<Vec<_>>>()?;
+    let delegated_by = model.delegate_leader_reasons(&actor.name);
 
     Ok(ActorArtifact {
         name: actor.name.clone(),
         state: actor.state.clone(),
         abi: ActorAbiRefArtifact { actor: actor.name.clone() },
+        delegate_leader: (!delegated_by.is_empty()).then_some(DelegateLeaderArtifact { delegated_by }),
         entries,
     })
 }
@@ -6388,12 +6428,106 @@ mod tests {
     fn rejects_delegate_become() {
         let mut program = test_program();
         program.modules[0].actors[0].entries[0].kind = EntryKind::Delegate;
+        program.modules[0].actors[0].entries[0].consumes.push(ConsumeDecl { name: "leader".to_string(), actor: "Player".to_string() });
         program.modules[0].actors[0].entries[0].emits = EmitSpec::None;
         program.modules[0].actors[0].entries[0].routes =
             vec![RouteCall { output: Some("next".to_string()), actor: "Player".to_string(), state: "next_player".to_string() }];
 
         let err = Model::from_program(&program).expect_err("delegate become must be rejected");
         assert!(err.to_string().contains("cannot use `become`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_delegate_without_a_declared_leader() {
+        let err = parse_and_validate(
+            r#"
+            state WorkerState {}
+
+            actor Worker owns WorkerState {
+                delegate assist() {
+                    require(1 == 1);
+                }
+            }
+
+            app Test {
+                actor Worker;
+            }
+            "#,
+        )
+        .expect_err("delegates must name a leader");
+
+        assert!(err.to_string().contains("must declare its leader as the first `consumes` actor"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn delegate_leaders_close_all_non_delegate_input_groups() {
+        let source = r#"
+            state LeaderState {
+                int value;
+            }
+
+            state WorkerState {
+                int value;
+            }
+
+            state UnrelatedState {
+                int value;
+            }
+
+            actor Leader owns LeaderState {
+                entry standalone() emits one Leader {
+                    become Leader(self.state);
+                }
+
+                entry coordinated() consumes {
+                    worker: Worker;
+                } emits one Leader {
+                    require(worker.value >= 0);
+                    become Leader(self.state);
+                }
+            }
+
+            actor Worker owns WorkerState {
+                delegate assist() consumes {
+                    leader: Leader;
+                } {
+                    require(leader.value >= 0);
+                }
+            }
+
+            actor Unrelated owns UnrelatedState {
+                entry standalone() emits one Unrelated {
+                    become Unrelated(self.state);
+                }
+            }
+
+            app Test {
+                actor Leader;
+                actor Worker;
+                actor Unrelated;
+            }
+        "#;
+        let path = PathBuf::from("test.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+
+        let leader_sil = emit_actor(model.actor("Leader").expect("Leader exists"), &model).expect("Leader emits");
+        assert!(leader_sil.contains("require(OpCovInputCount(gen__cov_id) == 1);"), "{leader_sil}");
+        assert!(leader_sil.contains("require(OpCovInputCount(gen__cov_id) == 2);"), "{leader_sil}");
+
+        let unrelated_sil = emit_actor(model.actor("Unrelated").expect("Unrelated exists"), &model).expect("Unrelated emits");
+        assert!(!unrelated_sil.contains("OpCovInputCount"), "{unrelated_sil}");
+
+        let actor_sil = actor_sil_for_model(&model);
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
+        let leader = artifact.argent.actors.iter().find(|actor| actor.name == "Leader").expect("Leader artifact exists");
+        assert_eq!(
+            leader.delegate_leader.as_ref().map(|leader| &leader.delegated_by),
+            Some(&vec![DelegatingEntryArtifact { actor: "Worker".to_string(), entry: "assist".to_string() }])
+        );
+        let unrelated = artifact.argent.actors.iter().find(|actor| actor.name == "Unrelated").expect("Unrelated artifact exists");
+        assert_eq!(unrelated.delegate_leader, None);
     }
 
     #[test]
