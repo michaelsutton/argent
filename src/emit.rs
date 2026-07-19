@@ -1854,7 +1854,8 @@ fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
     }
 
     out.push_str("        // :: genesis covenants\n");
-    for (spawn_index, spawn) in entry.spawns.iter().enumerate() {
+    let mut previous_first_output_idx = None;
+    for spawn in &entry.spawns {
         let preimage = hidden_spawn_preimage_name(&spawn.name);
         out.push_str(&format!("        byte[] {preimage} =\n"));
         out.push_str("            OpOutpointTxId(this.activeInputIndex)\n");
@@ -1873,12 +1874,17 @@ fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
             ));
         }
         out.push_str(&format!("        byte[32] {} = blake2bWithKey({preimage}, bytes(\"CovenantID\"));\n", spawn.covenant));
-        for previous in &entry.spawns[..spawn_index] {
-            out.push_str(&format!("        require({} != {});\n", spawn.covenant, previous.covenant));
-        }
         let first_output = spawn.outputs.first().expect("spawn outputs checked during model validation");
         let first_output_idx = hidden_spawn_output_idx_name(&spawn.name, &first_output.name);
+        if let Some(previous_first_output_idx) = &previous_first_output_idx {
+            // Each first index is committed by its reconstructed genesis covenant ID. Strict ordering therefore proves
+            // that adjacent spawn groups, and transitively all spawn groups, are distinct under collision resistance.
+            out.push_str(&format!("        require({previous_first_output_idx} < {first_output_idx});\n"));
+        }
+        // Consensus derives a genesis covenant ID from the complete output group carrying that ID. Matching one member
+        // proves that the reconstructed preimage contains the complete group; checking the remaining members is redundant.
         out.push_str(&format!("        require(OpOutputCovenantId({first_output_idx}) == {});\n", spawn.covenant));
+        previous_first_output_idx = Some(first_output_idx);
     }
     out.push('\n');
     Ok(())
@@ -8612,7 +8618,7 @@ mod tests {
     }
 
     #[test]
-    fn genesis_spawn_groups_must_have_distinct_covenant_ids() {
+    fn genesis_spawn_groups_must_follow_first_output_order() {
         let source = r#"
             state PairState {
                 int value;
@@ -8655,7 +8661,7 @@ mod tests {
         let program = Program { root: path, modules: vec![module] };
         let model = Model::from_program(&program).expect("model validates");
         let sil = emit_actor(model.actor("Launcher").expect("launcher exists"), &model).expect("Launcher emits");
-        assert!(sil.contains("require(second_id != first_id);"), "{sil}");
+        assert!(sil.contains("require(gen__first_pair_output_idx < gen__second_pair_output_idx);"), "{sil}");
         let actor_sil = actor_sil_for_model(&model);
         emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
     }

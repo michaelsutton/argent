@@ -63,7 +63,7 @@ contract Controller(
             + bytes(35, 8)
             + OpTxOutputSpkSubstr(gen__second_pair_pair_output_idx, 2, 37);
         byte[32] second_pair_id = blake2bWithKey(gen__second_pair_genesis_preimage, bytes("CovenantID"));
-        require(second_pair_id != first_pair_id);
+        require(gen__first_pair_left_output_idx < gen__second_pair_pair_output_idx);
         require(OpOutputCovenantId(gen__second_pair_pair_output_idx) == second_pair_id);
 
         PairState first_left = {
