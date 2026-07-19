@@ -777,15 +777,11 @@ mod tests {
             .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
             .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
             .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000);
-        let err = builder.build(&reversed_groups).expect_err("the first spawn must bind the first genesis group");
+        let err = builder.build(&reversed_groups).expect_err("spawn groups must remain in declaration order");
         assert!(
             matches!(
                 err,
-                BuilderError::MissingSpawnOutput {
-                    ref spawn,
-                    ref handle,
-                    group_index: 1,
-                } if spawn == "first_pair" && handle == "right"
+                BuilderError::MissingSpawnGroup { ref spawn } if spawn == "second_pair"
             ),
             "unexpected error: {err}"
         );
@@ -807,14 +803,85 @@ mod tests {
         assert!(
             matches!(
                 err,
-                BuilderError::MissingSpawnActorMetadata {
-                    ref spawn,
-                    ref handle,
-                    index: 3,
-                } if spawn == "first_pair" && handle == "right"
+                BuilderError::MissingSpawnGroup { ref spawn } if spawn == "first_pair"
             ),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn context_matches_spawn_groups_as_an_ordered_subset() {
+        let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
+        let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-subset-spawns-controller");
+        let pair_artifact = selected_app_artifact(source, "PairApp", "context-subset-spawns-pair");
+        let bundle = ArtifactBundle::named("controller_app", &controller_artifact)
+            .expect("controller bundle builds")
+            .with_app("pair_app", &pair_artifact)
+            .expect("pair app attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
+
+        let controller_id = Hash::from_bytes([0x91; 32]);
+        let controller_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x92; 32]), 8);
+        let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
+        let controller_state = state! { pair_type: pair_type.clone(), launches: 0 };
+        let next_controller_state = state! { pair_type: pair_type, launches: 3 };
+        let first_left_state = state! { value: 11 };
+        let first_right_state = state! { value: 12 };
+        let second_state = state! { value: 21 };
+        let third_left_state = state! { value: 31 };
+        let third_right_state = state! { value: 32 };
+        let controller_utxo = builder
+            .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
+            .expect("controller UTXO builds");
+
+        let extra_left =
+            builder.genesis_output("controller_app::Controller", controller_state.clone(), 100).expect("extra left output builds");
+        let extra_right =
+            builder.genesis_output("controller_app::Controller", controller_state.clone(), 200).expect("extra right output builds");
+        let unrelated_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let extra_middle = TransactionOutput::new(300, unrelated_spk.clone());
+        let first_left = builder.genesis_output("pair_app::Pair", first_left_state.clone(), 2_000).expect("first left output builds");
+        let first_right =
+            builder.genesis_output("pair_app::Pair", first_right_state.clone(), 2_000).expect("first right output builds");
+        let second = builder.genesis_output("pair_app::Pair", second_state.clone(), 3_000).expect("second output builds");
+        let third_left = builder.genesis_output("pair_app::Pair", third_left_state.clone(), 2_000).expect("third left output builds");
+        let third_right =
+            builder.genesis_output("pair_app::Pair", third_right_state.clone(), 2_000).expect("third right output builds");
+
+        // Two unrelated genesis groups precede or separate the three declared groups:
+        // a same-size group of the wrong Argent actor at [1,3], and an ordinary
+        // output at [4]. The declared groups are first=[2,5], second=[6], third=[7,8].
+        let extra_first_id = covenant_id(controller_outpoint, [(1, &extra_left), (3, &extra_right)].into_iter());
+        let first_id = covenant_id(controller_outpoint, [(2, &first_left), (5, &first_right)].into_iter());
+        let extra_middle_id = covenant_id(controller_outpoint, [(4, &extra_middle)].into_iter());
+        let second_id = covenant_id(controller_outpoint, [(6, &second)].into_iter());
+        let third_id = covenant_id(controller_outpoint, [(7, &third_left), (8, &third_right)].into_iter());
+
+        let context = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                controller_state.clone(),
+                EntryCall::new("launch").args(args![11, 12, 21, 31, 32]),
+                controller_outpoint,
+                controller_utxo,
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output(
+                "controller_app::Controller",
+                controller_state.clone(),
+                CovenantBinding::new(0, extra_first_id),
+                extra_left.value,
+            )
+            .argent_output("pair_app::Pair", first_left_state, CovenantBinding::new(0, first_id), first_left.value)
+            .argent_output("controller_app::Controller", controller_state, CovenantBinding::new(0, extra_first_id), extra_right.value)
+            .output(unrelated_spk, Some(CovenantBinding::new(0, extra_middle_id)), extra_middle.value)
+            .argent_output("pair_app::Pair", first_right_state, CovenantBinding::new(0, first_id), first_right.value)
+            .argent_output("pair_app::Pair", second_state, CovenantBinding::new(0, second_id), second.value)
+            .argent_output("pair_app::Pair", third_left_state, CovenantBinding::new(0, third_id), third_left.value)
+            .argent_output("pair_app::Pair", third_right_state, CovenantBinding::new(0, third_id), third_right.value);
+
+        builder.build(&context).expect("unrelated genesis groups are skipped while preserving declared spawn order");
     }
 
     #[test]

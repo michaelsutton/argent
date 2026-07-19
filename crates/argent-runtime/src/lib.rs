@@ -341,8 +341,8 @@ pub enum BuilderError {
     MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("spawn `{spawn}` has no genesis output `{handle}` at group index {group_index}")]
     MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
-    #[error("spawn `{spawn}` output `{handle}` at transaction index {index} has no Argent actor metadata")]
-    MissingSpawnActorMetadata { spawn: String, handle: String, index: usize },
+    #[error("spawn `{spawn}` has no compatible genesis output group")]
+    MissingSpawnGroup { spawn: String },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]

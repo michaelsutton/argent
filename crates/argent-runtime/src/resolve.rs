@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use argent_artifact::{
     CovenantIdSourceArtifact, EntryArtifact, ObserveArtifact, ObservedActorArtifact, SilContractArtifact, SilEntryArtifact,
+    SpawnArtifact,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -18,11 +19,17 @@ use crate::{
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
+type ResolvedSpawnActors = BTreeMap<(String, String), SpawnedActorContext>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResolvedEntryArgs {
     values: Vec<ArtifactValue>,
     template_selectors: BTreeMap<String, String>,
+}
+
+#[derive(Default)]
+struct GenesisGroup {
+    output_indices: Vec<usize>,
 }
 
 /// Artifact-bound working representation of a [`TxContext`].
@@ -54,7 +61,7 @@ struct ResolveArgentInput<'artifact, 'context, 'args> {
     sil_entry: &'artifact SilEntryArtifact,
     args: Option<ResolvedEntryArgs>,
     observations: Option<ResolvedObservations>,
-    spawned_actors: Option<BTreeMap<(String, String), SpawnedActorContext>>,
+    spawned_actors: Option<ResolvedSpawnActors>,
     hidden_args: Option<Vec<ArtifactValue>>,
 }
 
@@ -311,64 +318,73 @@ impl<'artifact> TxBuilder<'artifact> {
             };
 
             let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
-            let mut genesis_groups = Vec::new();
-            let mut genesis_group_indices = BTreeMap::new();
-            for (transaction_index, output) in context.outputs.iter().enumerate() {
-                let binding = match output {
-                    ResolveOutput::Argent(output) => Some(output.source.covenant),
-                    ResolveOutput::Ordinary(output) => output.covenant,
-                };
-                let Some(binding) = binding else {
-                    continue;
-                };
-                if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
-                    continue;
-                }
-                let group_index = genesis_group_indices.get(&binding.covenant_id).copied().unwrap_or_else(|| {
-                    genesis_groups.push((binding.covenant_id, Vec::new()));
-                    let index = genesis_groups.len() - 1;
-                    genesis_group_indices.insert(binding.covenant_id, index);
-                    index
-                });
-                genesis_groups[group_index].1.push((transaction_index, output));
-            }
+            let genesis_groups = collect_genesis_groups(context, input_index, input_covenant_id);
             let mut spawned_actors = BTreeMap::new();
-            // Spawn declarations pair with genesis groups by first output order;
-            // handles within a spawn pair with that group's outputs in global order.
-            for (spawn_index, spawn) in input.argent_entry.spawns.iter().enumerate() {
-                let group = genesis_groups.get(spawn_index).map(|(_, outputs)| outputs);
-                for output in &spawn.outputs {
-                    let Some((transaction_index, resolved_output)) =
-                        group.and_then(|outputs| outputs.get(output.group_index)).copied()
-                    else {
-                        return Err(BuilderError::MissingSpawnOutput {
-                            spawn: spawn.name.clone(),
-                            handle: output.name.clone(),
-                            group_index: output.group_index,
-                        });
+            let mut candidate_groups = genesis_groups.iter();
+            for spawn in &input.argent_entry.spawns {
+                let matched = loop {
+                    let Some(group) = candidate_groups.next() else {
+                        return Err(BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() });
                     };
-                    let ResolveOutput::Argent(resolved_output) = resolved_output else {
-                        return Err(BuilderError::MissingSpawnActorMetadata {
-                            spawn: spawn.name.clone(),
-                            handle: output.name.clone(),
-                            index: transaction_index,
-                        });
-                    };
-                    spawned_actors.insert(
-                        (spawn.name.clone(), output.name.clone()),
-                        SpawnedActorContext {
-                            app: resolved_output.app.clone(),
-                            actor: resolved_output.source.actor.actor.clone(),
-                            output_index: transaction_index,
-                        },
-                    );
-                }
+                    if let Some(matched) = self.match_spawn_group(context, input, spawn, group)? {
+                        break matched;
+                    }
+                };
+                spawned_actors.extend(matched);
             }
 
             let ResolveInput::Argent(input) = &mut context.inputs[input_index] else { unreachable!() };
             input.spawned_actors = Some(spawned_actors);
         }
         Ok(())
+    }
+
+    /// Test one concrete genesis group against a spawn declaration.
+    ///
+    /// A match requires the exact declared output count and, in declaration
+    /// order, Argent output metadata whose concrete actors expose the declared
+    /// `actor_type<State>` handles. State values remain the generated script's
+    /// responsibility. Logical mismatches may be skipped by the caller; invalid
+    /// source values or artifact data are returned as builder errors.
+    fn match_spawn_group(
+        &self,
+        context: &ResolveContext<'artifact, '_, '_>,
+        input: &ResolveArgentInput<'artifact, '_, '_>,
+        spawn: &SpawnArtifact,
+        group: &GenesisGroup,
+    ) -> BuilderResult<Option<ResolvedSpawnActors>> {
+        if group.output_indices.len() != spawn.outputs.len() {
+            return Ok(None);
+        }
+
+        let mut spawned_actors = BTreeMap::new();
+        for (output, &output_index) in spawn.outputs.iter().zip(&group.output_indices) {
+            let ResolveOutput::Argent(resolved_output) = &context.outputs[output_index] else {
+                return Ok(None);
+            };
+            let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
+            let found_handle =
+                match self.actor_type_handle_in_artifact(resolved_output.artifact, &resolved_output.source.actor.actor, &output.state)
+                {
+                    Ok(handle) => handle,
+                    Err(BuilderError::MissingActorTypeHandle { .. }) => {
+                        return Ok(None);
+                    }
+                    Err(error) => return Err(error),
+                };
+            if found_handle != expected_handle {
+                return Ok(None);
+            }
+            spawned_actors.insert(
+                (spawn.name.clone(), output.name.clone()),
+                SpawnedActorContext {
+                    app: resolved_output.app.clone(),
+                    actor: resolved_output.source.actor.actor.clone(),
+                    output_index,
+                },
+            );
+        }
+        Ok(Some(spawned_actors))
     }
 
     /// Resolve compiler-generated arguments from artifact-local routes and the
@@ -452,6 +468,62 @@ impl<'artifact> TxBuilder<'artifact> {
         execute_transaction_with_covenants(&mut transaction, entries)?;
         Ok(transaction)
     }
+}
+
+/// Collect genesis groups authorized by one input, following consensus's
+/// `(authorizing input, covenant ID)` grouping. Outputs within a group retain
+/// global transaction order; groups are ordered by their first output.
+fn collect_genesis_groups(context: &ResolveContext<'_, '_, '_>, input_index: usize, input_covenant_id: Hash) -> Vec<GenesisGroup> {
+    let mut groups = BTreeMap::<Hash, GenesisGroup>::new();
+    for (output_index, output) in context.outputs.iter().enumerate() {
+        let binding = match output {
+            ResolveOutput::Argent(output) => Some(output.source.covenant),
+            ResolveOutput::Ordinary(output) => output.covenant,
+        };
+        let Some(binding) = binding else {
+            continue;
+        };
+        if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
+            continue;
+        }
+        groups.entry(binding.covenant_id).or_default().output_indices.push(output_index);
+    }
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    groups.sort_by_key(|group| group.output_indices[0]);
+    groups
+}
+
+/// Resolve a spawn actor expression from the input's source state or user
+/// arguments into its concrete 32-byte actor-type handle.
+fn spawn_actor_type_handle(input: &ResolveArgentInput<'_, '_, '_>, actor: &str) -> BuilderResult<Vec<u8>> {
+    let args = input.args.as_ref().expect("argument resolution precedes spawn resolution");
+    let value = if let Some(field) = actor.strip_prefix("self.") {
+        input.source.state.get(field)
+    } else {
+        input
+            .sil_entry
+            .params
+            .iter()
+            .take(args.values.len())
+            .position(|param| param.name == actor)
+            .and_then(|index| args.values.get(index))
+            .or_else(|| input.source.state.get(actor))
+    };
+    let Some(ArtifactValue::Bytes(handle)) = value else {
+        return Err(BuilderError::InvalidTransition {
+            actor: input.source.actor.to_string(),
+            entry: input.source.entry.name.clone(),
+            message: format!("spawn actor expression `{actor}` does not resolve to an actor-type handle"),
+        });
+    };
+    if handle.len() != 32 {
+        return Err(BuilderError::InvalidTransition {
+            actor: input.source.actor.to_string(),
+            entry: input.source.entry.name.clone(),
+            message: format!("spawn actor expression `{actor}` resolved to {} bytes, expected 32", handle.len()),
+        });
+    }
+    Ok(handle.clone())
 }
 
 fn observed_covenant_id(input: &ArgentInput<'_>, args: &ResolvedEntryArgs, observe: &ObserveArtifact) -> BuilderResult<Hash> {
