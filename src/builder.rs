@@ -637,6 +637,107 @@ mod tests {
     }
 
     #[test]
+    fn context_pairs_multiple_spawn_clauses_with_genesis_groups_by_first_output() {
+        let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
+        let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-multiple-spawns-controller");
+        let pair_artifact = selected_app_artifact(source, "PairApp", "context-multiple-spawns-pair");
+        let bundle = ArtifactBundle::named("controller_app", &controller_artifact)
+            .expect("controller bundle builds")
+            .with_app("pair_app", &pair_artifact)
+            .expect("pair app attaches");
+        let builder = TxBuilder::from_bundle(&bundle).expect("builder accepts bundle");
+
+        let controller_id = Hash::from_bytes([0x81; 32]);
+        let controller_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x82; 32]), 7);
+        let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
+        let controller_state = state! { pair_type: pair_type.clone(), launches: 0 };
+        let next_controller_state = state! { pair_type: pair_type, launches: 2 };
+        let first_left_state = state! { value: 11 };
+        let first_right_state = state! { value: 12 };
+        let second_state = state! { value: 21 };
+        let controller_utxo = builder
+            .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
+            .expect("controller UTXO builds");
+        let first_left_output =
+            builder.genesis_output("pair_app::Pair", first_left_state.clone(), 2_000).expect("first left genesis output builds");
+        let first_right_output =
+            builder.genesis_output("pair_app::Pair", first_right_state.clone(), 2_000).expect("first right genesis output builds");
+        let second_output =
+            builder.genesis_output("pair_app::Pair", second_state.clone(), 3_000).expect("second genesis output builds");
+
+        // The first group occupies global outputs 1 and 3, while the second
+        // occupies output 2. Group identity, not adjacency, keeps each spawn together.
+        let first_pair_id = covenant_id(controller_outpoint, [(1, &first_left_output), (3, &first_right_output)].into_iter());
+        let second_pair_id = covenant_id(controller_outpoint, [(2, &second_output)].into_iter());
+        let context = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                controller_state.clone(),
+                EntryCall::new("launch").args(args![11, 12, 21]),
+                controller_outpoint,
+                controller_utxo.clone(),
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
+            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
+            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000);
+        builder.build(&context).expect("interleaved genesis groups resolve by first output order");
+
+        let reversed_groups = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                controller_state.clone(),
+                EntryCall::new("launch").args(args![11, 12, 21]),
+                controller_outpoint,
+                controller_utxo.clone(),
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
+            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
+            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000);
+        let err = builder.build(&reversed_groups).expect_err("the first spawn must bind the first genesis group");
+        assert!(
+            matches!(
+                err,
+                BuilderError::MissingSpawnOutput {
+                    ref spawn,
+                    ref handle,
+                    group_index: 1,
+                } if spawn == "first_pair" && handle == "right"
+            ),
+            "unexpected error: {err}"
+        );
+
+        let missing_metadata = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                controller_state,
+                EntryCall::new("launch").args(args![11, 12, 21]),
+                controller_outpoint,
+                controller_utxo,
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", first_left_state, CovenantBinding::new(0, first_pair_id), 2_000)
+            .argent_output("pair_app::Pair", second_state, CovenantBinding::new(0, second_pair_id), 3_000)
+            .output(first_right_output.script_public_key, Some(CovenantBinding::new(0, first_pair_id)), 2_000);
+        let err = builder.build(&missing_metadata).expect_err("spawn outputs must retain Argent actor metadata");
+        assert!(
+            matches!(
+                err,
+                BuilderError::MissingSpawnActorMetadata {
+                    ref spawn,
+                    ref handle,
+                    index: 3,
+                } if spawn == "first_pair" && handle == "right"
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
     fn context_builds_observed_co_spend_with_transaction_dependent_args() {
         let controller_artifact =
             example_artifact("tests/fixtures/runtime/context_signed_observed/controller.ag", "context-signed-observed-controller");

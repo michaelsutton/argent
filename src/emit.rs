@@ -8543,6 +8543,32 @@ mod tests {
     }
 
     #[test]
+    fn multiple_genesis_spawns_lower_to_pinned_sil_and_artifact_metadata() {
+        let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
+        let (controller_sil, controller_artifact) = emit_selected_fixture(source, "ControllerApp", "Controller");
+        assert_eq!(controller_sil, include_str!("../tests/fixtures/runtime/context_multiple_genesis_spawns/Controller.sil"));
+        let launch =
+            controller_artifact.argent.actors[0].entries.iter().find(|entry| entry.name == "launch").expect("launch entry exists");
+        assert_eq!(
+            launch
+                .spawns
+                .iter()
+                .map(|spawn| {
+                    (
+                        spawn.name.as_str(),
+                        spawn.outputs.iter().map(|output| (output.name.as_str(), output.group_index)).collect::<Vec<_>>(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            vec![("first_pair", vec![("left", 0), ("right", 1)]), ("second_pair", vec![("pair", 0)])]
+        );
+        controller_artifact.verify_template_plan().expect("multiple-spawn metadata verifies");
+
+        let (pair_sil, _) = emit_selected_fixture(source, "PairApp", "Pair");
+        assert_eq!(pair_sil, include_str!("../tests/fixtures/runtime/context_multiple_genesis_spawns/Pair.sil"));
+    }
+
+    #[test]
     fn genesis_spawn_groups_must_have_distinct_covenant_ids() {
         let source = r#"
             state PairState {
