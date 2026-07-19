@@ -32,6 +32,7 @@ mod tests {
         },
     };
     use kaspa_txscript::{opcodes::codes::OpTrue, parse_script, pay_to_script_hash_signature_script_with_flags};
+    use kaspa_txscript_errors::{CovenantsError, TxScriptError};
     use secp256k1::{Keypair, Secp256k1, SecretKey};
 
     static ARTIFACT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -620,7 +621,31 @@ mod tests {
             .argent_output("pair_app::Pair", right_pair_state.clone(), CovenantBinding::new(0, pair_id), 2_000);
         builder.build(&context).expect("generated genesis id matches rusty-kaspa");
 
+        let wrong_id = Hash::from_bytes([99; 32]);
         let wrong_context = TxContext::new()
+            .argent_input(
+                "controller_app::Controller",
+                state! { pair_type: builder.actor_type_handle("pair_app::Pair", "PairState").unwrap(), launches: 0 },
+                EntryCall::new("launch").args(args![42, 43]),
+                controller_outpoint,
+                controller_utxo.clone(),
+                0,
+            )
+            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
+            .argent_output("pair_app::Pair", left_pair_state.clone(), CovenantBinding::new(0, wrong_id), 2_000)
+            .output(unrelated_spk.clone(), None, 1_000)
+            .argent_output("pair_app::Pair", right_pair_state.clone(), CovenantBinding::new(0, wrong_id), 2_000);
+        let err = builder.build(&wrong_context).expect_err("a non-genesis covenant id must report the consensus failure");
+        assert!(
+            matches!(
+                err,
+                BuilderError::TxScript(TxScriptError::CovenantsError(CovenantsError::WrongGenesisCovenantId(0, found)))
+                    if found == wrong_id
+            ),
+            "unexpected error: {err}"
+        );
+
+        let invalid_authority = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
                 state! { pair_type: builder.actor_type_handle("pair_app::Pair", "PairState").unwrap(), launches: 0 },
@@ -630,10 +655,14 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", left_pair_state, CovenantBinding::new(0, Hash::from_bytes([99; 32])), 2_000)
+            .argent_output("pair_app::Pair", left_pair_state, CovenantBinding::new(1, pair_id), 2_000)
             .output(unrelated_spk, None, 1_000)
-            .argent_output("pair_app::Pair", right_pair_state, CovenantBinding::new(0, Hash::from_bytes([99; 32])), 2_000);
-        assert!(builder.build(&wrong_context).is_err(), "a non-genesis covenant id must fail in script");
+            .argent_output("pair_app::Pair", right_pair_state, CovenantBinding::new(1, pair_id), 2_000);
+        let err = builder.build(&invalid_authority).expect_err("an out-of-range authorizing input must report the consensus failure");
+        assert!(
+            matches!(err, BuilderError::TxScript(TxScriptError::CovenantsError(CovenantsError::AuthInputOutOfBounds(1, 1)))),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -764,6 +793,8 @@ mod tests {
             "generated Sil must reject an incomplete witnessed genesis group"
         );
 
+        let reversed_second_pair_id = covenant_id(controller_outpoint, [(1, &second_output)].into_iter());
+        let reversed_first_pair_id = covenant_id(controller_outpoint, [(2, &first_left_output), (3, &first_right_output)].into_iter());
         let reversed_groups = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
@@ -774,9 +805,9 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
-            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
-            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000);
+            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, reversed_second_pair_id), 3_000)
+            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, reversed_first_pair_id), 2_000)
+            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, reversed_first_pair_id), 2_000);
         let err = builder.build(&reversed_groups).expect_err("spawn groups must remain in declaration order");
         assert!(
             matches!(

@@ -10,7 +10,8 @@ use kaspa_consensus_core::{
     subnets::SubnetworkId,
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
 };
-use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
+use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
+use kaspa_txscript_errors::TxScriptError;
 
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
@@ -311,7 +312,12 @@ impl<'artifact> TxBuilder<'artifact> {
     }
 
     /// Resolve each declared spawn from the genesis groups authorized by this input.
-    fn resolve_context_spawns(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
+    /// Before reporting a missing group, prefer any canonical covenant-binding error.
+    fn resolve_context_spawns(
+        &self,
+        context: &mut ResolveContext<'artifact, '_, '_>,
+        unsigned: &MutableTransaction<Transaction>,
+    ) -> BuilderResult<()> {
         for input_index in 0..context.inputs.len() {
             let ResolveInput::Argent(input) = &context.inputs[input_index] else {
                 continue;
@@ -324,6 +330,9 @@ impl<'artifact> TxBuilder<'artifact> {
             for spawn in &input.argent_entry.spawns {
                 let matched = loop {
                     let Some(group) = candidate_groups.next() else {
+                        // A malformed binding may have hidden the intended group from this input.
+                        let verifiable = unsigned.as_verifiable();
+                        CovenantsContext::from_tx(&verifiable).map_err(TxScriptError::from)?;
                         return Err(BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() });
                     };
                     if let Some(matched) = self.match_spawn_group(context, input, spawn, group)? {
@@ -420,7 +429,7 @@ impl<'artifact> TxBuilder<'artifact> {
         let unsigned = self.unsigned_transaction(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context)?;
-        self.resolve_context_spawns(&mut context)?;
+        self.resolve_context_spawns(&mut context, &unsigned)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
 
