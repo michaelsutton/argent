@@ -637,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn context_orders_multiple_spawn_groups_and_rejects_group_reuse() {
+    fn context_orders_multiple_spawn_groups_and_rejects_invalid_witnesses() {
         let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
         let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-multiple-spawns-controller");
         let pair_artifact = selected_app_artifact(source, "PairApp", "context-multiple-spawns-pair");
@@ -695,43 +695,73 @@ mod tests {
             .argent_output("pair_app::Pair", third_right_state.clone(), CovenantBinding::new(0, third_pair_id), 2_000);
         let transaction = builder.build(&context).expect("interleaved genesis groups resolve by first output order");
 
-        // Security regression: bypass spawn resolution and invoke the generated Sil directly. The first and third clauses
-        // use identical actor types and states, while the malicious sigscript repeats the first group's indices for the
-        // third clause. The on-chain first-output ordering check must therefore reject the otherwise valid group reuse.
+        // Security regressions: bypass spawn resolution and invoke the generated Sil directly. The first and third clauses
+        // use identical actor types, states, and values, allowing malicious indices to reuse or substitute their outputs
+        // without failing template or state validation first.
         let controller_contract = controller_artifact.sil_abi.contract("Controller").expect("Controller contract exists");
         let launch_entry = controller_contract.entry("launch").expect("launch entry exists");
         let pair_template = &pair_artifact.sil_abi.contract("Pair").expect("Pair contract exists").compiled.template;
-        let reused_group_entry = encode_entry_sig_script(
-            &controller_artifact.sil_abi,
-            controller_contract,
-            launch_entry,
-            &[
-                ArtifactValue::Int(11),
-                ArtifactValue::Int(12),
-                ArtifactValue::Int(21),
-                ArtifactValue::Int(11),
-                ArtifactValue::Int(12),
-                ArtifactValue::Int(1),
-                ArtifactValue::Int(3),
-                ArtifactValue::Int(2),
-                ArtifactValue::Int(1),
-                ArtifactValue::Int(3),
-                ArtifactValue::Bytes(decode_hex(&pair_template.prefix_hex).expect("Pair prefix decodes")),
-                ArtifactValue::Bytes(decode_hex(&pair_template.suffix_hex).expect("Pair suffix decodes")),
-            ],
-        )
-        .expect("reused-group entry sigscript encodes");
-        let reused_group_sigscript = pay_to_script_hash_signature_script_with_flags(
-            p2sh_redeem_script(&transaction.inputs[0].signature_script),
-            reused_group_entry,
+        let pair_prefix = decode_hex(&pair_template.prefix_hex).expect("Pair prefix decodes");
+        let pair_suffix = decode_hex(&pair_template.suffix_hex).expect("Pair suffix decodes");
+        let redeem_script = p2sh_redeem_script(&transaction.inputs[0].signature_script);
+
+        // Hidden spawn indices select first=[1, 3], second=[2], and third=[1, 3], reusing the first group.
+        let reused_group_args = vec![
+            ArtifactValue::Int(11),
+            ArtifactValue::Int(12),
+            ArtifactValue::Int(21),
+            ArtifactValue::Int(11),
+            ArtifactValue::Int(12),
+            ArtifactValue::Int(1),
+            ArtifactValue::Int(3),
+            ArtifactValue::Int(2),
+            ArtifactValue::Int(1),
+            ArtifactValue::Int(3),
+            ArtifactValue::Bytes(pair_prefix.clone()),
+            ArtifactValue::Bytes(pair_suffix.clone()),
+        ];
+        let reused_group_entry_sigscript =
+            encode_entry_sig_script(&controller_artifact.sil_abi, controller_contract, launch_entry, &reused_group_args)
+                .expect("reused-group entry sigscript encodes");
+        let mut reused_group_tx = transaction.clone();
+        reused_group_tx.inputs[0].signature_script = pay_to_script_hash_signature_script_with_flags(
+            redeem_script.clone(),
+            reused_group_entry_sigscript,
             covenant_engine_flags(),
         )
         .expect("reused-group P2SH sigscript builds");
-        let mut reused_group_tx = transaction;
-        reused_group_tx.inputs[0].signature_script = reused_group_sigscript;
         assert!(
             execute_input_with_covenants(&reused_group_tx, vec![controller_utxo.clone()], 0).is_err(),
             "generated Sil must reject reusing the first genesis group for the third spawn clause"
+        );
+
+        // Replace the first group's real right output at index 3 with the equivalent third-group output at index 5.
+        // Ordering remains valid, so matching only the first output's ID must still reject the incomplete group preimage.
+        // Hidden spawn indices select first=[1, 5], second=[2], and third=[4, 5].
+        let incomplete_group_args = vec![
+            ArtifactValue::Int(11),
+            ArtifactValue::Int(12),
+            ArtifactValue::Int(21),
+            ArtifactValue::Int(11),
+            ArtifactValue::Int(12),
+            ArtifactValue::Int(1),
+            ArtifactValue::Int(5),
+            ArtifactValue::Int(2),
+            ArtifactValue::Int(4),
+            ArtifactValue::Int(5),
+            ArtifactValue::Bytes(pair_prefix),
+            ArtifactValue::Bytes(pair_suffix),
+        ];
+        let incomplete_group_entry_sigscript =
+            encode_entry_sig_script(&controller_artifact.sil_abi, controller_contract, launch_entry, &incomplete_group_args)
+                .expect("incomplete-group entry sigscript encodes");
+        let mut incomplete_group_tx = transaction;
+        incomplete_group_tx.inputs[0].signature_script =
+            pay_to_script_hash_signature_script_with_flags(redeem_script, incomplete_group_entry_sigscript, covenant_engine_flags())
+                .expect("incomplete-group P2SH sigscript builds");
+        assert!(
+            execute_input_with_covenants(&incomplete_group_tx, vec![controller_utxo.clone()], 0).is_err(),
+            "generated Sil must reject an incomplete witnessed genesis group"
         );
 
         let reversed_groups = TxContext::new()

@@ -1853,6 +1853,41 @@ fn emit_spawn_prelude(out: &mut String, entry: &EntryDecl) -> Result<()> {
         return Ok(());
     }
 
+    // Security
+    //
+    // Scripts cannot enumerate the genesis outputs authorized by an input, so each
+    // spawn clause receives its declared outputs' global indices as untrusted
+    // witnesses. The witnesses select outputs only; the active input outpoint and
+    // every selected output's value and script bytes are read directly from the
+    // transaction. Spawned actors are validated elsewhere as version-0 P2SH outputs
+    // with 35-byte scripts, so the generated preimage uses that fixed version and
+    // script length.
+    //
+    // For each clause, the generated code reconstructs the canonical consensus
+    // CovenantID preimage from:
+    // - the active input outpoint;
+    // - the statically declared output count;
+    // - the witnessed output indices, in declaration order;
+    // - the corresponding transaction-derived output data.
+    //
+    // Consensus independently derives each genesis covenant ID from the complete
+    // output group carrying that ID, ordered by global output index. Requiring the
+    // reconstructed ID to equal the ID carried by one selected output therefore
+    // proves, under hash collision resistance, that the witnessed sequence is
+    // exactly that complete group authorized by the active input. Omitting, adding,
+    // reordering, duplicating, or substituting an output changes the preimage.
+    // Checking the remaining group members' IDs would add no further proof.
+    //
+    // For multiple spawn clauses, the complete-group proof above means that the same
+    // group always has the same first output index. Requiring those indices to be
+    // strictly increasing binds source declaration order to runtime group order and
+    // prevents one group from satisfying more than one clause.
+    //
+    // This authenticates every declared spawn group because the application protocol
+    // may grant authority to the resulting covenant IDs, e.g. by registering them as
+    // authorized covenants over specific resources. It intentionally does not forbid
+    // additional undeclared genesis groups, since their covenant IDs receive no such
+    // authority from the protocol.
     out.push_str("        // :: genesis covenants\n");
     let mut previous_first_output_idx = None;
     for spawn in &entry.spawns {
