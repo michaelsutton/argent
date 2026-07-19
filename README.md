@@ -117,6 +117,8 @@ Core terms:
 - `emits` declares the authorized output handles for an entrypoint.
 - `become` is the terminal transition into successor actor state.
 - `observes` declares a foreign covenant view for ICC.
+- `spawns` declares a genesis covenant output group and binds its generated
+  covenant id.
 - `actor_type<State>` identifies a runtime-selected actor implementation
   compatible with `State`.
 - `actor enum` defines a closed set of runtime-selected actor targets.

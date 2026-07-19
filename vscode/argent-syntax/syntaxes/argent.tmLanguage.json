@@ -24,7 +24,7 @@
       "patterns": [
         {
           "name": "keyword.control.argent",
-          "match": "\\b(become|consumes|emits|observes|return)\\b"
+          "match": "\\b(become|consumes|emits|observes|return|spawns)\\b"
         },
         {
           "name": "keyword.declaration.argent",

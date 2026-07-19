@@ -9,6 +9,8 @@
 //! families, or hidden-field roles into `silverscript-abi`. Store them here as
 //! metadata that points at Sil ABI contract and field names.
 
+mod verify_spawns;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -301,10 +303,27 @@ pub struct EntryArtifact {
     pub template_selectors: Vec<TemplateSelectorArtifact>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observes: Vec<ObserveArtifact>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spawns: Vec<SpawnArtifact>,
     pub witnesses: Vec<WitnessArtifact>,
     pub consumes: Vec<ConsumeArtifact>,
     pub emits: EmitArtifact,
     pub routes: Vec<RouteArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnArtifact {
+    pub name: String,
+    pub covenant: String,
+    pub outputs: Vec<SpawnOutputArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnOutputArtifact {
+    pub name: String,
+    pub actor: String,
+    pub state: String,
+    pub group_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,6 +396,7 @@ pub struct HiddenParamArtifact {
 pub enum HiddenParamSubjectArtifact {
     Actor { actor: String },
     ObservedActor { observe: String, side: ObservedActorSideArtifact, handle: String, actor: String },
+    SpawnActor { spawn: String, handle: String, actor: String },
     ObservedOutputField { observe: String, handle: String, state: String, field: String },
     RouteFamily { family_id: String },
     TemplateSelector { selector: String },
@@ -393,6 +413,7 @@ pub enum ObservedActorSideArtifact {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HiddenParamPurposeArtifact {
+    SpawnOutputIndex,
     TemplatePrefixBytes,
     TemplateSuffixBytes,
     TemplatePrefixLen,
@@ -568,6 +589,8 @@ pub enum TemplatePlanError {
     MissingEntryWitnessRecipe { entry: String, param: String, recipe_id: String },
     #[error("entry witness `{entry}::{param}` does not match witness recipe `{recipe_id}`")]
     EntryWitnessRecipeMismatch { entry: String, param: String, recipe_id: String },
+    #[error("spawn metadata for `{entry}` is invalid: {message}")]
+    InvalidSpawnMetadata { entry: String, message: String },
     #[error("route `{entry}` to actor `{actor}` points at missing template receipt `{template_id}`")]
     MissingRouteTemplate { entry: String, actor: String, template_id: String },
     #[error("route `{entry}` to actor `{actor}` points at template receipt `{template_id}` for actor `{template_actor}`")]
@@ -589,9 +612,18 @@ pub enum ArtifactIdentityError {
 }
 
 impl TemplatePlanArtifact {
+    /// Verifies that this template plan is a complete and internally consistent
+    /// coordination view of the containing artifact.
+    ///
+    /// The Sil ABI is authoritative for compiled templates and runtime layouts.
+    /// This validates that template receipts, actor-type handles, route metadata,
+    /// spawn groups, and witness recipes agree with that ABI and with each other,
+    /// so the runtime can resolve hidden arguments without relying on dangling,
+    /// ambiguous, or stale metadata.
     pub fn verify(&self, artifact: &Artifact) -> std::result::Result<(), TemplatePlanError> {
         use std::collections::{BTreeMap, BTreeSet};
 
+        // TODO: Extract template receipt and actor-type handle verification into dedicated helpers.
         let mut template_ids = BTreeSet::new();
         let mut templates_by_id = BTreeMap::new();
         for template in &self.templates {
@@ -651,6 +683,7 @@ impl TemplatePlanArtifact {
 
         let actor_states =
             artifact.argent.actors.iter().map(|actor| (actor.name.as_str(), actor.state.as_str())).collect::<BTreeMap<_, _>>();
+        // TODO: Extract route-family membership and anchor verification into dedicated helpers.
         let mut route_family_ids = BTreeSet::new();
         let mut route_families_by_id = BTreeMap::new();
         for family in &self.route_families {
@@ -702,6 +735,7 @@ impl TemplatePlanArtifact {
 
         let sil_contracts_by_name =
             artifact.sil_abi.contracts.iter().map(|contract| (contract.name.as_str(), contract)).collect::<BTreeMap<_, _>>();
+        // TODO: Extract runtime-state field-role verification into dedicated helpers.
         let mut runtime_states_by_contract = BTreeMap::new();
         for runtime_state in &self.runtime_states {
             if runtime_states_by_contract.insert(runtime_state.contract.as_str(), runtime_state).is_some() {
@@ -738,6 +772,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract route-table structure and template-reference verification into dedicated helpers.
         let mut route_table_ids = BTreeSet::new();
         let mut route_tables_by_id = BTreeMap::new();
         for table in &self.route_tables {
@@ -811,6 +846,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract runtime-state-to-route-table binding verification into dedicated helpers.
         let mut referenced_route_table_ids = BTreeSet::new();
         for runtime_state in &self.runtime_states {
             let contract = sil_contracts_by_name
@@ -888,6 +924,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract route-proof and route-family table verification into dedicated helpers.
         let mut route_proof_ids = BTreeSet::new();
         let mut route_proofs_by_id = BTreeMap::new();
         for proof in &self.route_proofs {
@@ -954,6 +991,7 @@ impl TemplatePlanArtifact {
             }
         }
 
+        // TODO: Extract witness recipe registry verification into dedicated helpers.
         let mut recipe_ids = BTreeSet::new();
         let mut recipes_by_id = BTreeMap::new();
         for recipe in &self.witness_recipes {
@@ -980,6 +1018,7 @@ impl TemplatePlanArtifact {
                     }
                 }
                 HiddenParamSubjectArtifact::ObservedActor { .. } => {}
+                HiddenParamSubjectArtifact::SpawnActor { .. } => {}
                 HiddenParamSubjectArtifact::ObservedOutputField { .. } => {}
                 HiddenParamSubjectArtifact::RouteFamily { family_id } => {
                     if !route_families_by_id.contains_key(family_id.as_str()) {
@@ -1003,10 +1042,13 @@ impl TemplatePlanArtifact {
             recipes_by_id.insert(recipe.id.as_str(), recipe);
         }
 
+        // TODO: Extract generic per-entry recipe, witness, and route verification into dedicated helpers.
         for actor in &artifact.argent.actors {
             for entry in &actor.entries {
                 let entry_id = format!("{}::{}", actor.name, entry.name);
                 let entry_recipe_ids = entry.hidden_params.iter().map(|param| param.recipe_id.as_str()).collect::<BTreeSet<_>>();
+
+                verify_spawns::verify_entry_spawns(&entry_id, entry)?;
 
                 for param in &entry.hidden_params {
                     let Some(recipe) = recipes_by_id.get(param.recipe_id.as_str()) else {

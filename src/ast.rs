@@ -87,10 +87,25 @@ pub struct EntryDecl {
     pub params: Vec<ParamDecl>,
     pub consumes: Vec<ConsumeDecl>,
     pub observes: Vec<ObserveDecl>,
+    pub spawns: Vec<SpawnDecl>,
     pub emits: EmitSpec,
     pub body: String,
     pub routes: Vec<RouteCall>,
     pub terminal_route_sets: Vec<Vec<RouteCall>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnDecl {
+    pub name: String,
+    pub covenant: String,
+    pub outputs: Vec<SpawnOutputDecl>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SpawnOutputDecl {
+    pub name: String,
+    pub actor: String,
+    pub group_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

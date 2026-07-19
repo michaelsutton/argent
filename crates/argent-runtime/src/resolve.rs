@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use argent_artifact::{
     CovenantIdSourceArtifact, EntryArtifact, ObserveArtifact, ObservedActorArtifact, SilContractArtifact, SilEntryArtifact,
+    SpawnArtifact,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -9,20 +10,27 @@ use kaspa_consensus_core::{
     subnets::SubnetworkId,
     tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
 };
-use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
+use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
+use kaspa_txscript_errors::TxScriptError;
 
 use crate::{
     ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
-    ContractRef, EntryArgs, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OrdinaryOutput,
-    Side, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    ContractRef, EntryArgs, HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput,
+    OrdinaryOutput, Side, SpawnedActorContext, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
+type ResolvedSpawnActors = BTreeMap<(String, String), SpawnedActorContext>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ResolvedEntryArgs {
     values: Vec<ArtifactValue>,
     template_selectors: BTreeMap<String, String>,
+}
+
+#[derive(Default)]
+struct GenesisGroup {
+    output_indices: Vec<usize>,
 }
 
 /// Artifact-bound working representation of a [`TxContext`].
@@ -54,6 +62,7 @@ struct ResolveArgentInput<'artifact, 'context, 'args> {
     sil_entry: &'artifact SilEntryArtifact,
     args: Option<ResolvedEntryArgs>,
     observations: Option<ResolvedObservations>,
+    spawned_actors: Option<ResolvedSpawnActors>,
     hidden_args: Option<Vec<ArtifactValue>>,
 }
 
@@ -112,6 +121,7 @@ impl<'artifact> TxBuilder<'artifact> {
                         sil_entry,
                         args: None,
                         observations: None,
+                        spawned_actors: None,
                         hidden_args: None,
                     }));
                 }
@@ -301,6 +311,91 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
+    /// Resolve each declared spawn from the genesis groups authorized by this input.
+    /// Before reporting a missing group, prefer any canonical covenant-binding error.
+    fn resolve_context_spawns(
+        &self,
+        context: &mut ResolveContext<'artifact, '_, '_>,
+        unsigned: &MutableTransaction<Transaction>,
+    ) -> BuilderResult<()> {
+        for input_index in 0..context.inputs.len() {
+            let ResolveInput::Argent(input) = &context.inputs[input_index] else {
+                continue;
+            };
+
+            let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
+            let genesis_groups = collect_genesis_groups(context, input_index, input_covenant_id);
+            let mut spawned_actors = BTreeMap::new();
+            let mut candidate_groups = genesis_groups.iter();
+            for spawn in &input.argent_entry.spawns {
+                let matched = loop {
+                    let Some(group) = candidate_groups.next() else {
+                        // A malformed binding may have hidden the intended group from this input.
+                        let verifiable = unsigned.as_verifiable();
+                        CovenantsContext::from_tx(&verifiable).map_err(TxScriptError::from)?;
+                        return Err(BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() });
+                    };
+                    if let Some(matched) = self.match_spawn_group(context, input, spawn, group)? {
+                        break matched;
+                    }
+                };
+                spawned_actors.extend(matched);
+            }
+
+            let ResolveInput::Argent(input) = &mut context.inputs[input_index] else { unreachable!() };
+            input.spawned_actors = Some(spawned_actors);
+        }
+        Ok(())
+    }
+
+    /// Test one concrete genesis group against a spawn declaration.
+    ///
+    /// A match requires the exact declared output count and, in declaration
+    /// order, Argent output metadata whose concrete actors expose the declared
+    /// `actor_type<State>` handles. State values remain the generated script's
+    /// responsibility. Logical mismatches may be skipped by the caller; invalid
+    /// source values or artifact data are returned as builder errors.
+    fn match_spawn_group(
+        &self,
+        context: &ResolveContext<'artifact, '_, '_>,
+        input: &ResolveArgentInput<'artifact, '_, '_>,
+        spawn: &SpawnArtifact,
+        group: &GenesisGroup,
+    ) -> BuilderResult<Option<ResolvedSpawnActors>> {
+        if group.output_indices.len() != spawn.outputs.len() {
+            return Ok(None);
+        }
+
+        let mut spawned_actors = BTreeMap::new();
+        for (output, &output_index) in spawn.outputs.iter().zip(&group.output_indices) {
+            let ResolveOutput::Argent(resolved_output) = &context.outputs[output_index] else {
+                return Ok(None);
+            };
+            let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
+            let found_handle =
+                match self.actor_type_handle_in_artifact(resolved_output.artifact, &resolved_output.source.actor.actor, &output.state)
+                {
+                    Ok(handle) => handle,
+                    Err(BuilderError::MissingActorTypeHandle { .. }) => {
+                        return Ok(None);
+                    }
+                    Err(error) => return Err(error),
+                };
+            if found_handle != expected_handle {
+                return Ok(None);
+            }
+            spawned_actors.insert(
+                (spawn.name.clone(), output.name.clone()),
+                SpawnedActorContext {
+                    app: resolved_output.app.clone(),
+                    actor: resolved_output.source.actor.actor.clone(),
+                    output_index,
+                },
+            );
+        }
+        Ok(Some(spawned_actors))
+    }
+
     /// Resolve compiler-generated arguments from artifact-local routes and the
     /// concrete observed actors selected by the transaction.
     fn resolve_context_hidden_args(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
@@ -311,13 +406,14 @@ impl<'artifact> TxBuilder<'artifact> {
 
             let args = input.args.as_ref().expect("argument resolution precedes hidden-argument resolution");
             let observations = input.observations.as_ref().expect("observation resolution precedes hidden-argument resolution");
+            let spawned_actors = input.spawned_actors.as_ref().expect("spawn resolution precedes hidden-argument resolution");
             input.hidden_args = Some(self.resolve_hidden_args_in_artifact(
                 input.artifact,
                 input.contract,
                 input.argent_entry,
                 &input.source.state,
                 &args.template_selectors,
-                Some(observations),
+                HiddenArgContexts { observed: Some(observations), spawned: Some(spawned_actors) },
             )?);
         }
 
@@ -333,6 +429,7 @@ impl<'artifact> TxBuilder<'artifact> {
         let unsigned = self.unsigned_transaction(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context)?;
+        self.resolve_context_spawns(&mut context, &unsigned)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
 
@@ -380,6 +477,62 @@ impl<'artifact> TxBuilder<'artifact> {
         execute_transaction_with_covenants(&mut transaction, entries)?;
         Ok(transaction)
     }
+}
+
+/// Collect genesis groups authorized by one input, following consensus's
+/// `(authorizing input, covenant ID)` grouping. Outputs within a group retain
+/// global transaction order; groups are ordered by their first output.
+fn collect_genesis_groups(context: &ResolveContext<'_, '_, '_>, input_index: usize, input_covenant_id: Hash) -> Vec<GenesisGroup> {
+    let mut groups = BTreeMap::<Hash, GenesisGroup>::new();
+    for (output_index, output) in context.outputs.iter().enumerate() {
+        let binding = match output {
+            ResolveOutput::Argent(output) => Some(output.source.covenant),
+            ResolveOutput::Ordinary(output) => output.covenant,
+        };
+        let Some(binding) = binding else {
+            continue;
+        };
+        if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
+            continue;
+        }
+        groups.entry(binding.covenant_id).or_default().output_indices.push(output_index);
+    }
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    groups.sort_by_key(|group| group.output_indices[0]);
+    groups
+}
+
+/// Resolve a spawn actor expression from the input's source state or user
+/// arguments into its concrete 32-byte actor-type handle.
+fn spawn_actor_type_handle(input: &ResolveArgentInput<'_, '_, '_>, actor: &str) -> BuilderResult<Vec<u8>> {
+    let args = input.args.as_ref().expect("argument resolution precedes spawn resolution");
+    let value = if let Some(field) = actor.strip_prefix("self.") {
+        input.source.state.get(field)
+    } else {
+        input
+            .sil_entry
+            .params
+            .iter()
+            .take(args.values.len())
+            .position(|param| param.name == actor)
+            .and_then(|index| args.values.get(index))
+            .or_else(|| input.source.state.get(actor))
+    };
+    let Some(ArtifactValue::Bytes(handle)) = value else {
+        return Err(BuilderError::InvalidTransition {
+            actor: input.source.actor.to_string(),
+            entry: input.source.entry.name.clone(),
+            message: format!("spawn actor expression `{actor}` does not resolve to an actor-type handle"),
+        });
+    };
+    if handle.len() != 32 {
+        return Err(BuilderError::InvalidTransition {
+            actor: input.source.actor.to_string(),
+            entry: input.source.entry.name.clone(),
+            message: format!("spawn actor expression `{actor}` resolved to {} bytes, expected 32", handle.len()),
+        });
+    }
+    Ok(handle.clone())
 }
 
 fn observed_covenant_id(input: &ArgentInput<'_>, args: &ResolvedEntryArgs, observe: &ObserveArtifact) -> BuilderResult<Hash> {
@@ -593,6 +746,7 @@ mod tests {
                         hidden_params: Vec::new(),
                         template_selectors,
                         observes: Vec::new(),
+                        spawns: Vec::new(),
                         witnesses: Vec::new(),
                         consumes: Vec::new(),
                         emits: EmitArtifact::None,
