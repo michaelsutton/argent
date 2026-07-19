@@ -695,9 +695,9 @@ impl<'a> Model<'a> {
                         actor.name, entry.name, spawn.name, output.name
                     )));
                 }
-                if source_actor_type_state_for_expr(&output.actor, actor, entry, self)?.is_none() {
+                if spawn_target_state_for_expr(&output.actor, actor, entry, self)?.is_none() {
                     return Err(ArgentError::new(format!(
-                        "entry `{}::{}` spawn `{}.{}` target `{}` must be an actor_type value",
+                        "entry `{}::{}` spawn `{}.{}` target `{}` must be an actor_type value or a known actor",
                         actor.name, entry.name, spawn.name, output.name, output.actor
                     )));
                 }
@@ -1447,6 +1447,19 @@ fn compute_state_template_deps<'a>(
                 }
             }
 
+            for spawn in &entry.spawns {
+                for output in &spawn.outputs {
+                    let target = output.actor.trim();
+                    if is_identifier(target) && actors_by_name.contains_key(target) && template_actor_set.contains(target) {
+                        deps.entry(actor.state.clone()).or_default().insert(target.to_string());
+                        let target_actor = actors_by_name[target];
+                        routes.entry(actor.state.clone()).or_default().insert(target_actor.state.clone());
+                        routes.entry(target_actor.state.clone()).or_default();
+                        deps.entry(target_actor.state.clone()).or_default();
+                    }
+                }
+            }
+
             for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
@@ -1504,6 +1517,14 @@ fn compute_direct_state_template_deps<'a>(
             for consume in &entry.consumes {
                 if template_actor_set.contains(&consume.actor) {
                     direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
+                }
+            }
+            for spawn in &entry.spawns {
+                for output in &spawn.outputs {
+                    let target = output.actor.trim();
+                    if is_identifier(target) && actors_by_name.contains_key(target) && template_actor_set.contains(target) {
+                        direct.entry(actor.state.clone()).or_default().insert(target.to_string());
+                    }
                 }
             }
             for route in expand_entry_template_routes(actor, entry, actor_enums)? {
@@ -1788,8 +1809,8 @@ fn emit_state_layouts(
         }
         for spawn in &entry.spawns {
             for output in &spawn.outputs {
-                let state = source_actor_type_state_for_expr(&output.actor, current_actor, entry, model)?
-                    .expect("spawn target actor_type checked during model validation");
+                let state = spawn_target_state_for_expr(&output.actor, current_actor, entry, model)?
+                    .expect("spawn target checked during model validation");
                 state_names.push(state);
             }
         }
@@ -2870,8 +2891,8 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         output: &SpawnOutputDecl,
         route: RouteCall,
     ) -> Result<()> {
-        let state_name = source_actor_type_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
-            .expect("spawn target actor_type checked during model validation");
+        let state_name = spawn_target_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
+            .expect("spawn target checked during model validation");
         let concrete_actor = self.model.actors_by_name.contains_key(&output.actor).then_some(output.actor.as_str());
         let state_ty = if let Some(actor) = concrete_actor {
             contract_state_type_for_actor(actor, self.actor, self.model)?
@@ -2895,11 +2916,14 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
         };
-        let source = clause_actor_type_ref(&output.actor, self.actor, self.entry, self.model)?
-            .expect("spawn target actor_type checked during model validation");
+        let source = clause_actor_type_ref(&output.actor, self.actor, self.entry, self.model)?;
         let spec =
             SpawnActorWitnessSpec { spawn: spawn.name.clone(), handle: output.name.clone(), actor: output.actor.clone(), source };
-        let template = self.lower_expr(&output.actor, Some("byte[32]"), indent)?;
+        let template = if is_static_spawn_actor(&output.actor, self.model) {
+            hidden_template_name(output.actor.trim())
+        } else {
+            self.lower_expr(&output.actor, Some("byte[32]"), indent)?
+        };
 
         push_indent(out, indent);
         out.push_str(&format!("// :: spawned become {}.{} -> {}\n", spawn.name, output.name, output.actor));
@@ -4022,7 +4046,7 @@ struct SpawnActorWitnessSpec {
     spawn: String,
     handle: String,
     actor: String,
-    source: ClauseActorTypeRef,
+    source: Option<ClauseActorTypeRef>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4172,8 +4196,7 @@ fn spawn_output_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Mode
     let mut specs = Vec::new();
     for spawn in &entry.spawns {
         for output in &spawn.outputs {
-            let source = clause_actor_type_ref(&output.actor, actor, entry, model)?
-                .expect("spawn target actor_type checked during model validation");
+            let source = clause_actor_type_ref(&output.actor, actor, entry, model)?;
             specs.push(SpawnActorWitnessSpec {
                 spawn: spawn.name.clone(),
                 handle: output.name.clone(),
@@ -4187,7 +4210,17 @@ fn spawn_output_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Mode
 
 fn spawn_template_witness_specs(outputs: &[SpawnActorWitnessSpec]) -> Vec<SpawnActorWitnessSpec> {
     let mut seen = BTreeSet::new();
-    outputs.iter().filter(|spec| seen.insert(spec.source.clone())).cloned().collect()
+    outputs
+        .iter()
+        .filter(|spec| {
+            let key = spec
+                .source
+                .as_ref()
+                .map_or_else(|| format!("static:{}", spec.actor), |source| format!("dynamic:{}", source.witness_suffix()));
+            seen.insert(key)
+        })
+        .cloned()
+        .collect()
 }
 
 fn observed_output_field_witness_specs(
@@ -4571,6 +4604,27 @@ fn clause_actor_type_ref(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model
 
 fn source_actor_type_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
     Ok(clause_actor_type_ref(expr, actor, entry, model)?.map(|source| source.state().to_string()))
+}
+
+// Spawn targets may be an explicitly dynamic actor_type value or a fixed actor
+// imported into the current app. Fixed actors are compiler-owned template
+// capabilities, exactly like direct `emits` targets; they need not be threaded
+// through authored covenant state.
+fn spawn_target_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
+    if let Some(state) = source_actor_type_state_for_expr(expr, actor, entry, model)? {
+        return Ok(Some(state));
+    }
+    let expr = expr.trim();
+    if is_identifier(expr) {
+        if let Ok(target) = model.actor(expr) {
+            return Ok(Some(target.state.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn is_static_spawn_actor(expr: &str, model: &Model<'_>) -> bool {
+    is_identifier(expr.trim()) && model.actor(expr.trim()).is_ok()
 }
 
 fn observed_actor_template_expr_for_entry(
@@ -5608,9 +5662,9 @@ fn spawn_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, spawn
             .outputs
             .iter()
             .map(|output| {
-                let state = source_actor_type_state_for_expr(&output.actor, actor, entry, model)?.ok_or_else(|| {
+                let state = spawn_target_state_for_expr(&output.actor, actor, entry, model)?.ok_or_else(|| {
                     ArgentError::new(format!(
-                        "spawn `{}.{}` target `{}` is not an actor_type value",
+                        "spawn `{}.{}` target `{}` is not an actor_type value or known actor",
                         spawn.name, output.name, output.actor
                     ))
                 })?;
@@ -6748,11 +6802,15 @@ fn hidden_observed_actor_template_init_name(spec: &ObservedActorWitnessSpec) -> 
 }
 
 fn hidden_spawn_actor_prefix_name(spec: &SpawnActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_prefix", spec.source.witness_suffix())
+    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_prefix", spawn_actor_spec_suffix(spec))
 }
 
 fn hidden_spawn_actor_suffix_name(spec: &SpawnActorWitnessSpec) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_suffix", spec.source.witness_suffix())
+    format!("{RESERVED_GENERATED_PREFIX}spawn_{}_suffix", spawn_actor_spec_suffix(spec))
+}
+
+fn spawn_actor_spec_suffix(spec: &SpawnActorWitnessSpec) -> String {
+    spec.source.as_ref().map_or_else(|| actor_expr_suffix(&spec.actor), ClauseActorTypeRef::witness_suffix)
 }
 
 fn hidden_state_expansion_preimage_name(spec: &StateExpansionWitnessSpec) -> String {
@@ -10573,6 +10631,53 @@ mod tests {
         assert!(sil.contains("require(gen__first_pair_output_idx < gen__second_pair_output_idx);"), "{sil}");
         let actor_sil = actor_sil_for_model(&model);
         emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
+    }
+
+    #[test]
+    fn fixed_actor_spawn_uses_compiler_owned_template_and_keeps_its_closure() {
+        let source = r#"
+            state LauncherState {
+                int launches;
+            }
+
+            state ChildState {
+                int value;
+            }
+
+            actor Launcher owns LauncherState {
+                entry launch(value: int)
+                spawns child_group by child_id {
+                    outputs {
+                        child: Child;
+                    }
+                }
+                emits one Launcher {
+                    ChildState child_state = { value: value };
+                    LauncherState next = { launches: launches + 1 };
+                    require child_group.outputs become {
+                        child <- Child(child_state);
+                    };
+                    become Launcher(next);
+                }
+            }
+
+            // The spawned actor itself needs Launcher's template for its
+            // normal successor, exercising the spawned template closure.
+            actor Child owns ChildState {
+                entry return_to_launcher() emits one Launcher {
+                    LauncherState next = { launches: 0 };
+                    become Launcher(next);
+                }
+            }
+
+            app Test {
+                actor Launcher;
+            }
+        "#;
+        let artifact = inline_artifact("fixed_actor_spawn", source);
+        let launcher = artifact.argent.actors.iter().find(|actor| actor.name == "Launcher").expect("Launcher artifact exists");
+        assert_eq!(launcher.entries[0].spawns[0].outputs[0].actor, "Child");
+        artifact.verify_template_plan().expect("fixed spawn template closure verifies");
     }
 
     #[test]
