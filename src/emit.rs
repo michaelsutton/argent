@@ -8599,7 +8599,11 @@ mod tests {
                     )
                 })
                 .collect::<Vec<_>>(),
-            vec![("first_pair", vec![("left", 0), ("right", 1)]), ("second_pair", vec![("pair", 0)])]
+            vec![
+                ("first_pair", vec![("left", 0), ("right", 1)]),
+                ("second_pair", vec![("pair", 0)]),
+                ("third_pair", vec![("left", 0), ("right", 1)]),
+            ]
         );
         assert_eq!(
             launch.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
@@ -8607,6 +8611,8 @@ mod tests {
                 "gen__first_pair_left_output_idx",
                 "gen__first_pair_right_output_idx",
                 "gen__second_pair_pair_output_idx",
+                "gen__third_pair_left_output_idx",
+                "gen__third_pair_right_output_idx",
                 "gen__spawn_self_pair_type_prefix",
                 "gen__spawn_self_pair_type_suffix",
             ]

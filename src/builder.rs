@@ -637,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn context_pairs_multiple_spawn_clauses_with_genesis_groups_by_first_output() {
+    fn context_orders_multiple_spawn_groups_and_rejects_group_reuse() {
         let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
         let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-multiple-spawns-controller");
         let pair_artifact = selected_app_artifact(source, "PairApp", "context-multiple-spawns-pair");
@@ -651,10 +651,14 @@ mod tests {
         let controller_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x82; 32]), 7);
         let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
         let controller_state = state! { pair_type: pair_type.clone(), launches: 0 };
-        let next_controller_state = state! { pair_type: pair_type, launches: 2 };
+        let next_controller_state = state! { pair_type: pair_type, launches: 3 };
         let first_left_state = state! { value: 11 };
         let first_right_state = state! { value: 12 };
         let second_state = state! { value: 21 };
+        // Matching states let the adversarial execution reuse the first group
+        // for the third clause without failing output-state validation first.
+        let third_left_state = first_left_state.clone();
+        let third_right_state = first_right_state.clone();
         let controller_utxo = builder
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");
@@ -664,16 +668,21 @@ mod tests {
             builder.genesis_output("pair_app::Pair", first_right_state.clone(), 2_000).expect("first right genesis output builds");
         let second_output =
             builder.genesis_output("pair_app::Pair", second_state.clone(), 3_000).expect("second genesis output builds");
+        let third_left_output =
+            builder.genesis_output("pair_app::Pair", third_left_state.clone(), 2_000).expect("third left genesis output builds");
+        let third_right_output =
+            builder.genesis_output("pair_app::Pair", third_right_state.clone(), 2_000).expect("third right genesis output builds");
 
         // The first group occupies global outputs 1 and 3, while the second
         // occupies output 2. Group identity, not adjacency, keeps each spawn together.
         let first_pair_id = covenant_id(controller_outpoint, [(1, &first_left_output), (3, &first_right_output)].into_iter());
         let second_pair_id = covenant_id(controller_outpoint, [(2, &second_output)].into_iter());
+        let third_pair_id = covenant_id(controller_outpoint, [(4, &third_left_output), (5, &third_right_output)].into_iter());
         let context = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
                 controller_state.clone(),
-                EntryCall::new("launch").args(args![11, 12, 21]),
+                EntryCall::new("launch").args(args![11, 12, 21, 11, 12]),
                 controller_outpoint,
                 controller_utxo.clone(),
                 0,
@@ -681,14 +690,55 @@ mod tests {
             .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
             .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
             .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
-            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000);
-        builder.build(&context).expect("interleaved genesis groups resolve by first output order");
+            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
+            .argent_output("pair_app::Pair", third_left_state.clone(), CovenantBinding::new(0, third_pair_id), 2_000)
+            .argent_output("pair_app::Pair", third_right_state.clone(), CovenantBinding::new(0, third_pair_id), 2_000);
+        let transaction = builder.build(&context).expect("interleaved genesis groups resolve by first output order");
+
+        // Security regression: bypass spawn resolution and invoke the generated Sil directly. The first and third clauses
+        // use identical actor types and states, while the malicious sigscript repeats the first group's indices for the
+        // third clause. The on-chain first-output ordering check must therefore reject the otherwise valid group reuse.
+        let controller_contract = controller_artifact.sil_abi.contract("Controller").expect("Controller contract exists");
+        let launch_entry = controller_contract.entry("launch").expect("launch entry exists");
+        let pair_template = &pair_artifact.sil_abi.contract("Pair").expect("Pair contract exists").compiled.template;
+        let reused_group_entry = encode_entry_sig_script(
+            &controller_artifact.sil_abi,
+            controller_contract,
+            launch_entry,
+            &[
+                ArtifactValue::Int(11),
+                ArtifactValue::Int(12),
+                ArtifactValue::Int(21),
+                ArtifactValue::Int(11),
+                ArtifactValue::Int(12),
+                ArtifactValue::Int(1),
+                ArtifactValue::Int(3),
+                ArtifactValue::Int(2),
+                ArtifactValue::Int(1),
+                ArtifactValue::Int(3),
+                ArtifactValue::Bytes(decode_hex(&pair_template.prefix_hex).expect("Pair prefix decodes")),
+                ArtifactValue::Bytes(decode_hex(&pair_template.suffix_hex).expect("Pair suffix decodes")),
+            ],
+        )
+        .expect("reused-group entry sigscript encodes");
+        let reused_group_sigscript = pay_to_script_hash_signature_script_with_flags(
+            p2sh_redeem_script(&transaction.inputs[0].signature_script),
+            reused_group_entry,
+            covenant_engine_flags(),
+        )
+        .expect("reused-group P2SH sigscript builds");
+        let mut reused_group_tx = transaction;
+        reused_group_tx.inputs[0].signature_script = reused_group_sigscript;
+        assert!(
+            execute_input_with_covenants(&reused_group_tx, vec![controller_utxo.clone()], 0).is_err(),
+            "generated Sil must reject reusing the first genesis group for the third spawn clause"
+        );
 
         let reversed_groups = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
                 controller_state.clone(),
-                EntryCall::new("launch").args(args![11, 12, 21]),
+                EntryCall::new("launch").args(args![11, 12, 21, 11, 12]),
                 controller_outpoint,
                 controller_utxo.clone(),
                 0,
@@ -714,7 +764,7 @@ mod tests {
             .argent_input(
                 "controller_app::Controller",
                 controller_state,
-                EntryCall::new("launch").args(args![11, 12, 21]),
+                EntryCall::new("launch").args(args![11, 12, 21, 11, 12]),
                 controller_outpoint,
                 controller_utxo,
                 0,

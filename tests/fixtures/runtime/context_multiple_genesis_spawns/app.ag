@@ -8,7 +8,13 @@ state PairState {
 }
 
 actor Controller owns ControllerState {
-    entry launch(first_left_value: int, first_right_value: int, second_value: int)
+    entry launch(
+        first_left_value: int,
+        first_right_value: int,
+        second_value: int,
+        third_left_value: int,
+        third_right_value: int
+    )
     spawns first_pair by first_pair_id {
         outputs {
             left: self.pair_type;
@@ -18,6 +24,12 @@ actor Controller owns ControllerState {
     spawns second_pair by second_pair_id {
         outputs {
             pair: self.pair_type;
+        }
+    }
+    spawns third_pair by third_pair_id {
+        outputs {
+            left: self.pair_type;
+            right: self.pair_type;
         }
     }
     emits one Controller {
@@ -30,9 +42,15 @@ actor Controller owns ControllerState {
         PairState second = {
             value: second_value,
         };
+        PairState third_left = {
+            value: third_left_value,
+        };
+        PairState third_right = {
+            value: third_right_value,
+        };
         ControllerState next = {
             pair_type: pair_type,
-            launches: launches + 2,
+            launches: launches + 3,
         };
 
         require first_pair.outputs become {
@@ -41,6 +59,10 @@ actor Controller owns ControllerState {
         };
         require second_pair.outputs become {
             pair <- self.pair_type(second);
+        };
+        require third_pair.outputs become {
+            left <- self.pair_type(third_left);
+            right <- self.pair_type(third_right);
         };
         become Controller(next);
     }

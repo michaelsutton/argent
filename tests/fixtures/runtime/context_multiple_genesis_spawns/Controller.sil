@@ -25,9 +25,13 @@ contract Controller(
         int first_left_value,
         int first_right_value,
         int second_value,
+        int third_left_value,
+        int third_right_value,
         int gen__first_pair_left_output_idx,
         int gen__first_pair_right_output_idx,
         int gen__second_pair_pair_output_idx,
+        int gen__third_pair_left_output_idx,
+        int gen__third_pair_right_output_idx,
         byte[] gen__spawn_self_pair_type_prefix,
         byte[] gen__spawn_self_pair_type_suffix
     ) {
@@ -65,6 +69,23 @@ contract Controller(
         byte[32] second_pair_id = blake2bWithKey(gen__second_pair_genesis_preimage, bytes("CovenantID"));
         require(gen__first_pair_left_output_idx < gen__second_pair_pair_output_idx);
         require(OpOutputCovenantId(gen__second_pair_pair_output_idx) == second_pair_id);
+        byte[] gen__third_pair_genesis_preimage =
+            OpOutpointTxId(this.activeInputIndex)
+            + bytes(OpOutpointIndex(this.activeInputIndex), 8).slice(0, 4)
+            + bytes(2, 8)
+            + bytes(gen__third_pair_left_output_idx, 8).slice(0, 4)
+            + bytes(tx.outputs[gen__third_pair_left_output_idx].value, 8)
+            + 0x0000
+            + bytes(35, 8)
+            + OpTxOutputSpkSubstr(gen__third_pair_left_output_idx, 2, 37)
+            + bytes(gen__third_pair_right_output_idx, 8).slice(0, 4)
+            + bytes(tx.outputs[gen__third_pair_right_output_idx].value, 8)
+            + 0x0000
+            + bytes(35, 8)
+            + OpTxOutputSpkSubstr(gen__third_pair_right_output_idx, 2, 37);
+        byte[32] third_pair_id = blake2bWithKey(gen__third_pair_genesis_preimage, bytes("CovenantID"));
+        require(gen__second_pair_pair_output_idx < gen__third_pair_left_output_idx);
+        require(OpOutputCovenantId(gen__third_pair_left_output_idx) == third_pair_id);
 
         PairState first_left = {
             // :: generated fields
@@ -84,12 +105,24 @@ contract Controller(
             // :: user declared fields
             value: second_value,
         };
+        PairState third_left = {
+            // :: generated fields
+
+            // :: user declared fields
+            value: third_left_value,
+        };
+        PairState third_right = {
+            // :: generated fields
+
+            // :: user declared fields
+            value: third_right_value,
+        };
         State next = {
             // :: generated fields
 
             // :: user declared fields
             pair_type: pair_type,
-            launches: launches + 2,
+            launches: launches + 3,
         };
         // :: spawned become first_pair.left -> self.pair_type
         validateOutputStateWithTemplate(
@@ -111,6 +144,22 @@ contract Controller(
         validateOutputStateWithTemplate(
             gen__second_pair_pair_output_idx,
             second,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
+            pair_type
+        );
+        // :: spawned become third_pair.left -> self.pair_type
+        validateOutputStateWithTemplate(
+            gen__third_pair_left_output_idx,
+            third_left,
+            gen__spawn_self_pair_type_prefix,
+            gen__spawn_self_pair_type_suffix,
+            pair_type
+        );
+        // :: spawned become third_pair.right -> self.pair_type
+        validateOutputStateWithTemplate(
+            gen__third_pair_right_output_idx,
+            third_right,
             gen__spawn_self_pair_type_prefix,
             gen__spawn_self_pair_type_suffix,
             pair_type
