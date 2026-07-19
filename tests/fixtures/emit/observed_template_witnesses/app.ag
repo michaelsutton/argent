@@ -14,7 +14,7 @@ actor Foreign owns ForeignState {
 
 actor Local owns LocalState {
     entry step()
-    observes asset by target_id {
+    observes asset by self.target_id {
         inputs {
             src: Foreign;
         }

@@ -1,0 +1,47 @@
+state ControllerState {
+    actor_type<PairState> pair_type;
+    int launches;
+}
+
+state PairState {
+    int value;
+}
+
+actor Controller owns ControllerState {
+    entry launch(left_value: int, right_value: int)
+    spawns new_pair by pair_id {
+        outputs {
+            left: self.pair_type;
+            right: self.pair_type;
+        }
+    }
+    emits one Controller {
+        PairState left = {
+            value: left_value,
+        };
+        PairState right = {
+            value: right_value,
+        };
+        ControllerState next = {
+            pair_type: pair_type,
+            launches: launches + 1,
+        };
+
+        require new_pair.outputs become {
+            left <- self.pair_type(left);
+            right <- self.pair_type(right);
+        };
+        become Controller(next);
+    }
+}
+
+actor Pair owns PairState {
+    entry keep() emits one Pair {
+        become Pair(self.state);
+    }
+}
+
+app Spawns {
+    actor Controller;
+    actor Pair;
+}

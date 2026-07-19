@@ -35,6 +35,7 @@ cargo check --workspace
 
 if [ "$regen_examples" = true ]; then
     cargo run -- build examples/tickets.ag --out examples/build/tickets
+    cargo run -- build examples/spawns.ag --out examples/build/spawns
     cargo run -- build examples/stones/app.ag --out examples/build/stones
     cargo run -- build examples/toy_chess/app.ag --out examples/build/toy_chess
     cargo run -- build examples/icc/kcc20_asset.ag --out examples/build/icc_kcc20_asset

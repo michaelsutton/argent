@@ -1,0 +1,41 @@
+{
+  "app": "Spawns",
+  "root": "examples/spawns.ag",
+  "modules": [
+    "examples/spawns.ag"
+  ],
+  "templates": [
+    { "actor": "Controller", "symbol": "gen__controller_template", "hash": null },
+    { "actor": "Pair", "symbol": "gen__pair_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Controller",
+      "state": "ControllerState",
+      "sil": "sil/Controller.sil",
+      "entries": [
+        {
+          "name": "launch",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Controller"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Controller", "state": "next" }]
+        }
+      ]
+    },
+    {
+      "name": "Pair",
+      "state": "PairState",
+      "sil": "sil/Pair.sil",
+      "entries": [
+        {
+          "name": "keep",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Pair"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Pair", "state": "self.state" }]
+        }
+      ]
+    }
+  ]
+}

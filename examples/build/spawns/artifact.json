@@ -1,0 +1,561 @@
+{
+  "schema_version": 1,
+  "id": "02b1f698cd935c26b2473819ebee0556311cbbaebedc38834635fd27a3f1625e",
+  "generator": {
+    "name": "argentc",
+    "version": "0.1.0"
+  },
+  "app": "Spawns",
+  "root": "examples/spawns.ag",
+  "modules": [
+    "examples/spawns.ag"
+  ],
+  "argent": {
+    "templates": [
+      {
+        "id": "template/controller",
+        "actor": "Controller",
+        "symbol": "gen__controller_template"
+      },
+      {
+        "id": "template/pair",
+        "actor": "Pair",
+        "symbol": "gen__pair_template"
+      }
+    ],
+    "template_plan": {
+      "templates": [
+        {
+          "id": "template/controller",
+          "actor": "Controller",
+          "contract": "Controller",
+          "symbol": "gen__controller_template",
+          "canonical_template_hash": "ced10d77dfaf3cb278516e90a48626badebe3a2a7e3e894b1e21063b0731ab11"
+        },
+        {
+          "id": "template/pair",
+          "actor": "Pair",
+          "contract": "Pair",
+          "symbol": "gen__pair_template",
+          "canonical_template_hash": "de7551b69e8bacda42e8d7a8acc64b3da8f0973c537d21e0c69ce24a4a3f9f50"
+        }
+      ],
+      "runtime_states": [],
+      "route_tables": [],
+      "route_proofs": [],
+      "route_families": [],
+      "witness_recipes": [
+        {
+          "id": "witness/Controller/launch/spawn/new_pair/left/spawn_output_index",
+          "subject": {
+            "kind": "spawn_actor",
+            "spawn": "new_pair",
+            "handle": "left",
+            "actor": "self.pair_type"
+          },
+          "param": "gen__new_pair_left_output_idx",
+          "purpose": {
+            "kind": "spawn_output_index"
+          }
+        },
+        {
+          "id": "witness/Controller/launch/spawn/new_pair/right/spawn_output_index",
+          "subject": {
+            "kind": "spawn_actor",
+            "spawn": "new_pair",
+            "handle": "right",
+            "actor": "self.pair_type"
+          },
+          "param": "gen__new_pair_right_output_idx",
+          "purpose": {
+            "kind": "spawn_output_index"
+          }
+        },
+        {
+          "id": "witness/Controller/launch/spawn/new_pair/left/template_prefix_bytes",
+          "subject": {
+            "kind": "spawn_actor",
+            "spawn": "new_pair",
+            "handle": "left",
+            "actor": "self.pair_type"
+          },
+          "param": "gen__spawn_self_pair_type_prefix",
+          "purpose": {
+            "kind": "template_prefix_bytes"
+          }
+        },
+        {
+          "id": "witness/Controller/launch/spawn/new_pair/left/template_suffix_bytes",
+          "subject": {
+            "kind": "spawn_actor",
+            "spawn": "new_pair",
+            "handle": "left",
+            "actor": "self.pair_type"
+          },
+          "param": "gen__spawn_self_pair_type_suffix",
+          "purpose": {
+            "kind": "template_suffix_bytes"
+          }
+        }
+      ]
+    },
+    "interfaces": {
+      "exports": [
+        {
+          "id": "interface/actor/Controller",
+          "actor": "Controller",
+          "state": "ControllerState",
+          "fingerprint_hex": "36d77187df5b3a510395ae040f35202a2309876742ee6af77f9270042595d35e"
+        },
+        {
+          "id": "interface/actor/Pair",
+          "actor": "Pair",
+          "state": "PairState",
+          "fingerprint_hex": "390ce38ff0111780a277e613cd601439539996d1e728cdffe11107891cfeaff3"
+        }
+      ],
+      "imports": []
+    },
+    "states": [
+      {
+        "name": "ControllerState",
+        "fields": [
+          {
+            "name": "pair_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "launches",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "PairState",
+        "fields": [
+          {
+            "name": "value",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "actor_enums": [],
+    "actors": [
+      {
+        "name": "Controller",
+        "state": "ControllerState",
+        "abi": {
+          "actor": "Controller"
+        },
+        "entries": [
+          {
+            "name": "launch",
+            "kind": "leader",
+            "abi": {
+              "actor": "Controller",
+              "entry": "launch"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Controller",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Controller",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Controller"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": [
+                "witness/Controller/launch/spawn/new_pair/left/spawn_output_index",
+                "witness/Controller/launch/spawn/new_pair/right/spawn_output_index",
+                "witness/Controller/launch/spawn/new_pair/left/template_prefix_bytes",
+                "witness/Controller/launch/spawn/new_pair/left/template_suffix_bytes"
+              ]
+            },
+            "hidden_params": [
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/spawn_output_index",
+                "name": "gen__new_pair_left_output_idx",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "spawn_output_index"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/right/spawn_output_index",
+                "name": "gen__new_pair_right_output_idx",
+                "type": {
+                  "kind": "int"
+                },
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "right",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "spawn_output_index"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/template_prefix_bytes",
+                "name": "gen__spawn_self_pair_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/template_suffix_bytes",
+                "name": "gen__spawn_self_pair_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                },
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "template_selectors": [],
+            "spawns": [
+              {
+                "name": "new_pair",
+                "covenant": "pair_id",
+                "outputs": [
+                  {
+                    "name": "left",
+                    "actor": "self.pair_type",
+                    "state": "PairState",
+                    "group_index": 0
+                  },
+                  {
+                    "name": "right",
+                    "actor": "self.pair_type",
+                    "state": "PairState",
+                    "group_index": 1
+                  }
+                ]
+              }
+            ],
+            "witnesses": [
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/spawn_output_index",
+                "param": "gen__new_pair_left_output_idx",
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "spawn_output_index"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/right/spawn_output_index",
+                "param": "gen__new_pair_right_output_idx",
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "right",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "spawn_output_index"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/template_prefix_bytes",
+                "param": "gen__spawn_self_pair_type_prefix",
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "template_prefix_bytes"
+                }
+              },
+              {
+                "recipe_id": "witness/Controller/launch/spawn/new_pair/left/template_suffix_bytes",
+                "param": "gen__spawn_self_pair_type_suffix",
+                "subject": {
+                  "kind": "spawn_actor",
+                  "spawn": "new_pair",
+                  "handle": "left",
+                  "actor": "self.pair_type"
+                },
+                "purpose": {
+                  "kind": "template_suffix_bytes"
+                }
+              }
+            ],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Controller"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Controller",
+                "template_id": "template/controller",
+                "state_expr": "next"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "Pair",
+        "state": "PairState",
+        "abi": {
+          "actor": "Pair"
+        },
+        "entries": [
+          {
+            "name": "keep",
+            "kind": "leader",
+            "abi": {
+              "actor": "Pair",
+              "entry": "keep"
+            },
+            "route_plan": {
+              "active_input": {
+                "name": "self",
+                "actor": "Pair",
+                "cov_index": 0
+              },
+              "leader_input": {
+                "name": "self",
+                "actor": "Pair",
+                "cov_index": 0
+              },
+              "consumes": [],
+              "outputs": [
+                {
+                  "name": null,
+                  "auth_index": 0,
+                  "actors": [
+                    "Pair"
+                  ]
+                }
+              ],
+              "witness_recipe_ids": []
+            },
+            "hidden_params": [],
+            "template_selectors": [],
+            "witnesses": [],
+            "consumes": [],
+            "emits": {
+              "kind": "one",
+              "actors": [
+                "Pair"
+              ]
+            },
+            "routes": [
+              {
+                "output": null,
+                "actor": "Pair",
+                "template_id": "template/pair",
+                "state_expr": "self.state"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "sil_abi": {
+    "schema_version": 1,
+    "states": [
+      {
+        "name": "ControllerState",
+        "fields": [
+          {
+            "name": "pair_type",
+            "type": {
+              "kind": "fixed_bytes",
+              "len": 32
+            }
+          },
+          {
+            "name": "launches",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      },
+      {
+        "name": "PairState",
+        "fields": [
+          {
+            "name": "value",
+            "type": {
+              "kind": "int"
+            }
+          }
+        ]
+      }
+    ],
+    "contracts": [
+      {
+        "name": "Controller",
+        "source_path": "sil/Controller.sil",
+        "runtime_state": {
+          "source": "ControllerState",
+          "fields": [
+            {
+              "name": "pair_type",
+              "type": {
+                "kind": "fixed_bytes",
+                "len": 32
+              }
+            },
+            {
+              "name": "launches",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "launch",
+            "selector": null,
+            "params": [
+              {
+                "name": "left_value",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "right_value",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__new_pair_left_output_idx",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__new_pair_right_output_idx",
+                "type": {
+                  "kind": "int"
+                }
+              },
+              {
+                "name": "gen__spawn_self_pair_type_prefix",
+                "type": {
+                  "kind": "bytes"
+                }
+              },
+              {
+                "name": "gen__spawn_self_pair_type_suffix",
+                "type": {
+                  "kind": "bytes"
+                }
+              }
+            ]
+          }
+        ],
+        "compiled": {
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c695579d5b9bab9bb58cd00547f7e5258cd7e577958cd00547f7e5779c258cd7e0200007e012358cd7e5779520125c87e567958cd00547f7e5679c258cd7e0200007e012358cd7e5679520125c87e0a436f76656e616e744944a787695379827c75519658cd54797e5379827c75519658cd54797e7e52797caa8769577958cd01087c7e54797c7e53797eaa02000001aa7e01207e7c7e01877e5679c387695379827c75519658cd54797e5379827c75519658cd54797e7e52797caa8769567958cd01087c7e54797c7e53797eaa02000001aa7e01207e7c7e01877e5579c387697801207c7e78519358cd01087c7e7eb976c97602490194012a937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c695579d5b9bab9bb58cd00547f7e5258cd7e577958cd00547f7e5779c258cd7e0200007e012358cd7e5779520125c87e567958cd00547f7e5679c258cd7e0200007e012358cd7e5679520125c87e0a436f76656e616e744944a787695379827c75519658cd54797e5379827c75519658cd54797e7e52797caa8769577958cd01087c7e54797c7e53797eaa02000001aa7e01207e7c7e01877e5679c387695379827c75519658cd54797e5379827c75519658cd54797e7e52797caa8769567958cd01087c7e54797c7e53797eaa02000001aa7e01207e7c7e01877e5579c387697801207c7e78519358cd01087c7e7eb976c97602490194012a937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38769757575757575757551",
+            "hash_hex": "ced10d77dfaf3cb278516e90a48626badebe3a2a7e3e894b1e21063b0731ab11"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 42
+          }
+        }
+      },
+      {
+        "name": "Pair",
+        "source_path": "sil/Pair.sil",
+        "runtime_state": {
+          "source": "PairState",
+          "fields": [
+            {
+              "name": "value",
+              "type": {
+                "kind": "int"
+              }
+            }
+          ]
+        },
+        "entries": [
+          {
+            "name": "keep",
+            "selector": null,
+            "params": []
+          }
+        ],
+        "compiled": {
+          "script_hex": "080000000000000000b9cb519c69b900ccc3b9bf87697551",
+          "template": {
+            "prefix_hex": "",
+            "suffix_hex": "b9cb519c69b900ccc3b9bf87697551",
+            "hash_hex": "de7551b69e8bacda42e8d7a8acc64b3da8f0973c537d21e0c69ce24a4a3f9f50"
+          },
+          "state_span": {
+            "offset": 0,
+            "len": 9
+          }
+        }
+      }
+    ]
+  }
+}

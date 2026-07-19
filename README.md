@@ -128,6 +128,8 @@ Core terms:
 ## Examples
 
 - [examples/tickets.ag](examples/tickets.ag): tiny single-file issuer/ticket app
+- [examples/spawns.ag](examples/spawns.ag): constrained genesis covenant launch
+  with a complete two-output group
 - [examples/stones](examples/stones): small coordinated game with league,
   player, game, and settle actors
 - [examples/toy_chess](examples/toy_chess/app.ag): actor enums and

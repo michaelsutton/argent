@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "33af65895683cb426d14f1c563fc2c6f6ca0a7acc6e8bad5533f276c772a0e76",
+  "id": "847a9f2237292538d15ff2012ea62fc77f2db0d6f1cc4ad7dce45b5862635910",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -48,7 +48,7 @@
       "route_families": [],
       "witness_recipes": [
         {
-          "id": "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
+          "id": "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
           "subject": {
             "kind": "observed_actor",
             "observe": "remote",
@@ -56,13 +56,13 @@
             "handle": "agent",
             "actor": "self.occupant_agent_type"
           },
-          "param": "gen__remote_occupant_agent_type_prefix_len",
+          "param": "gen__remote_self_occupant_agent_type_prefix_len",
           "purpose": {
             "kind": "template_prefix_len"
           }
         },
         {
-          "id": "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
+          "id": "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
           "subject": {
             "kind": "observed_actor",
             "observe": "remote",
@@ -70,7 +70,7 @@
             "handle": "agent",
             "actor": "self.occupant_agent_type"
           },
-          "param": "gen__remote_occupant_agent_type_suffix_len",
+          "param": "gen__remote_self_occupant_agent_type_suffix_len",
           "purpose": {
             "kind": "template_suffix_len"
           }
@@ -288,15 +288,15 @@
                 }
               ],
               "witness_recipe_ids": [
-                "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
+                "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
                 "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value"
               ]
             },
             "hidden_params": [
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "name": "gen__remote_occupant_agent_type_prefix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "name": "gen__remote_self_occupant_agent_type_prefix_len",
                 "type": {
                   "kind": "int"
                 },
@@ -312,8 +312,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
-                "name": "gen__remote_occupant_agent_type_suffix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
+                "name": "gen__remote_self_occupant_agent_type_suffix_len",
                 "type": {
                   "kind": "int"
                 },
@@ -374,8 +374,8 @@
             ],
             "witnesses": [
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "param": "gen__remote_occupant_agent_type_prefix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "param": "gen__remote_self_occupant_agent_type_prefix_len",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
@@ -388,8 +388,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
-                "param": "gen__remote_occupant_agent_type_suffix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
+                "param": "gen__remote_self_occupant_agent_type_suffix_len",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
@@ -482,8 +482,8 @@
               "witness_recipe_ids": [
                 "witness/cell/template_prefix_len",
                 "witness/cell/template_suffix_len",
-                "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
+                "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
                 "witness/observed/remote/output/agent/agent_capsule/strategy/observed_output_field_value"
               ]
             },
@@ -517,8 +517,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "name": "gen__remote_occupant_agent_type_prefix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "name": "gen__remote_self_occupant_agent_type_prefix_len",
                 "type": {
                   "kind": "int"
                 },
@@ -534,8 +534,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
-                "name": "gen__remote_occupant_agent_type_suffix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
+                "name": "gen__remote_self_occupant_agent_type_suffix_len",
                 "type": {
                   "kind": "int"
                 },
@@ -618,8 +618,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_prefix_len",
-                "param": "gen__remote_occupant_agent_type_prefix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_prefix_len",
+                "param": "gen__remote_self_occupant_agent_type_prefix_len",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
@@ -632,8 +632,8 @@
                 }
               },
               {
-                "recipe_id": "witness/observed/remote/input/occupant_agent_type/template_suffix_len",
-                "param": "gen__remote_occupant_agent_type_suffix_len",
+                "recipe_id": "witness/observed/remote/input/self_occupant_agent_type/template_suffix_len",
+                "param": "gen__remote_self_occupant_agent_type_suffix_len",
                 "subject": {
                   "kind": "observed_actor",
                   "observe": "remote",
@@ -898,13 +898,13 @@
             "selector": 0,
             "params": [
               {
-                "name": "gen__remote_occupant_agent_type_prefix_len",
+                "name": "gen__remote_self_occupant_agent_type_prefix_len",
                 "type": {
                   "kind": "int"
                 }
               },
               {
-                "name": "gen__remote_occupant_agent_type_suffix_len",
+                "name": "gen__remote_self_occupant_agent_type_suffix_len",
                 "type": {
                   "kind": "int"
                 }
@@ -968,13 +968,13 @@
                 }
               },
               {
-                "name": "gen__remote_occupant_agent_type_prefix_len",
+                "name": "gen__remote_self_occupant_agent_type_prefix_len",
                 "type": {
                   "kind": "int"
                 }
               },
               {
-                "name": "gen__remote_occupant_agent_type_suffix_len",
+                "name": "gen__remote_self_occupant_agent_type_suffix_len",
                 "type": {
                   "kind": "int"
                 }
