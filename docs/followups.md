@@ -52,6 +52,35 @@ matches one declared alternative. The artifact should record the source-level
 alternatives so a typed builder can match concrete outputs without exposing a
 terminal path index.
 
+## Entry-wide template witness deduplication
+
+Build one template-witness plan for the whole entry instead of planning
+`emits`, `observes`, and `spawns` independently. The current spawn lowering
+already shares prefix and suffix bytes between spawn outputs that use the same
+`actor_type` expression; extend that rule across all entry clauses.
+
+Deduplicate by semantic template identity, not by output handle or state type:
+
+- references to the same fixed actor, including imported actors, are identical
+- repeated uses of the same source `actor_type<State>` value are identical
+- independent open actor bindings remain distinct even when they expose the
+  same state type
+
+Keep transaction locations separate from template identity. Every input and
+output still needs its own index, while template bytes, lengths, hashes, and
+route proofs may be shared.
+
+The planner must also choose the witness form for each identity:
+
+- input-only validation needs prefix and suffix lengths
+- output-only validation needs prefix and suffix bytes
+- an output may reuse a matching input template
+- identities used by both read and write paths need one deliberate choice
+  between input reuse and passing bytes from which lengths can be derived
+
+Pin representative generated Sil and sigscript-size changes so later clause
+lowering does not reintroduce duplicate template witnesses.
+
 ## Genesis launch roots
 
 Expose artifact/runtime guidance for actors that look genesis-created: actors
