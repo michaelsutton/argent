@@ -5,7 +5,7 @@ use kaspa_consensus_core::{
     tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionOutpoint, UtxoEntry},
 };
 
-use crate::{ArgValue, ArtifactValue};
+use crate::{ArgValue, ArtifactValue, BuilderError, BuilderResult};
 
 /// An actor in the primary app or in a named attached app.
 ///
@@ -53,6 +53,93 @@ impl fmt::Display for ActorPath {
 
 type CallbackError = Box<dyn Error + Send + Sync + 'static>;
 type EntryArgsCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<ArgValue>, CallbackError> + 'a;
+pub(crate) type OutputStateCallback<'a> = dyn Fn(&StateContext) -> Result<BTreeMap<String, ArtifactValue>, CallbackError> + 'a;
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum GenesisPath {
+    Launch(String),
+    Spawn(String),
+}
+
+impl GenesisPath {
+    fn parse(path: &str) -> BuilderResult<Self> {
+        let Some((kind, name)) = path.split_once("::") else {
+            return Err(BuilderError::InvalidGenesisPath(path.to_string()));
+        };
+        if name.is_empty() || name.contains("::") {
+            return Err(BuilderError::InvalidGenesisPath(path.to_string()));
+        }
+        match kind {
+            "launch" => Ok(Self::Launch(name.to_string())),
+            "spawns" => Ok(Self::Spawn(name.to_string())),
+            _ => Err(BuilderError::InvalidGenesisPath(path.to_string())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct GenesisGroupKey {
+    pub authorizing_input: usize,
+    pub path: GenesisPath,
+}
+
+impl GenesisGroupKey {
+    pub fn parse(authorizing_input: usize, path: &str) -> BuilderResult<Self> {
+        Ok(Self { authorizing_input, path: GenesisPath::parse(path)? })
+    }
+}
+
+/// Builder-resolved values available while constructing deferred output state.
+///
+/// The context is populated after every declared genesis group has been
+/// assigned its covenant ID and before the final unsigned transaction is
+/// materialized.
+pub struct StateContext {
+    genesis_covenant_ids: BTreeMap<GenesisGroupKey, kaspa_consensus_core::Hash>,
+}
+
+impl StateContext {
+    pub(crate) fn new(genesis_covenant_ids: BTreeMap<GenesisGroupKey, kaspa_consensus_core::Hash>) -> Self {
+        Self { genesis_covenant_ids }
+    }
+
+    /// Return the covenant ID assigned to a declared genesis group.
+    pub fn covenant_id(&self, authorizing_input: usize, genesis: impl AsRef<str>) -> BuilderResult<kaspa_consensus_core::Hash> {
+        let key = GenesisGroupKey::parse(authorizing_input, genesis.as_ref())?;
+        self.genesis_covenant_ids
+            .get(&key)
+            .copied()
+            .ok_or_else(|| BuilderError::UnknownGenesisGroup { authorizing_input, genesis: genesis.as_ref().to_string() })
+    }
+}
+
+/// State for an Argent continuation output.
+pub enum OutputState<'a> {
+    /// State known when the transaction context is declared.
+    Static(BTreeMap<String, ArtifactValue>),
+    /// State computed after genesis covenant IDs have been resolved.
+    WithContext(Box<OutputStateCallback<'a>>),
+}
+
+impl fmt::Debug for OutputState<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Static(state) => formatter.debug_tuple("Static").field(state).finish(),
+            Self::WithContext(_) => formatter.write_str("WithContext(<callback>)"),
+        }
+    }
+}
+
+impl<'a> From<BTreeMap<String, ArtifactValue>> for OutputState<'a> {
+    fn from(state: BTreeMap<String, ArtifactValue>) -> Self {
+        Self::Static(state)
+    }
+}
+
+/// Defer continuation state until genesis covenant IDs have been resolved.
+pub fn state_with<'a>(build: impl Fn(&StateContext) -> BuilderResult<BTreeMap<String, ArtifactValue>> + 'a) -> OutputState<'a> {
+    OutputState::WithContext(Box::new(move |context| build(context).map_err(|error| Box::new(error) as CallbackError)))
+}
 
 /// User arguments for an Argent entry call.
 pub enum EntryArgs<'a> {
@@ -190,11 +277,21 @@ pub enum ContextInput<'a> {
 }
 
 /// One Argent covenant output in a transaction context.
+#[derive(Debug)]
+pub struct ArgentOutput<'a> {
+    pub actor: ActorPath,
+    pub state: OutputState<'a>,
+    pub covenant: CovenantBinding,
+    pub value: u64,
+}
+
+/// One Argent actor output belonging to a newly created covenant group.
 #[derive(Clone, Debug)]
-pub struct ArgentOutput {
+pub struct GenesisArgentOutput {
+    pub authorizing_input: usize,
+    pub genesis: String,
     pub actor: ActorPath,
     pub state: BTreeMap<String, ArtifactValue>,
-    pub covenant: CovenantBinding,
     pub value: u64,
 }
 
@@ -207,17 +304,19 @@ pub struct OrdinaryOutput {
 }
 
 /// An ordered output in a transaction context.
-#[derive(Clone, Debug)]
-pub enum ContextOutput {
-    Argent(ArgentOutput),
+#[derive(Debug)]
+pub enum ContextOutput<'a> {
+    Argent(ArgentOutput<'a>),
+    GenesisArgent(GenesisArgentOutput),
     Ordinary(OrdinaryOutput),
 }
 
 /// Artifact-independent description of one complete transaction.
 ///
 /// Inputs and outputs appear in transaction order. The context records only
-/// concrete transaction metadata; a [`crate::TxBuilder`] later resolves actor
-/// paths and fills Argent-generated scripts from its artifact bundle.
+/// transaction metadata; a [`crate::TxBuilder`] later resolves actor paths,
+/// genesis bindings, deferred continuation state, and Argent-generated scripts
+/// from its artifact bundle.
 /// Callers provide only user-visible entry arguments and signature callbacks;
 /// the builder derives compiler-generated witness material from the context
 /// and artifact bundle.
@@ -227,7 +326,7 @@ pub enum ContextOutput {
 #[derive(Debug, Default)]
 pub struct TxContext<'a> {
     pub inputs: Vec<ContextInput<'a>>,
-    pub outputs: Vec<ContextOutput>,
+    pub outputs: Vec<ContextOutput<'a>>,
     pub lock_time: u64,
     pub subnetwork_id: SubnetworkId,
     pub gas: u64,
@@ -300,11 +399,34 @@ impl<'a> TxContext<'a> {
     pub fn argent_output(
         mut self,
         actor: impl Into<ActorPath>,
-        state: BTreeMap<String, ArtifactValue>,
+        state: impl Into<OutputState<'a>>,
         covenant: CovenantBinding,
         value: u64,
     ) -> Self {
-        self.outputs.push(ContextOutput::Argent(ArgentOutput { actor: actor.into(), state, covenant, value }));
+        self.outputs.push(ContextOutput::Argent(ArgentOutput { actor: actor.into(), state: state.into(), covenant, value }));
+        self
+    }
+
+    /// Append a statically defined Argent output to a genesis covenant group.
+    ///
+    /// `genesis` is either `launch::<local_name>` or
+    /// `spawns::<clause_name>`. Repeating the same path and authorizing input
+    /// places several outputs in one ordered genesis group.
+    pub fn genesis_output(
+        mut self,
+        authorizing_input: usize,
+        genesis: impl Into<String>,
+        actor: impl Into<ActorPath>,
+        state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+    ) -> Self {
+        self.outputs.push(ContextOutput::GenesisArgent(GenesisArgentOutput {
+            authorizing_input,
+            genesis: genesis.into(),
+            actor: actor.into(),
+            state,
+            value,
+        }));
         self
     }
 

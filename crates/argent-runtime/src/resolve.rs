@@ -7,16 +7,20 @@ use argent_artifact::{
 use kaspa_consensus_core::{
     Hash,
     constants::TX_VERSION_TOCCATA,
+    hashing::covenant_id::covenant_id,
     subnets::SubnetworkId,
-    tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
+    tx::{
+        CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutpoint, TransactionOutput,
+    },
 };
-use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
-use kaspa_txscript_errors::TxScriptError;
+use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
 
+use crate::context::{GenesisGroupKey, GenesisPath, OutputStateCallback};
 use crate::{
-    ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
-    ContractRef, EntryArgs, HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput,
-    OrdinaryOutput, Side, SpawnedActorContext, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    ActorPath, ArgentInput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs,
+    HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OrdinaryOutput,
+    OutputState, Side, SpawnedActorContext, StateContext, TxBuilder, TxContext, covenant_engine_flags,
+    execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -28,20 +32,27 @@ struct ResolvedEntryArgs {
     template_selectors: BTreeMap<String, String>,
 }
 
-#[derive(Default)]
-struct GenesisGroup {
+struct DeclaredGenesisGroup {
     output_indices: Vec<usize>,
+}
+
+struct ResolvedGenesisGroup {
+    key: GenesisGroupKey,
+    output_indices: Vec<usize>,
+    binding: CovenantBinding,
 }
 
 /// Artifact-bound working representation of a [`TxContext`].
 ///
 /// Actor paths are resolved once into concrete app, contract, and entry
 /// metadata while transaction ordering and transaction-wide fields are
-/// preserved. Subsequent passes populate entry arguments, observations, and
-/// hidden witnesses before the final signature scripts are assembled.
+/// preserved. Subsequent passes validate inputs, assign genesis bindings,
+/// resolve deferred output state, and populate entry witnesses before the
+/// final signature scripts are assembled.
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
-    outputs: Vec<ResolveOutput<'artifact, 'context>>,
+    outputs: Vec<ResolveOutput<'artifact, 'context, 'args>>,
+    genesis_groups: BTreeMap<GenesisGroupKey, DeclaredGenesisGroup>,
     lock_time: u64,
     subnetwork_id: SubnetworkId,
     gas: u64,
@@ -51,6 +62,15 @@ struct ResolveContext<'artifact, 'context, 'args> {
 enum ResolveInput<'artifact, 'context, 'args> {
     Argent(ResolveArgentInput<'artifact, 'context, 'args>),
     Ordinary(&'context OrdinaryInput<'args>),
+}
+
+impl ResolveInput<'_, '_, '_> {
+    fn outpoint(&self) -> TransactionOutpoint {
+        match self {
+            Self::Argent(input) => input.source.outpoint,
+            Self::Ordinary(input) => input.outpoint,
+        }
+    }
 }
 
 struct ResolveArgentInput<'artifact, 'context, 'args> {
@@ -73,21 +93,53 @@ impl<'artifact> ResolveArgentInput<'artifact, '_, '_> {
     }
 }
 
-enum ResolveOutput<'artifact, 'context> {
-    Argent(ResolveArgentOutput<'artifact, 'context>),
+enum ResolveOutput<'artifact, 'context, 'args> {
+    Argent(ResolveArgentOutput<'artifact, 'context, 'args>),
     Ordinary(&'context OrdinaryOutput),
 }
 
-struct ResolveArgentOutput<'artifact, 'context> {
-    source: &'context ArgentOutput,
+enum ResolveOutputState<'context, 'args> {
+    Ready { state: BTreeMap<String, ArtifactValue>, script_public_key: ScriptPublicKey },
+    Deferred(&'context OutputStateCallback<'args>),
+}
+
+impl ResolveOutputState<'_, '_> {
+    fn ready(&self) -> (&BTreeMap<String, ArtifactValue>, &ScriptPublicKey) {
+        let Self::Ready { state, script_public_key } = self else {
+            unreachable!("output state resolution precedes transaction materialization")
+        };
+        (state, script_public_key)
+    }
+}
+
+struct ResolveArgentOutput<'artifact, 'context, 'args> {
+    actor: &'context ActorPath,
+    value: u64,
     app: String,
     artifact: &'artifact Artifact,
     contract: &'artifact SilContractArtifact,
+    state: ResolveOutputState<'context, 'args>,
+    covenant: Option<CovenantBinding>,
 }
 
-impl<'artifact> ResolveArgentOutput<'artifact, '_> {
+impl<'artifact> ResolveArgentOutput<'artifact, '_, '_> {
     fn contract_ref(&self) -> ContractRef<'artifact> {
         ContractRef { artifact: self.artifact, contract: self.contract }
+    }
+
+    fn state(&self) -> &BTreeMap<String, ArtifactValue> {
+        self.state.ready().0
+    }
+}
+
+fn transaction_output(output: &ResolveOutput<'_, '_, '_>) -> TransactionOutput {
+    match output {
+        ResolveOutput::Argent(output) => {
+            TransactionOutput::with_covenant(output.value, output.state.ready().1.clone(), output.covenant)
+        }
+        ResolveOutput::Ordinary(output) => {
+            TransactionOutput::with_covenant(output.value, output.script_public_key.clone(), output.covenant)
+        }
     }
 }
 
@@ -133,16 +185,49 @@ impl<'artifact> TxBuilder<'artifact> {
         }
 
         let mut outputs = Vec::with_capacity(context.outputs.len());
-        for output in &context.outputs {
+        let mut genesis_groups = BTreeMap::<GenesisGroupKey, DeclaredGenesisGroup>::new();
+        for (output_index, output) in context.outputs.iter().enumerate() {
             match output {
                 ContextOutput::Argent(output) => {
                     let (app, contract_ref) = self.bind_actor(&output.actor)?;
+                    let state = match &output.state {
+                        OutputState::Static(state) => {
+                            let state = state.clone();
+                            let script_public_key =
+                                pay_to_script_hash_script(&self.redeem_script_for_contract(contract_ref, state.clone())?);
+                            ResolveOutputState::Ready { state, script_public_key }
+                        }
+                        OutputState::WithContext(build) => ResolveOutputState::Deferred(build.as_ref()),
+                    };
                     outputs.push(ResolveOutput::Argent(ResolveArgentOutput {
-                        source: output,
+                        actor: &output.actor,
+                        value: output.value,
                         app,
                         artifact: contract_ref.artifact,
                         contract: contract_ref.contract,
+                        state,
+                        covenant: Some(output.covenant),
                     }));
+                }
+                ContextOutput::GenesisArgent(output) => {
+                    let genesis = GenesisGroupKey::parse(output.authorizing_input, &output.genesis)?;
+                    let (app, contract_ref) = self.bind_actor(&output.actor)?;
+                    let state = output.state.clone();
+                    let script_public_key = pay_to_script_hash_script(&self.redeem_script_for_contract(contract_ref, state.clone())?);
+                    outputs.push(ResolveOutput::Argent(ResolveArgentOutput {
+                        actor: &output.actor,
+                        value: output.value,
+                        app,
+                        artifact: contract_ref.artifact,
+                        contract: contract_ref.contract,
+                        state: ResolveOutputState::Ready { state, script_public_key },
+                        covenant: None,
+                    }));
+                    genesis_groups
+                        .entry(genesis)
+                        .or_insert_with(|| DeclaredGenesisGroup { output_indices: Vec::new() })
+                        .output_indices
+                        .push(output_index);
                 }
                 ContextOutput::Ordinary(output) => outputs.push(ResolveOutput::Ordinary(output)),
             }
@@ -151,6 +236,7 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(ResolveContext {
             inputs,
             outputs,
+            genesis_groups,
             lock_time: context.lock_time,
             subnetwork_id: context.subnetwork_id,
             gas: context.gas,
@@ -158,26 +244,121 @@ impl<'artifact> TxBuilder<'artifact> {
         })
     }
 
-    /// Materialize the unsigned transaction described by `context`.
+    /// Validate artifact-backed input metadata before invoking user callbacks.
+    fn validate_context_inputs(&self, context: &ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
+        for (input_index, input) in context.inputs.iter().enumerate() {
+            let ResolveInput::Argent(input) = input else {
+                continue;
+            };
+            if input.source.utxo.covenant_id.is_none() {
+                return Err(BuilderError::MissingArgentInputCovenantId { input_index, actor: input.source.actor.to_string() });
+            }
+            let expected_script =
+                pay_to_script_hash_script(&self.redeem_script_for_contract(input.contract_ref(), input.source.state.clone())?);
+            if input.source.utxo.script_public_key != expected_script {
+                return Err(BuilderError::ArgentInputScriptMismatch { input_index, actor: input.source.actor.to_string() });
+            }
+        }
+        Ok(())
+    }
+
+    /// Compute and assign every explicitly declared genesis covenant binding.
+    ///
+    /// Groups are assembled from `GenesisArgent` outputs during context
+    /// binding. Their output lists are therefore nonempty, ordered, disjoint,
+    /// in bounds, statically resolved, and initially unbound. This pass only
+    /// validates the authorizing input and integer widths before calling the
+    /// canonical rusty-kaspa covenant-id function.
+    fn resolve_genesis_bindings(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<StateContext> {
+        let mut resolved_groups = Vec::with_capacity(context.genesis_groups.len());
+        for (key, group) in &context.genesis_groups {
+            if let GenesisPath::Spawn(spawn) = &key.path {
+                let Some(ResolveInput::Argent(input)) = context.inputs.get(key.authorizing_input) else {
+                    return Err(BuilderError::SpawnGenesisRequiresArgentInput {
+                        authorizing_input: key.authorizing_input,
+                        spawn: spawn.clone(),
+                    });
+                };
+                if !input.argent_entry.spawns.iter().any(|candidate| candidate.name == *spawn) {
+                    return Err(BuilderError::UnknownSpawnClause {
+                        input_index: key.authorizing_input,
+                        actor: input.source.actor.to_string(),
+                        entry: input.source.entry.name.clone(),
+                        spawn: spawn.clone(),
+                    });
+                }
+            }
+
+            let authorizing_input = u16::try_from(key.authorizing_input)
+                .map_err(|_| BuilderError::GenesisAuthorizingInputOverflow(key.authorizing_input))?;
+            let input = context.inputs.get(key.authorizing_input).ok_or(BuilderError::UnknownGenesisAuthorizingInput {
+                authorizing_input: key.authorizing_input,
+                input_count: context.inputs.len(),
+            })?;
+            let outputs = group
+                .output_indices
+                .iter()
+                .map(|&output_index| {
+                    let index = u32::try_from(output_index).map_err(|_| BuilderError::GenesisOutputIndexOverflow(output_index))?;
+                    Ok((index, transaction_output(&context.outputs[output_index])))
+                })
+                .collect::<BuilderResult<Vec<_>>>()?;
+            let covenant_id = covenant_id(input.outpoint(), outputs.iter().map(|(index, output)| (*index, output)));
+            resolved_groups.push(ResolvedGenesisGroup {
+                key: key.clone(),
+                output_indices: group.output_indices.clone(),
+                binding: CovenantBinding::new(authorizing_input, covenant_id),
+            });
+        }
+
+        let mut covenant_ids = BTreeMap::new();
+        for group in resolved_groups {
+            covenant_ids.insert(group.key, group.binding.covenant_id);
+            for output_index in group.output_indices {
+                let ResolveOutput::Argent(output) = &mut context.outputs[output_index] else {
+                    unreachable!("only Argent outputs can declare context genesis groups")
+                };
+                output.covenant = Some(group.binding);
+            }
+        }
+        Ok(StateContext::new(covenant_ids))
+    }
+
+    /// Evaluate continuation states after all genesis covenant IDs are known.
+    fn resolve_deferred_output_states(
+        &self,
+        context: &mut ResolveContext<'artifact, '_, '_>,
+        state_context: &StateContext,
+    ) -> BuilderResult<()> {
+        for (output_index, output) in context.outputs.iter_mut().enumerate() {
+            let ResolveOutput::Argent(output) = output else {
+                continue;
+            };
+            let ResolveOutputState::Deferred(build) = &output.state else {
+                continue;
+            };
+            let state = build(state_context).map_err(|source| BuilderError::OutputStateCallback {
+                output_index,
+                actor: output.actor.to_string(),
+                source,
+            })?;
+            let script_public_key = pay_to_script_hash_script(&self.redeem_script_for_contract(output.contract_ref(), state.clone())?);
+            output.state = ResolveOutputState::Ready { state, script_public_key };
+        }
+        Ok(())
+    }
+
+    /// Materialize the final unsigned transaction described by `context`.
     ///
     /// All input sigscripts are empty. This is the single transaction view
-    /// against which later resolution passes evaluate argument and sigscript
-    /// callbacks.
-    fn unsigned_transaction(&self, context: &ResolveContext<'artifact, '_, '_>) -> BuilderResult<MutableTransaction<Transaction>> {
+    /// against which later argument and sigscript callbacks are evaluated.
+    fn unsigned_transaction(&self, context: &ResolveContext<'artifact, '_, '_>) -> MutableTransaction<Transaction> {
         let mut inputs = Vec::with_capacity(context.inputs.len());
         let mut entries = Vec::with_capacity(context.inputs.len());
 
-        for (input_index, input) in context.inputs.iter().enumerate() {
+        for input in &context.inputs {
             match input {
                 ResolveInput::Argent(input) => {
-                    if input.source.utxo.covenant_id.is_none() {
-                        return Err(BuilderError::MissingArgentInputCovenantId { input_index, actor: input.source.actor.to_string() });
-                    }
-                    let expected_script =
-                        pay_to_script_hash_script(&self.redeem_script_for_contract(input.contract_ref(), input.source.state.clone())?);
-                    if input.source.utxo.script_public_key != expected_script {
-                        return Err(BuilderError::ArgentInputScriptMismatch { input_index, actor: input.source.actor.to_string() });
-                    }
                     inputs.push(TransactionInput::new_with_compute_budget(
                         input.source.outpoint,
                         Vec::new(),
@@ -195,21 +376,7 @@ impl<'artifact> TxBuilder<'artifact> {
 
         let mut outputs = Vec::with_capacity(context.outputs.len());
         for output in &context.outputs {
-            match output {
-                ResolveOutput::Argent(output) => {
-                    let script_public_key = pay_to_script_hash_script(
-                        &self.redeem_script_for_contract(output.contract_ref(), output.source.state.clone())?,
-                    );
-                    outputs.push(TransactionOutput::with_covenant(
-                        output.source.value,
-                        script_public_key,
-                        Some(output.source.covenant),
-                    ));
-                }
-                ResolveOutput::Ordinary(output) => {
-                    outputs.push(TransactionOutput::with_covenant(output.value, output.script_public_key.clone(), output.covenant));
-                }
-            }
+            outputs.push(transaction_output(output));
         }
 
         let transaction = Transaction::new(
@@ -221,7 +388,7 @@ impl<'artifact> TxBuilder<'artifact> {
             context.gas,
             context.payload.to_vec(),
         );
-        Ok(MutableTransaction::with_entries(transaction, entries))
+        MutableTransaction::with_entries(transaction, entries)
     }
 
     /// Resolve user-visible entry arguments for every Argent input.
@@ -314,34 +481,19 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
-    /// Resolve each declared spawn from the genesis groups authorized by this input.
-    /// Before reporting a missing group, prefer any canonical covenant-binding error.
-    fn resolve_context_spawns(
-        &self,
-        context: &mut ResolveContext<'artifact, '_, '_>,
-        unsigned: &MutableTransaction<Transaction>,
-    ) -> BuilderResult<()> {
+    /// Resolve each declared spawn from its explicitly named context genesis group.
+    fn resolve_context_spawns(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
         for input_index in 0..context.inputs.len() {
             let ResolveInput::Argent(input) = &context.inputs[input_index] else {
                 continue;
             };
 
-            let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
-            let genesis_groups = collect_genesis_groups(context, input_index, input_covenant_id);
             let mut spawned_actors = BTreeMap::new();
-            let mut candidate_groups = genesis_groups.iter();
             for spawn in &input.argent_entry.spawns {
-                let matched = loop {
-                    let Some(group) = candidate_groups.next() else {
-                        // A malformed binding may have hidden the intended group from this input.
-                        let verifiable = unsigned.as_verifiable();
-                        CovenantsContext::from_tx(&verifiable).map_err(TxScriptError::from)?;
-                        return Err(BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() });
-                    };
-                    if let Some(matched) = self.match_spawn_group(context, input, spawn, group)? {
-                        break matched;
-                    }
-                };
+                let key = GenesisGroupKey { authorizing_input: input_index, path: GenesisPath::Spawn(spawn.name.clone()) };
+                let group =
+                    context.genesis_groups.get(&key).ok_or_else(|| BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() })?;
+                let matched = self.match_spawn_group(context, input, spawn, group)?;
                 spawned_actors.extend(matched);
             }
 
@@ -351,52 +503,48 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
-    /// Test one concrete genesis group against a spawn declaration.
+    /// Match one explicitly named genesis group against a spawn declaration.
     ///
     /// A match requires the exact declared output count and, in declaration
     /// order, Argent output metadata whose concrete actors expose the declared
     /// `actor_type<State>` handles. State values remain the generated script's
-    /// responsibility. Logical mismatches may be skipped by the caller; invalid
-    /// source values or artifact data are returned as builder errors.
+    /// responsibility.
     fn match_spawn_group(
         &self,
         context: &ResolveContext<'artifact, '_, '_>,
         input: &ResolveArgentInput<'artifact, '_, '_>,
         spawn: &SpawnArtifact,
-        group: &GenesisGroup,
-    ) -> BuilderResult<Option<ResolvedSpawnActors>> {
+        group: &DeclaredGenesisGroup,
+    ) -> BuilderResult<ResolvedSpawnActors> {
         if group.output_indices.len() != spawn.outputs.len() {
-            return Ok(None);
+            return Err(BuilderError::SpawnOutputCountMismatch {
+                spawn: spawn.name.clone(),
+                expected: spawn.outputs.len(),
+                found: group.output_indices.len(),
+            });
         }
 
         let mut spawned_actors = BTreeMap::new();
         for (output, &output_index) in spawn.outputs.iter().zip(&group.output_indices) {
             let ResolveOutput::Argent(resolved_output) = &context.outputs[output_index] else {
-                return Ok(None);
+                unreachable!("context genesis groups contain only Argent outputs")
             };
             let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
             let found_handle =
-                match self.actor_type_handle_in_artifact(resolved_output.artifact, &resolved_output.source.actor.actor, &output.state)
-                {
-                    Ok(handle) => handle,
-                    Err(BuilderError::MissingActorTypeHandle { .. }) => {
-                        return Ok(None);
-                    }
-                    Err(error) => return Err(error),
-                };
+                self.actor_type_handle_in_artifact(resolved_output.artifact, &resolved_output.actor.actor, &output.state)?;
             if found_handle != expected_handle {
-                return Ok(None);
+                return Err(BuilderError::SpawnActorMismatch {
+                    spawn: spawn.name.clone(),
+                    handle: output.name.clone(),
+                    actor: resolved_output.actor.to_string(),
+                });
             }
             spawned_actors.insert(
                 (spawn.name.clone(), output.name.clone()),
-                SpawnedActorContext {
-                    app: resolved_output.app.clone(),
-                    actor: resolved_output.source.actor.actor.clone(),
-                    output_index,
-                },
+                SpawnedActorContext { app: resolved_output.app.clone(), actor: resolved_output.actor.actor.clone(), output_index },
             );
         }
-        Ok(Some(spawned_actors))
+        Ok(spawned_actors)
     }
 
     /// Resolve compiler-generated arguments from artifact-local routes and the
@@ -474,11 +622,14 @@ impl<'artifact> TxBuilder<'artifact> {
     /// compiler-generated witness arguments.
     pub fn build(&self, context: &TxContext<'_>) -> BuilderResult<Transaction> {
         let mut context = self.bind_context(context)?;
-        let unsigned = self.unsigned_transaction(&context)?;
+        self.validate_context_inputs(&context)?;
+        let state_context = self.resolve_genesis_bindings(&mut context)?;
+        self.resolve_deferred_output_states(&mut context, &state_context)?;
+        let unsigned = self.unsigned_transaction(&context);
         self.validate_leader_actor_input_counts(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context)?;
-        self.resolve_context_spawns(&mut context, &unsigned)?;
+        self.resolve_context_spawns(&mut context)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
 
@@ -526,29 +677,6 @@ impl<'artifact> TxBuilder<'artifact> {
         execute_transaction_with_covenants(&mut transaction, entries)?;
         Ok(transaction)
     }
-}
-
-/// Collect genesis groups authorized by one input, following consensus's
-/// `(authorizing input, covenant ID)` grouping. Outputs within a group retain
-/// global transaction order; groups are ordered by their first output.
-fn collect_genesis_groups(context: &ResolveContext<'_, '_, '_>, input_index: usize, input_covenant_id: Hash) -> Vec<GenesisGroup> {
-    let mut groups = BTreeMap::<Hash, GenesisGroup>::new();
-    for (output_index, output) in context.outputs.iter().enumerate() {
-        let binding = match output {
-            ResolveOutput::Argent(output) => Some(output.source.covenant),
-            ResolveOutput::Ordinary(output) => output.covenant,
-        };
-        let Some(binding) = binding else {
-            continue;
-        };
-        if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
-            continue;
-        }
-        groups.entry(binding.covenant_id).or_default().output_indices.push(output_index);
-    }
-    let mut groups = groups.into_values().collect::<Vec<_>>();
-    groups.sort_by_key(|group| group.output_indices[0]);
-    groups
 }
 
 /// Resolve a spawn actor expression from the input's source state or user
@@ -659,7 +787,7 @@ fn matching_observed_outputs(context: &ResolveContext<'_, '_, '_>, covenant_id: 
         .iter()
         .enumerate()
         .filter(|(_, candidate)| match candidate {
-            ResolveOutput::Argent(candidate) => candidate.source.covenant.covenant_id == covenant_id,
+            ResolveOutput::Argent(candidate) => candidate.covenant.is_some_and(|binding| binding.covenant_id == covenant_id),
             ResolveOutput::Ordinary(candidate) => {
                 candidate.covenant.as_ref().is_some_and(|binding| binding.covenant_id == covenant_id)
             }
@@ -705,7 +833,7 @@ fn resolve_observed_output(
     observe: &str,
     declaration: &ObservedActorArtifact,
     index: usize,
-    candidate: &ResolveOutput<'_, '_>,
+    candidate: &ResolveOutput<'_, '_, '_>,
     app: &mut Option<String>,
 ) -> BuilderResult<(String, ObservedOutput)> {
     let ResolveOutput::Argent(candidate) = candidate else {
@@ -717,10 +845,7 @@ fn resolve_observed_output(
         });
     };
     merge_observed_app(observe, app, &candidate.app)?;
-    Ok((
-        declaration.name.clone(),
-        ObservedOutput { actor: candidate.source.actor.actor.clone(), state: candidate.source.state.clone() },
-    ))
+    Ok((declaration.name.clone(), ObservedOutput { actor: candidate.actor.actor.clone(), state: candidate.state().clone() }))
 }
 
 fn merge_observed_app(observe: &str, app: &mut Option<String>, candidate: &str) -> BuilderResult<()> {
@@ -897,7 +1022,8 @@ mod tests {
         assert!(matches!(&resolved.outputs[0], ResolveOutput::Argent(output) if output.app == "primary"));
         assert!(matches!(&resolved.outputs[2], ResolveOutput::Argent(output) if output.app == "asset"));
 
-        let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
+        builder.validate_context_inputs(&resolved).expect("context inputs validate");
+        let unsigned = builder.unsigned_transaction(&resolved);
 
         assert_eq!(unsigned.tx.version, TX_VERSION_TOCCATA);
         assert_eq!(unsigned.tx.inputs.len(), 3);
@@ -933,7 +1059,7 @@ mod tests {
     }
 
     #[test]
-    fn unsigned_transaction_rejects_missing_covenant_id_and_mismatched_state() {
+    fn context_input_validation_rejects_missing_covenant_id_and_mismatched_state() {
         let artifact = artifact("primary", "Counter", "bump");
         let builder = TxBuilder::new(&artifact).expect("artifact builds");
         let covenant_id = Hash::from_bytes([0x33; 32]);
@@ -945,14 +1071,14 @@ mod tests {
         let missing_id = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), unbound_utxo, 0);
         let missing_id = builder.bind_context(&missing_id).expect("context binds");
         assert!(matches!(
-            builder.unsigned_transaction(&missing_id),
+            builder.validate_context_inputs(&missing_id),
             Err(BuilderError::MissingArgentInputCovenantId { input_index: 0, actor }) if actor == "Counter"
         ));
 
         let wrong_state = TxContext::new().argent_input("Counter", state(3), "bump", outpoint(1), matching_utxo, 0);
         let wrong_state = builder.bind_context(&wrong_state).expect("context binds");
         assert!(matches!(
-            builder.unsigned_transaction(&wrong_state),
+            builder.validate_context_inputs(&wrong_state),
             Err(BuilderError::ArgentInputScriptMismatch { input_index: 0, actor }) if actor == "Counter"
         ));
     }
@@ -1029,7 +1155,8 @@ mod tests {
             )
             .argent_output("Counter", state(3), CovenantBinding::new(0, covenant_id), 900);
         let mut resolved = builder.bind_context(&context).expect("context binds");
-        let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
+        builder.validate_context_inputs(&resolved).expect("context inputs validate");
+        let unsigned = builder.unsigned_transaction(&resolved);
 
         builder.resolve_context_args(&mut resolved, &unsigned).expect("arguments resolve");
 
@@ -1067,7 +1194,8 @@ mod tests {
             0,
         );
         let mut resolved = builder.bind_context(&context).expect("context binds");
-        let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
+        builder.validate_context_inputs(&resolved).expect("context inputs validate");
+        let unsigned = builder.unsigned_transaction(&resolved);
 
         builder.resolve_context_args(&mut resolved, &unsigned).expect("arguments resolve");
         let resolved = resolved_args(&resolved, 0).expect("input is Argent");
@@ -1098,7 +1226,8 @@ mod tests {
             0,
         );
         let mut resolved = builder.bind_context(&context).expect("context binds");
-        let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
+        builder.validate_context_inputs(&resolved).expect("context inputs validate");
+        let unsigned = builder.unsigned_transaction(&resolved);
 
         builder.resolve_context_args(&mut resolved, &unsigned).expect("arguments resolve");
 
@@ -1120,7 +1249,8 @@ mod tests {
             builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
         let context = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), counter_utxo, 0);
         let mut resolved = builder.bind_context(&context).expect("context binds");
-        let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
+        builder.validate_context_inputs(&resolved).expect("context inputs validate");
+        let unsigned = builder.unsigned_transaction(&resolved);
 
         assert!(matches!(
             builder.resolve_context_args(&mut resolved, &unsigned),

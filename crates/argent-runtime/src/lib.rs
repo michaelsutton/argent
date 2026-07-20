@@ -17,8 +17,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 pub use argent_artifact::Artifact;
 pub use context::{
-    ActorPath, ArgentInput, ArgentOutput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput,
-    OrdinaryOutput, TxContext,
+    ActorPath, ArgentInput, ArgentOutput, ContextInput, ContextOutput, EntryArgs, EntryCall, GenesisArgentOutput, InputSigScript,
+    OrdinaryInput, OrdinaryOutput, OutputState, StateContext, TxContext, state_with,
 };
 pub use silverscript_abi::ArtifactValue;
 
@@ -341,8 +341,33 @@ pub enum BuilderError {
     MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("spawn `{spawn}` has no genesis output `{handle}` at group index {group_index}")]
     MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
-    #[error("spawn `{spawn}` has no compatible genesis output group")]
+    #[error("spawn `{spawn}` has no declared context genesis group")]
     MissingSpawnGroup { spawn: String },
+    #[error("spawn `{spawn}` expects {expected} genesis outputs, found {found}")]
+    SpawnOutputCountMismatch { spawn: String, expected: usize, found: usize },
+    #[error("spawn `{spawn}` output `{handle}` is incompatible with actor `{actor}`")]
+    SpawnActorMismatch { spawn: String, handle: String, actor: String },
+    #[error("genesis path `{0}` must be `launch::<name>` or `spawns::<clause>`")]
+    InvalidGenesisPath(String),
+    #[error("genesis group `{genesis}` authorized by input {authorizing_input} is not declared")]
+    UnknownGenesisGroup { authorizing_input: usize, genesis: String },
+    #[error("spawn genesis group `spawns::{spawn}` must be authorized by an Argent input, got input {authorizing_input}")]
+    SpawnGenesisRequiresArgentInput { authorizing_input: usize, spawn: String },
+    #[error("Argent input {input_index} `{actor}::{entry}` has no `spawns {spawn}` clause")]
+    UnknownSpawnClause { input_index: usize, actor: String, entry: String, spawn: String },
+    #[error("genesis authorizing input index {0} does not fit a covenant binding")]
+    GenesisAuthorizingInputOverflow(usize),
+    #[error("genesis authorizing input {authorizing_input} does not exist; transaction context has {input_count} inputs")]
+    UnknownGenesisAuthorizingInput { authorizing_input: usize, input_count: usize },
+    #[error("genesis output index {0} does not fit a covenant group")]
+    GenesisOutputIndexOverflow(usize),
+    #[error("failed to build state for Argent output {output_index} `{actor}`: {source}")]
+    OutputStateCallback {
+        output_index: usize,
+        actor: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -398,6 +423,10 @@ pub enum BuilderError {
     MissingGenesisCovenantOutput(u32),
     #[error("genesis covenant output {0} does not exist")]
     UnknownGenesisOutput(u32),
+    #[error("transaction output {0} has no covenant binding")]
+    MissingCovenantOutputBinding(u32),
+    #[error("transaction output {0} does not exist")]
+    UnknownTransactionOutput(u32),
 }
 
 #[derive(Clone, Debug)]
@@ -449,6 +478,29 @@ pub struct GenesisOutput {
     pub utxo: UtxoEntry,
 }
 
+/// A newly built covenant output ready to be used as a transaction input.
+pub struct CovenantOutput {
+    pub index: u32,
+    pub covenant_id: Hash,
+    pub outpoint: TransactionOutpoint,
+    pub utxo: UtxoEntry,
+}
+
+impl CovenantOutput {
+    /// Derive the first-spend handle for one output of a built transaction.
+    pub fn at(tx: &Transaction, index: u32) -> BuilderResult<Self> {
+        let output = tx.outputs.get(index as usize).ok_or(BuilderError::UnknownTransactionOutput(index))?;
+        let covenant_id = output.covenant.ok_or(BuilderError::MissingCovenantOutputBinding(index))?.covenant_id;
+        Ok(Self {
+            index,
+            covenant_id,
+            outpoint: TransactionOutpoint::new(tx.id(), index),
+            utxo: UtxoEntry::new(output.value, output.script_public_key.clone(), 0, tx.is_coinbase(), Some(covenant_id)),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
 struct ContractRef<'a> {
     artifact: &'a Artifact,
     contract: &'a SilContractArtifact,

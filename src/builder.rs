@@ -32,7 +32,6 @@ mod tests {
         },
     };
     use kaspa_txscript::{opcodes::codes::OpTrue, parse_script, pay_to_script_hash_signature_script_with_flags};
-    use kaspa_txscript_errors::{CovenantsError, TxScriptError};
     use secp256k1::{Keypair, Secp256k1, SecretKey};
 
     static ARTIFACT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -600,12 +599,8 @@ mod tests {
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");
 
-        let left_pair_output =
-            builder.genesis_output("pair_app::Pair", left_pair_state.clone(), 2_000).expect("left pair genesis output builds");
-        let right_pair_output =
-            builder.genesis_output("pair_app::Pair", right_pair_state.clone(), 2_000).expect("right pair genesis output builds");
-        let pair_id = covenant_id(controller_outpoint, [(1, &left_pair_output), (3, &right_pair_output)].into_iter());
         let unrelated_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let callback_pair_id = std::cell::Cell::new(None);
         let context = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
@@ -615,14 +610,25 @@ mod tests {
                 controller_utxo.clone(),
                 0,
             )
-            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", left_pair_state.clone(), CovenantBinding::new(0, pair_id), 2_000)
+            .argent_output(
+                "controller_app::Controller",
+                state_with(|ctx| {
+                    callback_pair_id.set(Some(ctx.covenant_id(0, "spawns::new_pair")?));
+                    Ok(next_controller_state.clone())
+                }),
+                CovenantBinding::new(0, controller_id),
+                5_000,
+            )
+            .genesis_output(0, "spawns::new_pair", "pair_app::Pair", left_pair_state.clone(), 2_000)
             .output(unrelated_spk.clone(), None, 1_000)
-            .argent_output("pair_app::Pair", right_pair_state.clone(), CovenantBinding::new(0, pair_id), 2_000);
-        builder.build(&context).expect("generated genesis id matches rusty-kaspa");
+            .genesis_output(0, "spawns::new_pair", "pair_app::Pair", right_pair_state.clone(), 2_000);
+        let transaction = builder.build(&context).expect("context populates the declared spawn group");
+        let pair_id = covenant_id(controller_outpoint, [(1, &transaction.outputs[1]), (3, &transaction.outputs[3])].into_iter());
+        assert_eq!(callback_pair_id.get(), Some(pair_id));
+        assert_eq!(transaction.outputs[1].covenant, Some(CovenantBinding::new(0, pair_id)));
+        assert_eq!(transaction.outputs[3].covenant, Some(CovenantBinding::new(0, pair_id)));
 
-        let wrong_id = Hash::from_bytes([99; 32]);
-        let wrong_context = TxContext::new()
+        let unknown_spawn = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
                 state! { pair_type: builder.actor_type_handle("pair_app::Pair", "PairState").unwrap(), launches: 0 },
@@ -632,15 +638,12 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", left_pair_state.clone(), CovenantBinding::new(0, wrong_id), 2_000)
-            .output(unrelated_spk.clone(), None, 1_000)
-            .argent_output("pair_app::Pair", right_pair_state.clone(), CovenantBinding::new(0, wrong_id), 2_000);
-        let err = builder.build(&wrong_context).expect_err("a non-genesis covenant id must report the consensus failure");
+            .genesis_output(0, "spawns::missing", "pair_app::Pair", left_pair_state.clone(), 2_000);
+        let err = builder.build(&unknown_spawn).expect_err("spawn paths must name a clause on the authorizing entry");
         assert!(
             matches!(
                 err,
-                BuilderError::TxScript(TxScriptError::CovenantsError(CovenantsError::WrongGenesisCovenantId(0, found)))
-                    if found == wrong_id
+                BuilderError::UnknownSpawnClause { input_index: 0, ref spawn, .. } if spawn == "missing"
             ),
             "unexpected error: {err}"
         );
@@ -654,13 +657,68 @@ mod tests {
                 controller_utxo,
                 0,
             )
-            .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", left_pair_state, CovenantBinding::new(1, pair_id), 2_000)
+            .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
+            .genesis_output(1, "spawns::new_pair", "pair_app::Pair", left_pair_state, 2_000)
             .output(unrelated_spk, None, 1_000)
-            .argent_output("pair_app::Pair", right_pair_state, CovenantBinding::new(1, pair_id), 2_000);
-        let err = builder.build(&invalid_authority).expect_err("an out-of-range authorizing input must report the consensus failure");
+            .genesis_output(1, "spawns::new_pair", "pair_app::Pair", right_pair_state, 2_000);
+        let err = builder.build(&invalid_authority).expect_err("spawn groups must be authorized by their named Argent input");
         assert!(
-            matches!(err, BuilderError::TxScript(TxScriptError::CovenantsError(CovenantsError::AuthInputOutOfBounds(1, 1)))),
+            matches!(
+                err,
+                BuilderError::SpawnGenesisRequiresArgentInput { authorizing_input: 1, ref spawn } if spawn == "new_pair"
+            ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn context_launches_genesis_covenant_from_an_ordinary_input() {
+        let source = "tests/fixtures/runtime/context_genesis_spawn/app.ag";
+        let pair_artifact = selected_app_artifact(source, "PairApp", "context-genesis-launch");
+        let builder = TxBuilder::new(&pair_artifact).expect("builder accepts pair artifact");
+
+        let funding_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x61; 32]), 4);
+        let funding_script = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let funding_utxo = UtxoEntry::new(3_000, funding_script, 0, false, None);
+        let context = TxContext::new().input(funding_outpoint, funding_utxo, Vec::new(), 0).genesis_output(
+            0,
+            "launch::pair",
+            "Pair",
+            state! { value: 7 },
+            2_000,
+        );
+
+        let transaction = builder.build(&context).expect("ordinary input launches the pair covenant");
+        let expected_id = covenant_id(funding_outpoint, [(0, &transaction.outputs[0])].into_iter());
+        let launched = CovenantOutput::at(&transaction, 0).expect("launched output exposes a spendable handle");
+
+        assert_eq!(transaction.outputs[0].covenant, Some(CovenantBinding::new(0, expected_id)));
+        assert_eq!(launched.covenant_id, expected_id);
+        assert_eq!(launched.outpoint, TransactionOutpoint::new(transaction.id(), 0));
+        assert_eq!(launched.utxo.script_public_key, transaction.outputs[0].script_public_key);
+
+        let invalid_path = TxContext::new()
+            .input(
+                funding_outpoint,
+                UtxoEntry::new(3_000, ScriptPublicKey::new(0, vec![OpTrue].into()), 0, false, None),
+                Vec::new(),
+                0,
+            )
+            .genesis_output(0, "pair", "Pair", state! { value: 7 }, 2_000);
+        let err = builder.build(&invalid_path).expect_err("genesis paths require a namespace");
+        assert!(matches!(err, BuilderError::InvalidGenesisPath(ref path) if path == "pair"), "unexpected error: {err}");
+
+        let missing_input = TxContext::new()
+            .input(
+                funding_outpoint,
+                UtxoEntry::new(3_000, ScriptPublicKey::new(0, vec![OpTrue].into()), 0, false, None),
+                Vec::new(),
+                0,
+            )
+            .genesis_output(1, "launch::pair", "Pair", state! { value: 7 }, 2_000);
+        let err = builder.build(&missing_input).expect_err("launch paths must name an existing authorizing input");
+        assert!(
+            matches!(err, BuilderError::UnknownGenesisAuthorizingInput { authorizing_input: 1, input_count: 1 }),
             "unexpected error: {err}"
         );
     }
@@ -691,22 +749,8 @@ mod tests {
         let controller_utxo = builder
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");
-        let first_left_output =
-            builder.genesis_output("pair_app::Pair", first_left_state.clone(), 2_000).expect("first left genesis output builds");
-        let first_right_output =
-            builder.genesis_output("pair_app::Pair", first_right_state.clone(), 2_000).expect("first right genesis output builds");
-        let second_output =
-            builder.genesis_output("pair_app::Pair", second_state.clone(), 3_000).expect("second genesis output builds");
-        let third_left_output =
-            builder.genesis_output("pair_app::Pair", third_left_state.clone(), 2_000).expect("third left genesis output builds");
-        let third_right_output =
-            builder.genesis_output("pair_app::Pair", third_right_state.clone(), 2_000).expect("third right genesis output builds");
-
         // The first group occupies global outputs 1 and 3, while the second
         // occupies output 2. Group identity, not adjacency, keeps each spawn together.
-        let first_pair_id = covenant_id(controller_outpoint, [(1, &first_left_output), (3, &first_right_output)].into_iter());
-        let second_pair_id = covenant_id(controller_outpoint, [(2, &second_output)].into_iter());
-        let third_pair_id = covenant_id(controller_outpoint, [(4, &third_left_output), (5, &third_right_output)].into_iter());
         let context = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
@@ -717,12 +761,12 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
-            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, second_pair_id), 3_000)
-            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, first_pair_id), 2_000)
-            .argent_output("pair_app::Pair", third_left_state.clone(), CovenantBinding::new(0, third_pair_id), 2_000)
-            .argent_output("pair_app::Pair", third_right_state.clone(), CovenantBinding::new(0, third_pair_id), 2_000);
-        let transaction = builder.build(&context).expect("interleaved genesis groups resolve by first output order");
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_left_state.clone(), 2_000)
+            .genesis_output(0, "spawns::second_pair", "pair_app::Pair", second_state.clone(), 3_000)
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_right_state.clone(), 2_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_left_state.clone(), 2_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_right_state.clone(), 2_000);
+        let transaction = builder.build(&context).expect("explicit paths resolve interleaved genesis groups");
 
         // Security regressions: bypass spawn resolution and invoke the generated Sil directly. The first and third clauses
         // use identical actor types, states, and values, allowing malicious indices to reuse or substitute their outputs
@@ -793,8 +837,6 @@ mod tests {
             "generated Sil must reject an incomplete witnessed genesis group"
         );
 
-        let reversed_second_pair_id = covenant_id(controller_outpoint, [(1, &second_output)].into_iter());
-        let reversed_first_pair_id = covenant_id(controller_outpoint, [(2, &first_left_output), (3, &first_right_output)].into_iter());
         let reversed_groups = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
@@ -805,19 +847,15 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state.clone(), CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", second_state.clone(), CovenantBinding::new(0, reversed_second_pair_id), 3_000)
-            .argent_output("pair_app::Pair", first_left_state.clone(), CovenantBinding::new(0, reversed_first_pair_id), 2_000)
-            .argent_output("pair_app::Pair", first_right_state.clone(), CovenantBinding::new(0, reversed_first_pair_id), 2_000);
-        let err = builder.build(&reversed_groups).expect_err("spawn groups must remain in declaration order");
-        assert!(
-            matches!(
-                err,
-                BuilderError::MissingSpawnGroup { ref spawn } if spawn == "second_pair"
-            ),
-            "unexpected error: {err}"
-        );
+            .genesis_output(0, "spawns::second_pair", "pair_app::Pair", second_state.clone(), 3_000)
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_left_state.clone(), 2_000)
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_right_state.clone(), 2_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_left_state.clone(), 2_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_right_state.clone(), 2_000);
+        let err = builder.build(&reversed_groups).expect_err("generated Sil must preserve spawn declaration order");
+        assert!(matches!(err, BuilderError::InputScript { input_index: 0, .. }), "unexpected error: {err}");
 
-        let missing_metadata = TxContext::new()
+        let wrong_count = TxContext::new()
             .argent_input(
                 "controller_app::Controller",
                 controller_state,
@@ -827,21 +865,19 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output("pair_app::Pair", first_left_state, CovenantBinding::new(0, first_pair_id), 2_000)
-            .argent_output("pair_app::Pair", second_state, CovenantBinding::new(0, second_pair_id), 3_000)
-            .output(first_right_output.script_public_key, Some(CovenantBinding::new(0, first_pair_id)), 2_000);
-        let err = builder.build(&missing_metadata).expect_err("spawn outputs must retain Argent actor metadata");
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_left_state, 2_000);
+        let err = builder.build(&wrong_count).expect_err("spawn groups must contain every declared output");
         assert!(
             matches!(
                 err,
-                BuilderError::MissingSpawnGroup { ref spawn } if spawn == "first_pair"
+                BuilderError::SpawnOutputCountMismatch { ref spawn, expected: 2, found: 1 } if spawn == "first_pair"
             ),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn context_matches_spawn_groups_as_an_ordered_subset() {
+    fn context_resolves_explicit_spawns_among_unrelated_launches() {
         let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
         let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-subset-spawns-controller");
         let pair_artifact = selected_app_artifact(source, "PairApp", "context-subset-spawns-pair");
@@ -865,28 +901,9 @@ mod tests {
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");
 
-        let extra_left =
-            builder.genesis_output("controller_app::Controller", controller_state.clone(), 100).expect("extra left output builds");
-        let extra_right =
-            builder.genesis_output("controller_app::Controller", controller_state.clone(), 200).expect("extra right output builds");
-        let unrelated_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
-        let extra_middle = TransactionOutput::new(300, unrelated_spk.clone());
-        let first_left = builder.genesis_output("pair_app::Pair", first_left_state.clone(), 2_000).expect("first left output builds");
-        let first_right =
-            builder.genesis_output("pair_app::Pair", first_right_state.clone(), 2_000).expect("first right output builds");
-        let second = builder.genesis_output("pair_app::Pair", second_state.clone(), 3_000).expect("second output builds");
-        let third_left = builder.genesis_output("pair_app::Pair", third_left_state.clone(), 2_000).expect("third left output builds");
-        let third_right =
-            builder.genesis_output("pair_app::Pair", third_right_state.clone(), 2_000).expect("third right output builds");
-
         // Two unrelated genesis groups precede or separate the three declared groups:
-        // a same-size group of the wrong Argent actor at [1,3], and an ordinary
-        // output at [4]. The declared groups are first=[2,5], second=[6], third=[7,8].
-        let extra_first_id = covenant_id(controller_outpoint, [(1, &extra_left), (3, &extra_right)].into_iter());
-        let first_id = covenant_id(controller_outpoint, [(2, &first_left), (5, &first_right)].into_iter());
-        let extra_middle_id = covenant_id(controller_outpoint, [(4, &extra_middle)].into_iter());
-        let second_id = covenant_id(controller_outpoint, [(6, &second)].into_iter());
-        let third_id = covenant_id(controller_outpoint, [(7, &third_left), (8, &third_right)].into_iter());
+        // a same-size launch group of the wrong actor at [1,3], and another
+        // launch group at [4]. The spawns are first=[2,5], second=[6], third=[7,8].
 
         let context = TxContext::new()
             .argent_input(
@@ -898,21 +915,16 @@ mod tests {
                 0,
             )
             .argent_output("controller_app::Controller", next_controller_state, CovenantBinding::new(0, controller_id), 5_000)
-            .argent_output(
-                "controller_app::Controller",
-                controller_state.clone(),
-                CovenantBinding::new(0, extra_first_id),
-                extra_left.value,
-            )
-            .argent_output("pair_app::Pair", first_left_state, CovenantBinding::new(0, first_id), first_left.value)
-            .argent_output("controller_app::Controller", controller_state, CovenantBinding::new(0, extra_first_id), extra_right.value)
-            .output(unrelated_spk, Some(CovenantBinding::new(0, extra_middle_id)), extra_middle.value)
-            .argent_output("pair_app::Pair", first_right_state, CovenantBinding::new(0, first_id), first_right.value)
-            .argent_output("pair_app::Pair", second_state, CovenantBinding::new(0, second_id), second.value)
-            .argent_output("pair_app::Pair", third_left_state, CovenantBinding::new(0, third_id), third_left.value)
-            .argent_output("pair_app::Pair", third_right_state, CovenantBinding::new(0, third_id), third_right.value);
+            .genesis_output(0, "launch::extra_first", "controller_app::Controller", controller_state.clone(), 100)
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_left_state, 2_000)
+            .genesis_output(0, "launch::extra_first", "controller_app::Controller", controller_state, 200)
+            .genesis_output(0, "launch::extra_middle", "pair_app::Pair", state! { value: 99 }, 300)
+            .genesis_output(0, "spawns::first_pair", "pair_app::Pair", first_right_state, 2_000)
+            .genesis_output(0, "spawns::second_pair", "pair_app::Pair", second_state, 3_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_left_state, 2_000)
+            .genesis_output(0, "spawns::third_pair", "pair_app::Pair", third_right_state, 2_000);
 
-        builder.build(&context).expect("unrelated genesis groups are skipped while preserving declared spawn order");
+        builder.build(&context).expect("explicit spawn paths ignore unrelated launch groups");
     }
 
     #[test]
