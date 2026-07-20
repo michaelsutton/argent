@@ -713,7 +713,6 @@ fn spawn_actor_type_handle(input: &ResolveArgentInput<'_, '_, '_>, actor: &str) 
             .take(args.values.len())
             .position(|param| param.name == actor)
             .and_then(|index| args.values.get(index))
-            .or_else(|| input.source.state.get(actor))
     };
     let Some(ArtifactValue::Bytes(handle)) = value else {
         return Err(BuilderError::InvalidTransition {
