@@ -282,22 +282,17 @@ pub struct ActorArtifact {
     pub name: String,
     pub state: String,
     pub abi: ActorAbiRefArtifact,
-    /// Present when this actor is trusted as covenant input zero by one or
-    /// more delegate entries. Every non-delegate entry must then constrain the
-    /// complete same-covenant input group to itself and its declared consumes.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub delegate_leader: Option<DelegateLeaderArtifact>,
+    /// Delegate entries that trust this actor's contract at covenant input
+    /// zero. A nonempty list makes this a leader actor, so every leader
+    /// entry must constrain its complete same-covenant input group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leader_for: Vec<EntryRefArtifact>,
     pub entries: Vec<EntryArtifact>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DelegateLeaderArtifact {
-    /// Delegate entries whose first consumed actor is this leader.
-    pub delegated_by: Vec<DelegatingEntryArtifact>,
-}
-
+/// Identifies an entry by its declaring actor and source-level name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct DelegatingEntryArtifact {
+pub struct EntryRefArtifact {
     pub actor: String,
     pub entry: String,
 }
@@ -1990,7 +1985,7 @@ mod tests {
                         name: actor.to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: actor.to_string() },
-                        delegate_leader: None,
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     })
                     .collect(),
@@ -2051,14 +2046,14 @@ mod tests {
                         name: "Mux".to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Mux".to_string() },
-                        delegate_leader: None,
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     },
                     ActorArtifact {
                         name: "Player".to_string(),
                         state: "PlayerState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Player".to_string() },
-                        delegate_leader: None,
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     },
                 ],

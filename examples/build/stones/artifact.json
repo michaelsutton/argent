@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "ba6493d1ab728018af85205bc9e3a0c8ac89a3c4889a9b657e2213bdf0d304dd",
+  "id": "ff2aae5c571b095f9ae62c7bcb485babe9b323164d0c1c7e75bbfd6a4f10458b",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -612,14 +612,12 @@
         "abi": {
           "actor": "Player"
         },
-        "delegate_leader": {
-          "delegated_by": [
-            {
-              "actor": "Player",
-              "entry": "accept_start"
-            }
-          ]
-        },
+        "leader_for": [
+          {
+            "actor": "Player",
+            "entry": "accept_start"
+          }
+        ],
         "entries": [
           {
             "name": "start_game",
@@ -1304,14 +1302,12 @@
         "abi": {
           "actor": "StonesSettle"
         },
-        "delegate_leader": {
-          "delegated_by": [
-            {
-              "actor": "Player",
-              "entry": "settle"
-            }
-          ]
-        },
+        "leader_for": [
+          {
+            "actor": "Player",
+            "entry": "settle"
+          }
+        ],
         "entries": [
           {
             "name": "settle",

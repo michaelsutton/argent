@@ -14,8 +14,9 @@ selected from that input's signature script. Argent therefore protects
 delegation at actor granularity.
 
 The first consumed actor in a delegate's `consumes` clause is its statically
-declared leader. An actor named this way by any delegate is a *delegate leader*.
-Its artifact records every delegating actor and entry under `delegate_leader`.
+declared leader actor. An actor named this way by any delegate is a *leader
+actor*. Its artifact records the delegate entries that trust it under
+`leader_for`. Each actor lowers to one Sil contract.
 
 ### Assumptions
 
@@ -34,22 +35,22 @@ A generated delegate requires its active input not to equal covenant input
 zero. Therefore a successful delegate is never the first input in its covenant
 group.
 
-### Claim 2: a delegate authenticates its leader actor
+### Claim 2: a delegate authenticates its leader actor's contract
 
 A generated delegate reads covenant input zero using the template of its first
-consumed actor. A transaction using another actor at that position fails
-template validation. The delegate therefore trusts the named leader actor
-implementation, not an unauthenticated entrypoint selector.
+consumed actor. A transaction using another contract at that position fails
+template validation. The delegate therefore trusts the generated contract of
+the named leader actor, not an unauthenticated entrypoint selector.
 
-### Claim 3: covenant input zero executes a non-delegate entry
+### Claim 3: covenant input zero executes a leader entry
 
 Every delegate rejects execution at covenant input zero. Since every input must
-execute successfully, the authenticated leader actor at input zero must execute
-one of its non-delegate entries.
+execute successfully, the authenticated leader actor at input zero must
+execute one of its leader entries.
 
-### Claim 4: a delegate leader rejects undeclared same-covenant inputs
+### Claim 4: a leader actor rejects undeclared same-covenant inputs
 
-Every non-delegate entry of a delegate leader requires:
+Every leader entry of a leader actor requires:
 
 ```text
 OpCovInputCount(covenant_id) == 1 + declared_consumes
@@ -63,25 +64,28 @@ and fails the leader script.
 
 ### Result
 
-A successful delegated transition has a non-delegate entry of the authenticated
+A successful delegated transition has a leader entry of the authenticated
 leader actor at covenant input zero. That entry fixes the complete
 same-covenant input count, while each delegate independently authenticates the
-leader actor and rejects the leader position. An unrelated standalone entry of
-the same actor cannot unknowingly carry additional delegates.
+leader actor's generated contract and rejects the leader position. An unrelated
+standalone entry of the same actor cannot unknowingly carry additional
+delegates.
 
-### Actor-level batching restriction
+### Leader-actor batching restriction
 
-The restriction applies to the whole leader actor because another input's
-entrypoint selector is not safely introspectable. Once any delegate names an
-actor as its leader, every non-delegate entry of that actor closes its
-same-covenant input group, including otherwise independent 1:N entries.
+The restriction applies to the whole leader actor because all of its entries
+share one generated contract and another input's entrypoint selector is not
+safely introspectable. Once any delegate names an actor as its leader, every
+leader entry of that actor closes its same-covenant input group, including
+otherwise independent 1:N entries.
 
 This does not prevent the transaction from containing ordinary inputs or inputs
-with other covenant IDs. `consumes`-free entries of actors that are not delegate
-leaders retain ambient same-covenant batching. The artifact lists the delegate
-declarations that cause the restriction, and the runtime transaction builder
-reports violations before constructing signature scripts. This runtime check is
-fail-fast diagnostics; the generated Sil check is the security boundary.
+with other covenant IDs. `consumes`-free leader entries of non-leader actors
+retain ambient same-covenant batching. The artifact lists the delegate
+declarations that cause the restriction in `leader_for`, and the runtime
+transaction builder reports violations before constructing signature scripts.
+This runtime check is fail-fast diagnostics; the generated Sil check is the
+security boundary.
 
 ## Genesis spawns
 

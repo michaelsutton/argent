@@ -1077,13 +1077,13 @@ mod tests {
         assert!(
             matches!(
                 err,
-                BuilderError::DelegateLeaderInputCountMismatch {
+                BuilderError::LeaderActorInputCountMismatch {
                     input_index: 0,
                     expected: 1,
                     found: 2,
-                    ref delegated_by,
+                    ref leader_for,
                     ..
-                } if delegated_by == &["Player::accept_start"]
+                } if leader_for == &["Player::accept_start"]
             ),
             "unexpected error: {err}"
         );

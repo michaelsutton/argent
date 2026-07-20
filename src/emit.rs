@@ -63,6 +63,8 @@ struct Model<'a> {
     actors_by_name: BTreeMap<String, &'a ActorDecl>,
     actor_enums: BTreeMap<String, ActorEnumInfo>,
     actors: Vec<&'a ActorDecl>,
+    /// Delegate entries that establish each actor as a leader actor.
+    leader_for: BTreeMap<String, Vec<EntryRefArtifact>>,
     state_route_leaves: BTreeMap<String, Vec<RouteRootLeaf>>,
 }
 
@@ -123,6 +125,25 @@ enum RouteRootLeaf {
     Family(String),
 }
 
+fn compute_leader_for(actors: &[&ActorDecl]) -> BTreeMap<String, Vec<EntryRefArtifact>> {
+    let mut leader_for = BTreeMap::<String, Vec<EntryRefArtifact>>::new();
+    for actor in actors {
+        for entry in &actor.entries {
+            if entry.kind != EntryKind::Delegate {
+                continue;
+            }
+            let Some(leader) = entry.consumes.first() else {
+                continue;
+            };
+            leader_for
+                .entry(leader.actor.clone())
+                .or_default()
+                .push(EntryRefArtifact { actor: actor.name.clone(), entry: entry.name.clone() });
+        }
+    }
+    leader_for
+}
+
 impl<'a> Model<'a> {
     fn from_program(program: &'a Program) -> Result<Self> {
         Self::from_program_selected(program, None)
@@ -169,6 +190,7 @@ impl<'a> Model<'a> {
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
             app_name,
@@ -180,6 +202,7 @@ impl<'a> Model<'a> {
             actors_by_name: all_actors,
             actor_enums,
             actors,
+            leader_for,
             state_route_leaves,
         };
         model.validate()?;
@@ -220,28 +243,12 @@ impl<'a> Model<'a> {
         self.route_families.iter().filter(|family| family.state == state).collect()
     }
 
-    fn delegate_leader_reasons(&self, leader: &str) -> Vec<DelegatingEntryArtifact> {
-        self.actors
-            .iter()
-            .flat_map(|actor| {
-                actor
-                    .entries
-                    .iter()
-                    .filter(move |entry| {
-                        entry.kind == EntryKind::Delegate && entry.consumes.first().is_some_and(|consume| consume.actor == leader)
-                    })
-                    .map(|entry| DelegatingEntryArtifact { actor: actor.name.clone(), entry: entry.name.clone() })
-            })
-            .collect()
+    fn leader_for(&self, actor: &str) -> &[EntryRefArtifact] {
+        self.leader_for.get(actor).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    fn is_delegate_leader(&self, actor: &str) -> bool {
-        self.actors.iter().any(|candidate| {
-            candidate
-                .entries
-                .iter()
-                .any(|entry| entry.kind == EntryKind::Delegate && entry.consumes.first().is_some_and(|consume| consume.actor == actor))
-        })
+    fn is_leader_actor(&self, actor: &str) -> bool {
+        !self.leader_for(actor).is_empty()
     }
 
     fn template_selectors_for_entry(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<BTreeMap<String, TemplateSelector>> {
@@ -1780,12 +1787,15 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         out.push('\n');
     }
 
-    // A delegate authenticates its leader by reading covenant input zero with
-    // the leader's static template. Once an actor is trusted in that role, all
-    // of its non-delegate entries must reject undeclared same-covenant inputs;
-    // otherwise an unrelated entry could be mistaken for the coordinated one.
-    let closes_delegate_leader_group = entry.kind == EntryKind::Leader && model.is_delegate_leader(&actor.name);
-    if !entry.consumes.is_empty() || closes_delegate_leader_group {
+    // Covenant batching places multiple independent inputs with the same
+    // covenant ID in one transaction. A consumes-free leader entry in a
+    // contract that no delegate trusts can allow this because it does not
+    // treat the other inputs as a coordinated group. Every other entry needs
+    // the covenant-input prelude: consumes require peer reads, delegates
+    // validate their leader, and leader entries of leader actors must reject
+    // undeclared delegates.
+    let allows_cov_batching = entry.kind == EntryKind::Leader && entry.consumes.is_empty() && !model.is_leader_actor(&actor.name);
+    if !allows_cov_batching {
         out.push_str("        // :: cov inputs\n");
         let cov_id = hidden_cov_id_name();
         out.push_str(&format!("        byte[32] {cov_id} = OpInputCovenantId(this.activeInputIndex);\n"));
@@ -1793,7 +1803,10 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
             EntryKind::Leader => {
                 let count = entry.consumes.len() + 1;
                 out.push_str(&format!("        require(OpCovInputCount({cov_id}) == {count});\n"));
-                if !entry.consumes.is_empty() {
+                // If count == 1, the assertion below follows from the preceding
+                // OpCovInputCount check: cov_id is the active input's ID, so the
+                // only matching input at cov[0] must be this.activeInputIndex.
+                if count > 1 {
                     out.push_str(&format!("        require(OpCovInputIdx({cov_id}, 0) == this.activeInputIndex);\n"));
                 }
             }
@@ -4727,13 +4740,13 @@ fn route_template_proofs_artifact(
 
 fn actor_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<ActorArtifact> {
     let entries = actor.entries.iter().map(|entry| entry_artifact(actor, entry, model)).collect::<Result<Vec<_>>>()?;
-    let delegated_by = model.delegate_leader_reasons(&actor.name);
+    let leader_for = model.leader_for(&actor.name).to_vec();
 
     Ok(ActorArtifact {
         name: actor.name.clone(),
         state: actor.state.clone(),
         abi: ActorAbiRefArtifact { actor: actor.name.clone() },
-        delegate_leader: (!delegated_by.is_empty()).then_some(DelegateLeaderArtifact { delegated_by }),
+        leader_for,
         entries,
     })
 }
@@ -6460,7 +6473,7 @@ mod tests {
     }
 
     #[test]
-    fn delegate_leaders_close_all_non_delegate_input_groups() {
+    fn leader_actors_close_all_leader_input_groups() {
         let source = r#"
             state LeaderState {
                 int value;
@@ -6522,12 +6535,9 @@ mod tests {
         let actor_sil = actor_sil_for_model(&model);
         let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
         let leader = artifact.argent.actors.iter().find(|actor| actor.name == "Leader").expect("Leader artifact exists");
-        assert_eq!(
-            leader.delegate_leader.as_ref().map(|leader| &leader.delegated_by),
-            Some(&vec![DelegatingEntryArtifact { actor: "Worker".to_string(), entry: "assist".to_string() }])
-        );
+        assert_eq!(leader.leader_for, vec![EntryRefArtifact { actor: "Worker".to_string(), entry: "assist".to_string() }]);
         let unrelated = artifact.argent.actors.iter().find(|actor| actor.name == "Unrelated").expect("Unrelated artifact exists");
-        assert_eq!(unrelated.delegate_leader, None);
+        assert!(unrelated.leader_for.is_empty());
     }
 
     #[test]

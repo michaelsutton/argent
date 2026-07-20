@@ -352,15 +352,15 @@ pub enum BuilderError {
     #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
     ArgentInputScriptMismatch { input_index: usize, actor: String },
     #[error(
-        "Argent input {input_index} `{actor}::{entry}` requires exactly {expected} same-covenant inputs, found {found}; actor is a delegate leader for {delegated_by:?}"
+        "Argent input {input_index} `{actor}::{entry}` requires exactly {expected} same-covenant inputs, found {found}; actor is a leader actor trusted by delegates {leader_for:?}"
     )]
-    DelegateLeaderInputCountMismatch {
+    LeaderActorInputCountMismatch {
         input_index: usize,
         actor: String,
         entry: String,
         expected: usize,
         found: usize,
-        delegated_by: Vec<String>,
+        leader_for: Vec<String>,
     },
     #[error("failed to build arguments for Argent input {input_index} `{actor}::{entry}`: {source}")]
     EntryArgsCallback {
