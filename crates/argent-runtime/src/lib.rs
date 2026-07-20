@@ -341,12 +341,20 @@ pub enum BuilderError {
     MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("spawn `{spawn}` has no genesis output `{handle}` at group index {group_index}")]
     MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
-    #[error("spawn `{spawn}` has no compatible genesis output group")]
-    MissingSpawnGroup { spawn: String },
-    #[error("invalid genesis path `{0}`; expected `launch::<name>`")]
+    #[error("input {0} has no explicit genesis group `spawn::{1}`")]
+    MissingSpawnGroup(usize, String),
+    #[error("spawn `{0}` group is invalid: {1}")]
+    InvalidSpawnGroup(String, String),
+    #[error("spawn `{1}` requires Argent authorizing input {0}")]
+    SpawnAuthorizingInputNotArgent(u16, String),
+    #[error("input {0}'s selected entry does not declare spawn `{1}`")]
+    UnknownSpawn(u16, String),
+    #[error("invalid genesis path `{0}`; expected `launch::<name>` or `spawn::<clause>`")]
     InvalidGenesisPath(String),
     #[error("genesis authorizing input index {authorizing_input} is out of range for {input_count} inputs")]
     GenesisAuthorizingInputOutOfRange { authorizing_input: u16, input_count: usize },
+    #[error("transaction input index {0} does not fit a genesis authorizing input")]
+    GenesisAuthorizingInputIndexOverflow(usize),
     #[error("genesis output index {0} does not fit a covenant group")]
     GenesisOutputIndexOverflow(usize),
     #[error("Argent output {output_index} `{actor}` must have an existing or genesis covenant binding")]

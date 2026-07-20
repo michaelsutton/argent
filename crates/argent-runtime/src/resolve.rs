@@ -11,8 +11,7 @@ use kaspa_consensus_core::{
     subnets::SubnetworkId,
     tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutput},
 };
-use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
-use kaspa_txscript_errors::TxScriptError;
+use kaspa_txscript::{pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
 
 use crate::{
     ActorPath, ArgentInput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs,
@@ -36,20 +35,41 @@ struct GenesisGroup {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct LaunchGroupKey {
-    authorizing_input: u16,
-    name: String,
+enum GenesisGroupName {
+    Launch(String),
+    Spawn(String),
 }
 
-impl LaunchGroupKey {
-    fn parse(authorizing_input: u16, path: &str) -> BuilderResult<Self> {
-        let Some(name) = path.strip_prefix("launch::") else {
-            return Err(BuilderError::InvalidGenesisPath(path.to_string()));
-        };
+impl GenesisGroupName {
+    fn parse(path: &str) -> BuilderResult<Self> {
+        let (namespace, name) = path.split_once("::").ok_or_else(|| BuilderError::InvalidGenesisPath(path.to_string()))?;
         if name.is_empty() || name.contains("::") {
             return Err(BuilderError::InvalidGenesisPath(path.to_string()));
         }
-        Ok(Self { authorizing_input, name: name.to_string() })
+        match namespace {
+            "launch" => Ok(Self::Launch(name.to_string())),
+            "spawn" => Ok(Self::Spawn(name.to_string())),
+            _ => Err(BuilderError::InvalidGenesisPath(path.to_string())),
+        }
+    }
+
+    fn path(&self) -> String {
+        match self {
+            Self::Launch(name) => format!("launch::{name}"),
+            Self::Spawn(name) => format!("spawn::{name}"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GenesisGroupKey {
+    authorizing_input: u16,
+    name: GenesisGroupName,
+}
+
+impl GenesisGroupKey {
+    fn parse(authorizing_input: u16, path: &str) -> BuilderResult<Self> {
+        Ok(Self { authorizing_input, name: GenesisGroupName::parse(path)? })
     }
 }
 
@@ -61,7 +81,7 @@ impl LaunchGroupKey {
 /// hidden witnesses before the final signature scripts are assembled.
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
-    outputs: Vec<ResolveOutput<'artifact, 'context, 'args>>,
+    outputs: Vec<ResolveOutput<'artifact>>,
     lock_time: u64,
     subnetwork_id: SubnetworkId,
     gas: u64,
@@ -97,15 +117,30 @@ struct ResolvedActor<'artifact> {
     state: BTreeMap<String, ArtifactValue>,
 }
 
-enum ResolveOutputOwner<'artifact, 'context> {
+enum ResolveOutputOwner<'artifact> {
     Actor(ResolvedActor<'artifact>),
-    Spk(&'context ScriptPublicKey),
+    Spk(ScriptPublicKey),
 }
 
-struct ResolveOutput<'artifact, 'context, 'args> {
-    source: &'context ContextOutput<'args>,
-    owner: ResolveOutputOwner<'artifact, 'context>,
-    covenant: Option<CovenantBinding>,
+enum ResolveOutputBinding {
+    Unbound,
+    Existing(CovenantBinding),
+    Genesis { binding: CovenantBinding, group: GenesisGroupName },
+}
+
+impl ResolveOutputBinding {
+    fn covenant(&self) -> Option<CovenantBinding> {
+        match self {
+            Self::Unbound => None,
+            Self::Existing(binding) | Self::Genesis { binding, .. } => Some(*binding),
+        }
+    }
+}
+
+struct ResolveOutput<'artifact> {
+    owner: ResolveOutputOwner<'artifact>,
+    binding: ResolveOutputBinding,
+    value: u64,
 }
 
 impl<'artifact> TxBuilder<'artifact> {
@@ -159,9 +194,9 @@ impl<'artifact> TxBuilder<'artifact> {
             }
         }
 
-        // First output pass: bind actors, validate genesis declarations, and collect their ordered groups.
+        // Output phase 1: bind actors, validate genesis declarations, and collect their ordered groups.
         let mut bound_outputs = Vec::with_capacity(context.outputs.len());
-        let mut launch_groups = BTreeMap::<LaunchGroupKey, GenesisGroup>::new();
+        let mut genesis_groups = BTreeMap::<GenesisGroupKey, GenesisGroup>::new();
         for (output_index, output) in context.outputs.iter().enumerate() {
             if let OutputCovenant::Genesis { authorizing_input, subgroup } = &output.covenant {
                 if let OutputOwner::Actor { actor, state } = &output.owner
@@ -169,8 +204,21 @@ impl<'artifact> TxBuilder<'artifact> {
                 {
                     return Err(BuilderError::GenesisOutputStateCallback { output_index, actor: actor.to_string() });
                 }
-                let launch = LaunchGroupKey::parse(*authorizing_input, subgroup)?;
-                launch_groups.entry(launch).or_default().output_indices.push(output_index);
+                let group = GenesisGroupKey::parse(*authorizing_input, subgroup)?;
+                let authorizer =
+                    inputs.get(usize::from(*authorizing_input)).ok_or(BuilderError::GenesisAuthorizingInputOutOfRange {
+                        authorizing_input: *authorizing_input,
+                        input_count: inputs.len(),
+                    })?;
+                if let GenesisGroupName::Spawn(spawn) = &group.name {
+                    let ResolveInput::Argent(input) = authorizer else {
+                        return Err(BuilderError::SpawnAuthorizingInputNotArgent(*authorizing_input, spawn.clone()));
+                    };
+                    if !input.argent_entry.spawns.iter().any(|declared| declared.name == *spawn) {
+                        return Err(BuilderError::UnknownSpawn(*authorizing_input, spawn.clone()));
+                    }
+                }
+                genesis_groups.entry(group).or_default().output_indices.push(output_index);
             } else if let (OutputOwner::Actor { actor, .. }, OutputCovenant::Unbound) = (&output.owner, &output.covenant) {
                 return Err(BuilderError::UnboundArgentOutput { output_index, actor: actor.to_string() });
             }
@@ -183,12 +231,12 @@ impl<'artifact> TxBuilder<'artifact> {
             bound_outputs.push(BoundOutput { source: output, owner });
         }
 
-        // Derive every genesis covenant ID before any deferred output state is evaluated.
+        // Output phase 2: derive every genesis covenant ID before evaluating deferred states.
         let mut state_context = StateContext::default();
-        for (launch, group) in &launch_groups {
+        for (key, group) in &genesis_groups {
             let authorizing_input =
-                context.inputs.get(usize::from(launch.authorizing_input)).ok_or(BuilderError::GenesisAuthorizingInputOutOfRange {
-                    authorizing_input: launch.authorizing_input,
+                context.inputs.get(usize::from(key.authorizing_input)).ok_or(BuilderError::GenesisAuthorizingInputOutOfRange {
+                    authorizing_input: key.authorizing_input,
                     input_count: context.inputs.len(),
                 })?;
             let outpoint = match authorizing_input {
@@ -202,9 +250,7 @@ impl<'artifact> TxBuilder<'artifact> {
                     let output = &bound_outputs[output_index];
                     let spk = match &output.owner {
                         BoundOutputOwner::Actor { contract, state, .. } => {
-                            let OutputState::Static(state) = state else {
-                                unreachable!("genesis actor output callbacks are rejected while outputs are bound")
-                            };
+                            let OutputState::Static(state) = state else { unreachable!("expected by output phase 1") };
                             pay_to_script_hash_script(&self.redeem_script_for_contract(*contract, state.clone())?)
                         }
                         BoundOutputOwner::Spk(spk) => (*spk).clone(),
@@ -215,20 +261,21 @@ impl<'artifact> TxBuilder<'artifact> {
                 })
                 .collect::<BuilderResult<Vec<_>>>()?;
             let covenant_id = rk_hashing::covenant_id(outpoint, genesis_outputs.iter().map(|(index, output)| (*index, output)));
-            state_context.insert_genesis_covenant_id(launch.authorizing_input, format!("launch::{}", launch.name), covenant_id);
+            state_context.insert_genesis_covenant_id(key.authorizing_input, key.name.path(), covenant_id);
         }
 
-        // Second output pass: attach resolved bindings and evaluate states against the complete genesis context.
+        // Output phase 3: attach resolved bindings and evaluate states against the complete genesis context.
         let mut outputs = Vec::with_capacity(bound_outputs.len());
         for (output_index, output) in bound_outputs.into_iter().enumerate() {
-            let covenant = match &output.source.covenant {
-                OutputCovenant::Existing(binding) => Some(*binding),
-                OutputCovenant::Unbound => None,
+            let binding = match &output.source.covenant {
+                OutputCovenant::Existing(binding) => ResolveOutputBinding::Existing(*binding),
+                OutputCovenant::Unbound => ResolveOutputBinding::Unbound,
                 OutputCovenant::Genesis { authorizing_input, subgroup } => {
-                    let covenant_id = state_context
-                        .genesis_covenant_id(*authorizing_input, subgroup)
-                        .expect("genesis covenant IDs are populated before output states resolve");
-                    Some(CovenantBinding::new(*authorizing_input, covenant_id))
+                    let group = GenesisGroupKey::parse(*authorizing_input, subgroup)?;
+                    let covenant_id =
+                        state_context.genesis_covenant_id(*authorizing_input, subgroup).expect("expected by output phase 2");
+                    let binding = CovenantBinding::new(*authorizing_input, covenant_id);
+                    ResolveOutputBinding::Genesis { binding, group: group.name }
                 }
             };
             let owner = match output.owner {
@@ -240,9 +287,9 @@ impl<'artifact> TxBuilder<'artifact> {
                         source,
                     })?,
                 }),
-                BoundOutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
+                BoundOutputOwner::Spk(spk) => ResolveOutputOwner::Spk(spk.clone()),
             };
-            outputs.push(ResolveOutput { source: output.source, owner, covenant });
+            outputs.push(ResolveOutput { owner, binding, value: output.source.value });
         }
 
         Ok(ResolveContext {
@@ -296,9 +343,9 @@ impl<'artifact> TxBuilder<'artifact> {
                 ResolveOutputOwner::Actor(actor) => {
                     pay_to_script_hash_script(&self.redeem_script_for_contract(actor.contract, actor.state.clone())?)
                 }
-                ResolveOutputOwner::Spk(script_public_key) => (*script_public_key).clone(),
+                ResolveOutputOwner::Spk(script_public_key) => script_public_key.clone(),
             };
-            outputs.push(TransactionOutput::with_covenant(output.source.value, script_public_key, output.covenant));
+            outputs.push(TransactionOutput::with_covenant(output.value, script_public_key, output.binding.covenant()));
         }
 
         let transaction = Transaction::new(
@@ -407,35 +454,31 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
-    /// Resolve each declared spawn from the genesis groups authorized by this input.
-    /// Before reporting a missing group, prefer any canonical covenant-binding error.
-    fn resolve_context_spawns(
-        &self,
-        context: &mut ResolveContext<'artifact, '_, '_>,
-        unsigned: &MutableTransaction<Transaction>,
-    ) -> BuilderResult<()> {
+    /// Resolve each declared spawn from its explicitly named genesis group.
+    fn resolve_context_spawns(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
         for input_index in 0..context.inputs.len() {
             let ResolveInput::Argent(input) = &context.inputs[input_index] else {
                 continue;
             };
 
-            let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
-            let genesis_groups = collect_genesis_groups(context, unsigned, input_index, input_covenant_id);
             let mut spawned_actors = BTreeMap::new();
-            let mut candidate_groups = genesis_groups.iter();
+            let mut previous_first_output = None;
             for spawn in &input.argent_entry.spawns {
-                let matched = loop {
-                    let Some(group) = candidate_groups.next() else {
-                        // A malformed binding may have hidden the intended group from this input.
-                        let verifiable = unsigned.as_verifiable();
-                        CovenantsContext::from_tx(&verifiable).map_err(TxScriptError::from)?;
-                        return Err(BuilderError::MissingSpawnGroup { spawn: spawn.name.clone() });
-                    };
-                    if let Some(matched) = self.match_spawn_group(context, input, spawn, group)? {
-                        break matched;
-                    }
-                };
-                spawned_actors.extend(matched);
+                let authorizing_input =
+                    u16::try_from(input_index).map_err(|_| BuilderError::GenesisAuthorizingInputIndexOverflow(input_index))?;
+                let key = GenesisGroupKey { authorizing_input, name: GenesisGroupName::Spawn(spawn.name.clone()) };
+                let group = named_genesis_group(context, &key)
+                    .ok_or_else(|| BuilderError::MissingSpawnGroup(input_index, spawn.name.clone()))?;
+                let first_output = group.output_indices[0];
+                if previous_first_output.is_some_and(|previous| previous >= first_output) {
+                    return Err(BuilderError::InvalidSpawnGroup(
+                        spawn.name.clone(),
+                        "spawned genesis subgroups must appear in the input's `spawns` clause order (by first output index)"
+                            .to_string(),
+                    ));
+                }
+                previous_first_output = Some(first_output);
+                spawned_actors.extend(self.resolve_spawn_group(context, input, spawn, &group)?);
             }
 
             let ResolveInput::Argent(input) = &mut context.inputs[input_index] else { unreachable!() };
@@ -444,48 +487,69 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
-    /// Test one concrete genesis group against a spawn declaration.
+    /// Validate one explicitly named genesis group against a spawn declaration.
     ///
-    /// A match requires the exact declared output count and, in declaration
+    /// Validation requires the exact declared output count and, in declaration
     /// order, Argent output metadata whose concrete actors expose the declared
     /// `actor_type<State>` handles. State values remain the generated script's
-    /// responsibility. Logical mismatches may be skipped by the caller; invalid
-    /// source values or artifact data are returned as builder errors.
-    fn match_spawn_group(
+    /// responsibility.
+    fn resolve_spawn_group(
         &self,
         context: &ResolveContext<'artifact, '_, '_>,
         input: &ResolveArgentInput<'artifact, '_, '_>,
         spawn: &SpawnArtifact,
         group: &GenesisGroup,
-    ) -> BuilderResult<Option<ResolvedSpawnActors>> {
+    ) -> BuilderResult<ResolvedSpawnActors> {
         if group.output_indices.len() != spawn.outputs.len() {
-            return Ok(None);
+            return Err(BuilderError::InvalidSpawnGroup(
+                spawn.name.clone(),
+                format!("expected {} outputs, found {}", spawn.outputs.len(), group.output_indices.len()),
+            ));
         }
 
         let mut spawned_actors = BTreeMap::new();
         for (output, &output_index) in spawn.outputs.iter().zip(&group.output_indices) {
             let resolved_output = &context.outputs[output_index];
             let ResolveOutputOwner::Actor(actor) = &resolved_output.owner else {
-                return Ok(None);
+                return Err(BuilderError::InvalidSpawnGroup(
+                    spawn.name.clone(),
+                    format!("output `{}` at transaction index {output_index} has no Argent actor metadata", output.name),
+                ));
             };
             let actor_name = &actor.contract.contract.name;
             let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
             let found_handle = match self.actor_type_handle_in_artifact(actor.contract.artifact, actor_name, &output.state) {
                 Ok(handle) => handle,
                 Err(BuilderError::MissingActorTypeHandle { .. }) => {
-                    return Ok(None);
+                    return Err(BuilderError::InvalidSpawnGroup(
+                        spawn.name.clone(),
+                        format!(
+                            "output `{}` actor `{}::{actor_name}` does not expose actor_type<{}>",
+                            output.name,
+                            artifact_app_alias(&actor.contract.artifact.app),
+                            output.state
+                        ),
+                    ));
                 }
                 Err(error) => return Err(error),
             };
             if found_handle != expected_handle {
-                return Ok(None);
+                return Err(BuilderError::InvalidSpawnGroup(
+                    spawn.name.clone(),
+                    format!(
+                        "output `{}` actor `{}::{actor_name}` does not match `{}`",
+                        output.name,
+                        artifact_app_alias(&actor.contract.artifact.app),
+                        output.actor
+                    ),
+                ));
             }
             spawned_actors.insert(
                 (spawn.name.clone(), output.name.clone()),
                 SpawnedActorContext { app: artifact_app_alias(&actor.contract.artifact.app), actor: actor_name.clone(), output_index },
             );
         }
-        Ok(Some(spawned_actors))
+        Ok(spawned_actors)
     }
 
     /// Resolve compiler-generated arguments from artifact-local routes and the
@@ -567,7 +631,7 @@ impl<'artifact> TxBuilder<'artifact> {
         self.validate_leader_actor_input_counts(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context, &unsigned)?;
-        self.resolve_context_spawns(&mut context, &unsigned)?;
+        self.resolve_context_spawns(&mut context)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
 
@@ -617,34 +681,22 @@ impl<'artifact> TxBuilder<'artifact> {
     }
 }
 
-/// Collect genesis groups authorized by one input, following consensus's
-/// `(authorizing input, covenant ID)` grouping. Outputs within a group retain
-/// global transaction order; groups are ordered by their first output.
-/// Explicit `launch::<name>` groups are independent and do not satisfy an AG
-/// `spawns` clause.
-fn collect_genesis_groups(
-    context: &ResolveContext<'_, '_, '_>,
-    unsigned: &MutableTransaction<Transaction>,
-    input_index: usize,
-    input_covenant_id: Hash,
-) -> Vec<GenesisGroup> {
-    let mut groups = BTreeMap::<Hash, GenesisGroup>::new();
-    for (output_index, output) in context.outputs.iter().enumerate() {
-        if matches!(output.source.covenant, OutputCovenant::Genesis { .. }) {
-            continue;
-        }
-        let binding = unsigned.tx.outputs[output_index].covenant;
-        let Some(binding) = binding else {
-            continue;
-        };
-        if usize::from(binding.authorizing_input) != input_index || binding.covenant_id == input_covenant_id {
-            continue;
-        }
-        groups.entry(binding.covenant_id).or_default().output_indices.push(output_index);
-    }
-    let mut groups = groups.into_values().collect::<Vec<_>>();
-    groups.sort_by_key(|group| group.output_indices[0]);
-    groups
+/// Collect one explicitly named genesis group in global output order.
+fn named_genesis_group(context: &ResolveContext<'_, '_, '_>, key: &GenesisGroupKey) -> Option<GenesisGroup> {
+    let output_indices = context
+        .outputs
+        .iter()
+        .enumerate()
+        .filter_map(|(output_index, output)| match &output.binding {
+            ResolveOutputBinding::Genesis { binding, group }
+                if binding.authorizing_input == key.authorizing_input && group == &key.name =>
+            {
+                Some(output_index)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    (!output_indices.is_empty()).then_some(GenesisGroup { output_indices })
 }
 
 /// Resolve a spawn actor expression from the input's source state or user
@@ -798,7 +850,7 @@ fn resolve_observed_output(
     observe: &str,
     declaration: &ObservedActorArtifact,
     index: usize,
-    candidate: &ResolveOutput<'_, '_, '_>,
+    candidate: &ResolveOutput<'_>,
     app: &mut Option<String>,
 ) -> BuilderResult<(String, ObservedOutput)> {
     let ResolveOutputOwner::Actor(actor) = &candidate.owner else {

@@ -388,8 +388,9 @@ impl<'a> TxContext<'a> {
 
     /// Append a statically defined Argent output to a new covenant group.
     ///
-    /// Repeating the same `launch::<name>` and authorizing input places
-    /// multiple outputs in one ordered genesis group.
+    /// Repeating the same genesis path and authorizing input places multiple
+    /// outputs in one ordered group. Use `launch::<name>` for an independent
+    /// launch or `spawn::<clause>` for an entry's declared spawn.
     pub fn argent_genesis_output(
         mut self,
         authorizing_input: u16,
@@ -417,6 +418,9 @@ impl<'a> TxContext<'a> {
     }
 
     /// Append a concrete-script output to a new covenant group.
+    ///
+    /// Spawn groups require actor metadata, so `spawn::<clause>` paths must use
+    /// [`Self::argent_genesis_output`].
     pub fn genesis_output(
         mut self,
         authorizing_input: u16,
