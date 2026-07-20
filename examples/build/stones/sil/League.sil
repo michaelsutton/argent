@@ -97,6 +97,7 @@ contract League(
     int default_max_take = init_default_max_take;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function register_player(
         sig owner_sig,
         pubkey owner_pk,

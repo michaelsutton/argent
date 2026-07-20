@@ -13,6 +13,7 @@ contract Pair(
     int value = init_value;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function keep() {
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);

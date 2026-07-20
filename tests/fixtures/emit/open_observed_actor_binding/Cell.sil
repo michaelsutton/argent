@@ -25,6 +25,7 @@ contract Cell(
     int tick = init_tick;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function advance(
         int gen__remote_observed_agent_prefix_len,
         int gen__remote_observed_agent_suffix_len,

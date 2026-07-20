@@ -51,6 +51,7 @@ contract Cell(
     byte[32] occupant_caps_digest = init_occupant_caps_digest;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function advance(
         int gen__remote_self_occupant_agent_type_prefix_len,
         int gen__remote_self_occupant_agent_type_suffix_len,
@@ -119,6 +120,7 @@ contract Cell(
         validateOutputState(gen__cell_output_idx, next_cell);
     }
 
+    // :: leader entry (M:N)
     entrypoint function move(
         int dx,
         int dy,

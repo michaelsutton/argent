@@ -21,6 +21,7 @@ contract Controller(
     int launches = init_launches;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function launch(
         int first_left_value,
         int first_right_value,

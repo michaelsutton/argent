@@ -42,6 +42,7 @@ contract Minter(
     bool initialized = init_initialized;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function mint(
         sig owner_sig,
         byte[32] recipient_owner,

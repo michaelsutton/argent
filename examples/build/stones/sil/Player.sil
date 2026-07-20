@@ -100,6 +100,7 @@ contract Player(
     int losses = init_losses;
 
     // :: entrypoints
+    // :: leader entry (M:N)
     entrypoint function start_game(
         sig owner_sig,
         pubkey owner_pk,
@@ -202,6 +203,7 @@ contract Player(
         );
     }
 
+    // :: delegate entry
     entrypoint function accept_start(
         sig owner_sig,
         pubkey owner_pk,
@@ -228,6 +230,7 @@ contract Player(
         require(starter.player_id != player_id);
     }
 
+    // :: delegate entry
     entrypoint function settle(
         int gen__stones_settle_prefix_len,
         int gen__stones_settle_suffix_len
@@ -251,6 +254,7 @@ contract Player(
         require(self_ref == settle.player_a || self_ref == settle.player_b);
     }
 
+    // :: leader entry (1:N)
     entrypoint function retire(sig owner_sig, pubkey owner_pk) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);

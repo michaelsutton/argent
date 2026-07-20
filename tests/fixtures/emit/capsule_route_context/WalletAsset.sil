@@ -21,6 +21,7 @@ contract WalletAsset(
     int balance = init_balance;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function hold(byte[8] gen__policy_reserve_policy_preimage) {
         // :: expanded state
         require(blake2b(gen__policy_reserve_policy_preimage) == policy);

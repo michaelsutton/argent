@@ -21,6 +21,7 @@ contract Controller(
     int tick = init_tick;
 
     // :: entrypoints
+    // :: leader entry (M:N)
     entrypoint function step(int gen__peer_prefix_len, int gen__peer_suffix_len) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);

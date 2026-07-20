@@ -36,6 +36,7 @@ contract League(
     int nonce = init_nonce;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function register(byte[] gen__player_prefix, byte[] gen__player_suffix) {
         // :: witness lens
         int gen__player_prefix_len = gen__player_prefix.length;

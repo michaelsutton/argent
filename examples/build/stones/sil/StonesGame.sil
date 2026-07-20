@@ -99,6 +99,7 @@ contract StonesGame(
     int turn = init_turn;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function take(
         int amount,
         byte[32] player_id,
@@ -165,6 +166,7 @@ contract StonesGame(
         }
     }
 
+    // :: leader entry (1:N)
     entrypoint function concede(
         byte[32] player_id,
         sig move_sig,

@@ -36,6 +36,7 @@ contract Pawn(
     int ply = init_ply;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function back_to_mux(byte[] gen__mux_prefix, byte[] gen__mux_suffix) {
         // :: witness lens
         int gen__mux_prefix_len = gen__mux_prefix.length;

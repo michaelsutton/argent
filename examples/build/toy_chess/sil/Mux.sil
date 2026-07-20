@@ -36,6 +36,7 @@ contract Mux(
     int ply = init_ply;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
         // :: witness lens
         int gen__target_prefix_len = gen__target_prefix.length;
@@ -73,6 +74,7 @@ contract Mux(
         );
     }
 
+    // :: leader entry (1:N)
     entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix) {
         // :: witness lens
         int gen__target_prefix_len = gen__target_prefix.length;
@@ -107,6 +109,7 @@ contract Mux(
         );
     }
 
+    // :: leader entry (1:N)
     entrypoint function choose_pawn(byte[] gen__pawn_prefix, byte[] gen__pawn_suffix) {
         // :: witness lens
         int gen__pawn_prefix_len = gen__pawn_prefix.length;
@@ -138,6 +141,7 @@ contract Mux(
         );
     }
 
+    // :: leader entry (1:N)
     entrypoint function choose_knight(byte[] gen__knight_prefix, byte[] gen__knight_suffix) {
         // :: witness lens
         int gen__knight_prefix_len = gen__knight_prefix.length;

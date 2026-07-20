@@ -15,6 +15,7 @@ contract Forager(
     int energy = init_energy;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function hold(byte[8] gen__strategy_forager_strategy_preimage) {
         // :: expanded state
         require(blake2b(gen__strategy_forager_strategy_preimage) == strategy);

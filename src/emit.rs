@@ -1755,6 +1755,13 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
 fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
     let witness_specs = entry_witness_specs(actor, entry, model)?;
     let sil_params = lower_entry_params(actor, entry, &witness_specs, model);
+    match entry.kind {
+        EntryKind::Leader => {
+            let shape = if entry.consumes.is_empty() { "1:N" } else { "M:N" };
+            out.push_str(&format!("    // :: leader entry ({shape})\n"));
+        }
+        EntryKind::Delegate => out.push_str("    // :: delegate entry\n"),
+    }
     push_entry_signature(out, &entry.name, &sil_params);
 
     let has_byte_witnesses =
@@ -6526,8 +6533,13 @@ mod tests {
         let model = Model::from_program(&program).expect("model validates");
 
         let leader_sil = emit_actor(model.actor("Leader").expect("Leader exists"), &model).expect("Leader emits");
+        assert!(leader_sil.contains("// :: leader entry (1:N)\n    entrypoint function standalone("), "{leader_sil}");
+        assert!(leader_sil.contains("// :: leader entry (M:N)\n    entrypoint function coordinated("), "{leader_sil}");
         assert!(leader_sil.contains("require(OpCovInputCount(gen__cov_id) == 1);"), "{leader_sil}");
         assert!(leader_sil.contains("require(OpCovInputCount(gen__cov_id) == 2);"), "{leader_sil}");
+
+        let worker_sil = emit_actor(model.actor("Worker").expect("Worker exists"), &model).expect("Worker emits");
+        assert!(worker_sil.contains("// :: delegate entry\n    entrypoint function assist("), "{worker_sil}");
 
         let unrelated_sil = emit_actor(model.actor("Unrelated").expect("Unrelated exists"), &model).expect("Unrelated emits");
         assert!(!unrelated_sil.contains("OpCovInputCount"), "{unrelated_sil}");

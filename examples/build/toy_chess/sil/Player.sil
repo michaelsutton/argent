@@ -35,6 +35,7 @@ contract Player(
     int nonce = init_nonce;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function enter_mux(
         byte[] gen__mux_prefix,
         byte[] gen__mux_suffix,

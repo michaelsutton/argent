@@ -21,6 +21,7 @@ contract ReserveAsset(
     int balance = init_balance;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function settle(int next_balance, byte[8] gen__policy_reserve_policy_preimage) {
         // :: expanded state
         require(blake2b(gen__policy_reserve_policy_preimage) == policy);
@@ -47,6 +48,7 @@ contract ReserveAsset(
         validateOutputState(gen__next_output_idx, next_asset);
     }
 
+    // :: leader entry (1:N)
     entrypoint function withdraw(
         int next_balance,
         byte[] gen__wallet_asset_prefix,

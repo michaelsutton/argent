@@ -97,6 +97,7 @@ contract StonesSettle(
     int status = init_status;
 
     // :: entrypoints
+    // :: leader entry (M:N)
     entrypoint function settle(int gen__player_prefix_len, int gen__player_suffix_len) {
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
