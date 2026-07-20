@@ -402,8 +402,10 @@ pub enum BuilderError {
     ComputeMassLimitExceeded { compute_mass: u64, limit: u64 },
     #[error("transaction transient mass {transient_mass} exceeds limit {limit}")]
     TransientMassLimitExceeded { transient_mass: u64, limit: u64 },
-    #[error("genesis covenant output {0} was not populated")]
-    MissingGenesisCovenantOutput(u32),
+    #[error("transaction output {0} has no covenant binding")]
+    MissingOutputCovenant(u32),
+    #[error("transaction output {0} does not exist")]
+    UnknownTransactionOutput(u32),
     #[error("genesis covenant output {0} does not exist")]
     UnknownGenesisOutput(u32),
 }
@@ -428,7 +430,7 @@ pub struct GenesisCovenants {
 
 impl GenesisCovenants {
     /// Return the populated genesis output by transaction output index.
-    pub fn output(&self, index: u32) -> BuilderResult<&GenesisOutput> {
+    pub fn output(&self, index: u32) -> BuilderResult<&CovenantOutput> {
         self.groups
             .iter()
             .flat_map(|group| group.outputs.iter())
@@ -444,17 +446,29 @@ impl GenesisCovenants {
 pub struct GenesisCovenant {
     pub authorizing_input: u16,
     pub covenant_id: Hash,
-    pub outputs: Vec<GenesisOutput>,
+    pub outputs: Vec<CovenantOutput>,
 }
 
-/// A concrete output created by a genesis covenant transaction.
-///
-/// The `outpoint` and `utxo` are the handles needed by the first covenant spend.
-pub struct GenesisOutput {
+/// A concrete covenant output and the handles needed to spend it.
+pub struct CovenantOutput {
     pub index: u32,
     pub covenant_id: Hash,
     pub outpoint: TransactionOutpoint,
     pub utxo: UtxoEntry,
+}
+
+impl CovenantOutput {
+    /// Derive a covenant output and its spendable UTXO metadata from a transaction output index.
+    pub fn from_tx(tx: &Transaction, index: u32) -> BuilderResult<Self> {
+        let output = tx.outputs.get(index as usize).ok_or(BuilderError::UnknownTransactionOutput(index))?;
+        let covenant_id = output.covenant.ok_or(BuilderError::MissingOutputCovenant(index))?.covenant_id;
+        Ok(Self {
+            index,
+            covenant_id,
+            outpoint: TransactionOutpoint::new(tx.id(), index),
+            utxo: UtxoEntry::new(output.value, output.script_public_key.clone(), 0, tx.is_coinbase(), Some(covenant_id)),
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -603,25 +617,10 @@ impl<'a> TxBuilder<'a> {
         tx.populate_genesis_covenants(groups)?;
         tx.finalize();
 
-        let tx_id = tx.id();
-        let is_coinbase = tx.is_coinbase();
         let mut populated_groups = Vec::with_capacity(groups.len());
         for group in groups {
-            let first_output_index = group.outputs.first().copied().ok_or(PopulateGenesisCovenantsError::EmptyOutputs)?;
-            let first_output =
-                tx.outputs.get(first_output_index as usize).ok_or(BuilderError::UnknownGenesisOutput(first_output_index))?;
-            let covenant_id = first_output.covenant.ok_or(BuilderError::MissingGenesisCovenantOutput(first_output_index))?.covenant_id;
-            let mut outputs = Vec::with_capacity(group.outputs.len());
-            for &index in &group.outputs {
-                let output = tx.outputs.get(index as usize).ok_or(BuilderError::UnknownGenesisOutput(index))?;
-                let binding = output.covenant.ok_or(BuilderError::MissingGenesisCovenantOutput(index))?;
-                outputs.push(GenesisOutput {
-                    index,
-                    covenant_id: binding.covenant_id,
-                    outpoint: TransactionOutpoint::new(tx_id, index),
-                    utxo: UtxoEntry::new(output.value, output.script_public_key.clone(), 0, is_coinbase, Some(binding.covenant_id)),
-                });
-            }
+            let outputs = group.outputs.iter().map(|&index| CovenantOutput::from_tx(tx, index)).collect::<BuilderResult<Vec<_>>>()?;
+            let covenant_id = outputs.first().ok_or(PopulateGenesisCovenantsError::EmptyOutputs)?.covenant_id;
             populated_groups.push(GenesisCovenant { authorizing_input: group.authorizing_input, covenant_id, outputs });
         }
 
@@ -1904,6 +1903,10 @@ mod tests {
         assert_eq!(output_0.utxo.amount, tx.outputs[0].value);
         assert_eq!(output_0.utxo.script_public_key, tx.outputs[0].script_public_key);
         assert_eq!(output_0.utxo.covenant_id, Some(output_0.covenant_id));
+        let direct_output_0 = CovenantOutput::from_tx(&tx, 0).expect("covenant output derives directly from transaction");
+        assert_eq!(direct_output_0.covenant_id, output_0.covenant_id);
+        assert_eq!(direct_output_0.outpoint, output_0.outpoint);
+        assert_eq!(direct_output_0.utxo, output_0.utxo);
 
         let output_1 = genesis.output(1).expect("output 1 handle exists");
         let output_3 = genesis.output(3).expect("output 3 handle exists");
@@ -1911,5 +1914,9 @@ mod tests {
         assert_eq!(output_3.covenant_id, genesis.groups[1].covenant_id);
         assert_eq!(tx.outputs[1].covenant.expect("output 1 covenant").covenant_id, output_1.covenant_id);
         assert!(matches!(genesis.output(99), Err(BuilderError::UnknownGenesisOutput(99))));
+        assert!(matches!(CovenantOutput::from_tx(&tx, 99), Err(BuilderError::UnknownTransactionOutput(99))));
+
+        let unbound_tx = TxBuilder::transaction(Vec::new(), vec![TransactionOutput::new(1_000, Default::default())]);
+        assert!(matches!(CovenantOutput::from_tx(&unbound_tx, 0), Err(BuilderError::MissingOutputCovenant(0))));
     }
 }
