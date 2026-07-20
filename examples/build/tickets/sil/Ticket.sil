@@ -25,6 +25,7 @@ contract Ticket(
     int redeemed = init_redeemed;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function redeem(sig owner_sig, pubkey owner_pk) {
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);

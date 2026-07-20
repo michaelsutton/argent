@@ -21,6 +21,7 @@ contract Local(
     byte[32] target_id = init_target_id;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function step(int gen__asset_foreign_prefix_len, int gen__asset_foreign_suffix_len) {
         // :: observed covenants
         byte[32] gen__asset_cov_id = target_id; // observe asset

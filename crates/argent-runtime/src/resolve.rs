@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use argent_artifact::{
-    CovenantIdSourceArtifact, EntryArtifact, ObserveArtifact, ObservedActorArtifact, SilContractArtifact, SilEntryArtifact,
-    SpawnArtifact,
+    ActorArtifact, CovenantIdSourceArtifact, EntryArtifact, EntryKindArtifact, ObserveArtifact, ObservedActorArtifact,
+    SilContractArtifact, SilEntryArtifact, SpawnArtifact,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -57,6 +57,7 @@ struct ResolveArgentInput<'artifact, 'context, 'args> {
     source: &'context ArgentInput<'args>,
     app: String,
     artifact: &'artifact Artifact,
+    actor: &'artifact ActorArtifact,
     contract: &'artifact SilContractArtifact,
     argent_entry: &'artifact EntryArtifact,
     sil_entry: &'artifact SilEntryArtifact,
@@ -107,7 +108,8 @@ impl<'artifact> TxBuilder<'artifact> {
             match input {
                 ContextInput::Argent(input) => {
                     let (app, contract_ref) = self.bind_actor(&input.actor)?;
-                    let argent_entry = self.entry_ref_in_artifact(contract_ref.artifact, &input.actor.actor, &input.entry.name)?;
+                    let actor_ref = self.argent_actor_ref_in_artifact(contract_ref.artifact, &input.actor.actor)?;
+                    let argent_entry = self.entry_ref_for_actor(actor_ref, &input.actor.actor, &input.entry.name)?;
                     let sil_entry = contract_ref.contract.entry(&input.entry.name).ok_or_else(|| BuilderError::UnknownEntry {
                         actor: input.actor.to_string(),
                         entry: input.entry.name.clone(),
@@ -116,6 +118,7 @@ impl<'artifact> TxBuilder<'artifact> {
                         source: input,
                         app,
                         artifact: contract_ref.artifact,
+                        actor: actor_ref.actor,
                         contract: contract_ref.contract,
                         argent_entry,
                         sil_entry,
@@ -420,6 +423,51 @@ impl<'artifact> TxBuilder<'artifact> {
         Ok(())
     }
 
+    /// Enforce the batching restriction carried by leader-actor metadata.
+    ///
+    /// A leader entry of a leader actor may share its covenant ID only
+    /// with the inputs it explicitly declares in `consumes`. The generated
+    /// script enforces the same count; this pass reports the source-level
+    /// reason before callbacks and script execution obscure it.
+    fn validate_leader_actor_input_counts(&self, context: &ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
+        for (input_index, input) in context.inputs.iter().enumerate() {
+            let ResolveInput::Argent(input) = input else {
+                continue;
+            };
+            if input.argent_entry.kind != EntryKindArtifact::Leader {
+                continue;
+            }
+            if input.actor.leader_for.is_empty() {
+                continue;
+            }
+            let Some(covenant_id) = input.source.utxo.covenant_id else {
+                continue;
+            };
+
+            let expected = input.argent_entry.consumes.len() + 1;
+            let found = context
+                .inputs
+                .iter()
+                .filter(|candidate| match candidate {
+                    ResolveInput::Argent(candidate) => candidate.source.utxo.covenant_id == Some(covenant_id),
+                    ResolveInput::Ordinary(candidate) => candidate.utxo.covenant_id == Some(covenant_id),
+                })
+                .count();
+            if found != expected {
+                let leader_for = input.actor.leader_for.iter().map(|reason| format!("{}::{}", reason.actor, reason.entry)).collect();
+                return Err(BuilderError::LeaderActorInputCountMismatch {
+                    input_index,
+                    actor: input.source.actor.to_string(),
+                    entry: input.source.entry.name.clone(),
+                    expected,
+                    found,
+                    leader_for,
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Build, validate, and finalize the transaction described by `context`.
     ///
     /// Artifact-local routes and concrete observed actors supply all
@@ -427,6 +475,7 @@ impl<'artifact> TxBuilder<'artifact> {
     pub fn build(&self, context: &TxContext<'_>) -> BuilderResult<Transaction> {
         let mut context = self.bind_context(context)?;
         let unsigned = self.unsigned_transaction(&context)?;
+        self.validate_leader_actor_input_counts(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context)?;
         self.resolve_context_spawns(&mut context, &unsigned)?;
@@ -738,6 +787,7 @@ mod tests {
                     name: actor.to_string(),
                     state: state.clone(),
                     abi: ActorAbiRefArtifact { actor: actor.to_string() },
+                    leader_for: Vec::new(),
                     entries: vec![EntryArtifact {
                         name: entry.to_string(),
                         kind: EntryKindArtifact::Leader,

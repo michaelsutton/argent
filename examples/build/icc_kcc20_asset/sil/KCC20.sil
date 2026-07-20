@@ -28,6 +28,7 @@ contract KCC20(
     int amount = init_amount;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function transfer(
         byte[32] new_owner_identifier,
         byte new_identifier_type,

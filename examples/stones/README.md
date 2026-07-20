@@ -58,7 +58,7 @@ Compiler features exercised today:
 - multi-file imports
 - shared state layouts
 - named actor templates
-- leader entries and delegate entries
+- leader and delegate entries
 - `consumes` peer actor inputs
 - named `emits` output handles
 - owner and side-to-move signature checks

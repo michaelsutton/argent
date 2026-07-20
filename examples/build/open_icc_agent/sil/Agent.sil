@@ -55,6 +55,7 @@ contract Agent(
     int generation = init_generation;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function step(State next_agent) {
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);

@@ -3,7 +3,7 @@
 Small design and compiler notes that are worth keeping, but not yet ready for
 their own branch or design doc.
 
-## Leader and delegate entrypoint relations
+## Leader actors and delegate entries
 
 Clarify how paired transaction inputs relate when one entrypoint leads a
 transition and another entrypoint authorizes or mirrors it.

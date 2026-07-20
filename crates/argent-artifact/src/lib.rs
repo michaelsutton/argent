@@ -282,7 +282,19 @@ pub struct ActorArtifact {
     pub name: String,
     pub state: String,
     pub abi: ActorAbiRefArtifact,
+    /// Delegate entries that trust this actor's contract at covenant input
+    /// zero. A nonempty list makes this a leader actor, so every leader
+    /// entry must constrain its complete same-covenant input group.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leader_for: Vec<EntryRefArtifact>,
     pub entries: Vec<EntryArtifact>,
+}
+
+/// Identifies an entry by its declaring actor and source-level name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct EntryRefArtifact {
+    pub actor: String,
+    pub entry: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1973,6 +1985,7 @@ mod tests {
                         name: actor.to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: actor.to_string() },
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     })
                     .collect(),
@@ -2033,12 +2046,14 @@ mod tests {
                         name: "Mux".to_string(),
                         state: "BoardState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Mux".to_string() },
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     },
                     ActorArtifact {
                         name: "Player".to_string(),
                         state: "PlayerState".to_string(),
                         abi: ActorAbiRefArtifact { actor: "Player".to_string() },
+                        leader_for: Vec::new(),
                         entries: Vec::new(),
                     },
                 ],

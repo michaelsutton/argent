@@ -25,6 +25,7 @@ contract Issuer(
     int next_serial = init_next_serial;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function issue(
         sig admin_sig,
         pubkey admin_pk,

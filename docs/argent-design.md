@@ -201,7 +201,7 @@ The source wants to say:
 require cov.inputs == [self, opponent];
 ```
 
-The compiler currently emits exact leader covenant input counts and conservative
+The compiler currently emits exact leader-entry covenant input counts and conservative
 delegate minimum counts. The source-level shape model can become more explicit.
 
 Covenant shape should be first-class in Argent. The source spelling is still

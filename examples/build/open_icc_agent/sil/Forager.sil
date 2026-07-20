@@ -55,6 +55,7 @@ contract Forager(
     int generation = init_generation;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function step(
         int next_x,
         int next_y,

@@ -27,6 +27,7 @@ contract MinterProxy(
     byte[32] controller_id = init_controller_id;
 
     // :: entrypoints
+    // :: leader entry (1:N)
     entrypoint function mint(
         State next_proxy,
         KCC20State recipient,
