@@ -557,7 +557,7 @@ mod tests {
             )
             .actor_output("Controller", controller_next, CovenantBinding::new(0, controller_covenant_id), 4_000)
             .output(ordinary_badge_script, Some(CovenantBinding::new(1, asset_covenant_id)), 2_000);
-        let err = builder.build(&missing_metadata).expect_err("observed outputs must retain Argent metadata");
+        let err = builder.build(&missing_metadata).expect_err("observed outputs must retain actor metadata");
         assert!(
             matches!(
                 err,
@@ -758,9 +758,9 @@ mod tests {
             state! { value: 42 },
             2_000,
         );
-        let err = builder.build(&ordinary_spawn).expect_err("spawn paths require an Argent authorizing input");
+        let err = builder.build(&ordinary_spawn).expect_err("spawn paths require an actor authorizing input");
         assert!(
-            matches!(err, BuilderError::SpawnAuthorizingInputNotArgent(0, ref spawn) if spawn == "new_pair"),
+            matches!(err, BuilderError::SpawnAuthorizingInputNotActor(0, ref spawn) if spawn == "new_pair"),
             "unexpected error: {err}"
         );
     }
@@ -914,7 +914,7 @@ mod tests {
             .actor_genesis_output(0, "spawn::first_pair", "pair_app::Pair", first_left_state, 2_000)
             .genesis_output(0, "spawn::first_pair", ScriptPublicKey::new(0, vec![OpTrue].into()), 2_000)
             .actor_genesis_output(0, "spawn::second_pair", "pair_app::Pair", second_state, 3_000);
-        let err = builder.build(&missing_metadata).expect_err("spawn outputs must retain Argent actor metadata");
+        let err = builder.build(&missing_metadata).expect_err("spawn outputs must retain actor metadata");
         assert!(
             matches!(
                 err,
@@ -1772,7 +1772,7 @@ mod tests {
                 0,
             );
         let wrong_proxy_err = builder.build(&wrong_proxy).expect_err("observed input state must match its UTXO script");
-        assert!(matches!(wrong_proxy_err, BuilderError::ArgentInputScriptMismatch { input_index: 1, .. }));
+        assert!(matches!(wrong_proxy_err, BuilderError::ActorInputScriptMismatch { input_index: 1, .. }));
 
         let wrong_recipient = TxContext::new()
             .actor_input(

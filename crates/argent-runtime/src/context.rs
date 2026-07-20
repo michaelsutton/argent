@@ -123,7 +123,7 @@ impl<'a> From<String> for EntryCall<'a> {
 
 type InputSigScriptCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<u8>, CallbackError> + 'a;
 
-/// Signature script supplied for a non-Argent input.
+/// Signature script supplied for an ordinary non-actor input.
 pub enum InputSigScript<'a> {
     /// A complete signature script known before transaction assembly.
     Static(Vec<u8>),
@@ -163,9 +163,9 @@ impl<'a> From<Vec<u8>> for InputSigScript<'a> {
     }
 }
 
-/// One Argent covenant input in a transaction context.
+/// One actor covenant input in a transaction context.
 #[derive(Debug)]
-pub struct ArgentInput<'a> {
+pub struct ActorInput<'a> {
     pub actor: ActorPath,
     pub state: BTreeMap<String, ArtifactValue>,
     pub entry: EntryCall<'a>,
@@ -174,7 +174,7 @@ pub struct ArgentInput<'a> {
     pub sequence: u64,
 }
 
-/// One non-Argent input in a transaction context.
+/// One ordinary non-actor input in a transaction context.
 #[derive(Debug)]
 pub struct OrdinaryInput<'a> {
     pub outpoint: TransactionOutpoint,
@@ -186,7 +186,7 @@ pub struct OrdinaryInput<'a> {
 /// An ordered input in a transaction context.
 #[derive(Debug)]
 pub enum ContextInput<'a> {
-    Argent(ArgentInput<'a>),
+    Actor(ActorInput<'a>),
     Ordinary(OrdinaryInput<'a>),
 }
 
@@ -262,7 +262,7 @@ where
 /// The actor or script that controls one transaction output.
 #[derive(Debug)]
 pub enum OutputOwner<'a> {
-    /// An Argent actor whose P2SH script is derived from its artifact and state.
+    /// An actor whose P2SH script is derived from its artifact and state.
     Actor { actor: ActorPath, state: OutputState<'a> },
     /// A concrete script supplied directly by the caller.
     Spk(ScriptPublicKey),
@@ -291,7 +291,7 @@ pub struct ContextOutput<'a> {
 ///
 /// Inputs and outputs appear in transaction order. The context records only
 /// concrete transaction metadata; a [`crate::TxBuilder`] later resolves actor
-/// paths and fills Argent-generated scripts from its artifact bundle.
+/// paths and fills compiler-generated scripts from its artifact bundle.
 /// Callers provide only user-visible entry arguments and signature callbacks;
 /// the builder derives compiler-generated witness material from the context
 /// and artifact bundle.
@@ -342,7 +342,7 @@ impl<'a> TxContext<'a> {
         utxo: UtxoEntry,
         sequence: u64,
     ) -> Self {
-        self.inputs.push(ContextInput::Argent(ArgentInput {
+        self.inputs.push(ContextInput::Actor(ActorInput {
             actor: actor.into(),
             state,
             entry: entry.into(),
@@ -353,7 +353,7 @@ impl<'a> TxContext<'a> {
         self
     }
 
-    /// Append a non-Argent input.
+    /// Append an ordinary non-actor input.
     pub fn input(
         mut self,
         outpoint: TransactionOutpoint,
@@ -407,7 +407,7 @@ impl<'a> TxContext<'a> {
         self
     }
 
-    /// Append a non-Argent output.
+    /// Append an ordinary non-actor output.
     pub fn output(mut self, script_public_key: ScriptPublicKey, covenant: Option<CovenantBinding>, value: u64) -> Self {
         self.outputs.push(ContextOutput {
             owner: OutputOwner::Spk(script_public_key),
@@ -481,7 +481,7 @@ mod tests {
             .payload([0xaa, 0xbb]);
 
         assert!(
-            matches!(&context.inputs[0], ContextInput::Argent(input) if input.actor == ActorPath::primary("Counter") && input.sequence == 3)
+            matches!(&context.inputs[0], ContextInput::Actor(input) if input.actor == ActorPath::primary("Counter") && input.sequence == 3)
         );
         assert!(
             matches!(&context.inputs[1], ContextInput::Ordinary(input) if input.sequence == 4 && matches!(input.signature_script, InputSigScript::Static(ref script) if script == &[0xaa]))

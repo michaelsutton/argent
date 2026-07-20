@@ -17,7 +17,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 pub use argent_artifact::Artifact;
 pub use context::{
-    ActorPath, ArgentInput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput, OutputCovenant,
+    ActorInput, ActorPath, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput, OutputCovenant,
     OutputOwner, OutputState, StateContext, TxContext, state_with, try_state_with,
 };
 pub use silverscript_abi::ArtifactValue;
@@ -337,7 +337,7 @@ pub enum BuilderError {
     InvalidObservedCovenantId { observe: String },
     #[error("observe `{observe}` expects {expected} {side}s for its covenant id, found {found}")]
     ObservedCountMismatch { observe: String, side: Side, expected: usize, found: usize },
-    #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no Argent actor metadata")]
+    #[error("observed {side} `{observe}.{handle}` at transaction index {index} has no actor metadata")]
     MissingObservedActorMetadata { observe: String, side: Side, handle: String, index: usize },
     #[error("spawn `{spawn}` has no genesis output `{handle}` at group index {group_index}")]
     MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
@@ -345,8 +345,8 @@ pub enum BuilderError {
     MissingSpawnGroup(usize, String),
     #[error("spawn `{0}` group is invalid: {1}")]
     InvalidSpawnGroup(String, String),
-    #[error("spawn `{1}` requires Argent authorizing input {0}")]
-    SpawnAuthorizingInputNotArgent(u16, String),
+    #[error("spawn `{1}` requires actor authorizing input {0}")]
+    SpawnAuthorizingInputNotActor(u16, String),
     #[error("input {0}'s selected entry does not declare spawn `{1}`")]
     UnknownSpawn(u16, String),
     #[error("invalid genesis path `{0}`; expected `launch::<name>` or `spawn::<clause>`")]
@@ -357,8 +357,8 @@ pub enum BuilderError {
     GenesisAuthorizingInputIndexOverflow(usize),
     #[error("genesis output index {0} does not fit a covenant group")]
     GenesisOutputIndexOverflow(usize),
-    #[error("Argent output {output_index} `{actor}` must have an existing or genesis covenant binding")]
-    UnboundArgentOutput { output_index: usize, actor: String },
+    #[error("actor output {output_index} `{actor}` must have an existing or genesis covenant binding")]
+    UnboundActorOutput { output_index: usize, actor: String },
     #[error("genesis actor output {output_index} `{actor}` must have static state")]
     GenesisOutputStateCallback { output_index: usize, actor: String },
     #[error("failed to build state for actor output {output_index} `{actor}`: {source}")]
@@ -372,12 +372,12 @@ pub enum BuilderError {
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
     UnknownEntry { actor: String, entry: String },
-    #[error("Argent input {input_index} `{actor}` has no covenant id")]
-    MissingArgentInputCovenantId { input_index: usize, actor: String },
-    #[error("Argent input {input_index} `{actor}` UTXO script does not match its declared state")]
-    ArgentInputScriptMismatch { input_index: usize, actor: String },
+    #[error("actor input {input_index} `{actor}` has no covenant id")]
+    MissingActorInputCovenantId { input_index: usize, actor: String },
+    #[error("actor input {input_index} `{actor}` UTXO script does not match its declared state")]
+    ActorInputScriptMismatch { input_index: usize, actor: String },
     #[error(
-        "Argent input {input_index} `{actor}::{entry}` requires exactly {expected} same-covenant inputs, found {found}; actor is a leader actor trusted by delegates {leader_for:?}"
+        "actor input {input_index} `{actor}::{entry}` requires exactly {expected} same-covenant inputs, found {found}; actor is a leader actor trusted by delegates {leader_for:?}"
     )]
     LeaderActorInputCountMismatch {
         input_index: usize,
@@ -387,7 +387,7 @@ pub enum BuilderError {
         found: usize,
         leader_for: Vec<String>,
     },
-    #[error("failed to build arguments for Argent input {input_index} `{actor}::{entry}`: {source}")]
+    #[error("failed to build arguments for actor input {input_index} `{actor}::{entry}`: {source}")]
     EntryArgsCallback {
         input_index: usize,
         actor: String,
@@ -648,13 +648,13 @@ impl<'a> TxBuilder<'a> {
         &self,
         artifact: &'a Artifact,
         contract: &'a SilContractArtifact,
-        argent_entry: &'a EntryArtifact,
+        artifact_entry: &'a EntryArtifact,
         input_source_state: &BTreeMap<String, ArtifactValue>,
         template_selectors: &BTreeMap<String, String>,
         contexts: HiddenArgContexts<'_>,
     ) -> BuilderResult<Vec<ArtifactValue>> {
-        let mut args = Vec::with_capacity(argent_entry.hidden_params.len());
-        for hidden in &argent_entry.hidden_params {
+        let mut args = Vec::with_capacity(artifact_entry.hidden_params.len());
+        for hidden in &artifact_entry.hidden_params {
             args.push(match &hidden.purpose {
                 HiddenParamPurposeArtifact::SpawnOutputIndex => {
                     let HiddenParamSubjectArtifact::SpawnActor { spawn, handle, .. } = &hidden.subject else {
@@ -666,7 +666,7 @@ impl<'a> TxBuilder<'a> {
                         .ok_or_else(|| BuilderError::MissingSpawnOutput {
                             spawn: spawn.clone(),
                             handle: handle.clone(),
-                            group_index: argent_entry
+                            group_index: artifact_entry
                                 .spawns
                                 .iter()
                                 .find(|candidate| candidate.name == *spawn)
@@ -678,23 +678,23 @@ impl<'a> TxBuilder<'a> {
                     ArtifactValue::Int(output_index as i64)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixBytes => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
+                    let template = self.hidden_template(artifact, hidden, artifact_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.prefix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixBytes => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
+                    let template = self.hidden_template(artifact, hidden, artifact_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.suffix_hex)?)
                 }
                 HiddenParamPurposeArtifact::TemplatePrefixLen => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
+                    let template = self.hidden_template(artifact, hidden, artifact_entry, template_selectors, contexts)?;
                     ArtifactValue::Int(decode_hex(&template.prefix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateSuffixLen => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
+                    let template = self.hidden_template(artifact, hidden, artifact_entry, template_selectors, contexts)?;
                     ArtifactValue::Int(decode_hex(&template.suffix_hex)?.len() as i64)
                 }
                 HiddenParamPurposeArtifact::TemplateHash => {
-                    let template = self.hidden_template(artifact, hidden, argent_entry, template_selectors, contexts)?;
+                    let template = self.hidden_template(artifact, hidden, artifact_entry, template_selectors, contexts)?;
                     ArtifactValue::Bytes(decode_hex(&template.hash_hex)?)
                 }
                 HiddenParamPurposeArtifact::RouteTemplateLeaf => {
@@ -744,7 +744,7 @@ impl<'a> TxBuilder<'a> {
         actor_name: &str,
         entry_name: &str,
         sil_entry: &SilEntryArtifact,
-        argent_entry: &EntryArtifact,
+        artifact_entry: &EntryArtifact,
         user_args: Vec<ArgValue>,
     ) -> BuilderResult<(Vec<ArtifactValue>, BTreeMap<String, String>)> {
         let mut artifact_args = Vec::with_capacity(user_args.len());
@@ -763,7 +763,7 @@ impl<'a> TxBuilder<'a> {
                         });
                     };
                     let selector =
-                        argent_entry.template_selectors.iter().find(|selector| selector.name == param.name).ok_or_else(|| {
+                        artifact_entry.template_selectors.iter().find(|selector| selector.name == param.name).ok_or_else(|| {
                             BuilderError::ActorArgumentWithoutSelector {
                                 actor: actor_name.to_string(),
                                 entry: entry_name.to_string(),
@@ -788,7 +788,7 @@ impl<'a> TxBuilder<'a> {
         artifact: &'a Artifact,
         contract: &'a SilContractArtifact,
         entry: &SilEntryArtifact,
-        argent_entry: &EntryArtifact,
+        artifact_entry: &EntryArtifact,
         user_args: Vec<ArtifactValue>,
     ) -> BuilderResult<Vec<ArtifactValue>> {
         let mut args = Vec::with_capacity(user_args.len());
@@ -796,7 +796,7 @@ impl<'a> TxBuilder<'a> {
             let runtime_contract = match entry.params.get(idx) {
                 Some(param) => match &param.ty {
                     TypeArtifact::Struct { name } => {
-                        self.runtime_contract_for_param(artifact, contract, argent_entry, &param.name, name)?
+                        self.runtime_contract_for_param(artifact, contract, artifact_entry, &param.name, name)?
                     }
                     _ => None,
                 },
@@ -817,7 +817,7 @@ impl<'a> TxBuilder<'a> {
         artifact: &'a Artifact,
         contract: &'a SilContractArtifact,
         entry: &'a SilEntryArtifact,
-        argent_entry: &EntryArtifact,
+        artifact_entry: &EntryArtifact,
         args: &[ArtifactValue],
     ) -> BuilderResult<Vec<u8>> {
         let mut abi = artifact.sil_abi.clone();
@@ -826,7 +826,8 @@ impl<'a> TxBuilder<'a> {
             let TypeArtifact::Struct { name } = &param.ty else {
                 continue;
             };
-            let Some(runtime_contract) = self.runtime_contract_for_param(artifact, contract, argent_entry, &param.name, name)? else {
+            let Some(runtime_contract) = self.runtime_contract_for_param(artifact, contract, artifact_entry, &param.name, name)?
+            else {
                 continue;
             };
             if name == "State" {
@@ -1139,7 +1140,7 @@ impl<'a> TxBuilder<'a> {
         artifact.argent.template_plan.runtime_states.iter().find(|state| state.contract == contract_name)
     }
 
-    fn argent_actor_ref_in_artifact(&self, artifact: &'a Artifact, name: &str) -> BuilderResult<ActorRef<'a>> {
+    fn actor_ref_in_artifact(&self, artifact: &'a Artifact, name: &str) -> BuilderResult<ActorRef<'a>> {
         artifact
             .argent
             .actors
@@ -1312,7 +1313,7 @@ impl<'a> TxBuilder<'a> {
         found_actor: &str,
     ) -> BuilderResult<()> {
         if let Some(expected_state) = expected.open_state.as_deref() {
-            let found = self.argent_actor_ref_in_artifact(self.bundle.app(app)?, found_actor)?;
+            let found = self.actor_ref_in_artifact(self.bundle.app(app)?, found_actor)?;
             if !state_satisfies(found.artifact, &found.actor.state, expected_state) {
                 return Err(BuilderError::ObservedStateLayoutMismatch {
                     observe: observe_name.to_string(),
