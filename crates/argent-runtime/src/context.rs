@@ -189,28 +189,32 @@ pub enum ContextInput<'a> {
     Ordinary(OrdinaryInput<'a>),
 }
 
-/// One Argent covenant output in a transaction context.
+/// The actor or script that controls one transaction output.
 #[derive(Clone, Debug)]
-pub struct ArgentOutput {
-    pub actor: ActorPath,
-    pub state: BTreeMap<String, ArtifactValue>,
-    pub covenant: CovenantBinding,
-    pub value: u64,
+pub enum OutputOwner {
+    /// An Argent actor whose P2SH script is derived from its artifact and state.
+    Actor { actor: ActorPath, state: BTreeMap<String, ArtifactValue> },
+    /// A concrete script supplied directly by the caller.
+    Spk(ScriptPublicKey),
 }
 
-/// One non-Argent output in a transaction context.
+/// How one transaction output participates in a covenant.
 #[derive(Clone, Debug)]
-pub struct OrdinaryOutput {
-    pub script_public_key: ScriptPublicKey,
-    pub covenant: Option<CovenantBinding>,
-    pub value: u64,
+pub enum OutputCovenant {
+    /// The output has no covenant binding.
+    Unbound,
+    /// The output carries an existing covenant binding.
+    Existing(CovenantBinding),
+    /// The builder assigns a new covenant ID shared by this named subgroup.
+    Genesis { authorizing_input: usize, subgroup: String },
 }
 
-/// An ordered output in a transaction context.
+/// One ordered output in a transaction context.
 #[derive(Clone, Debug)]
-pub enum ContextOutput {
-    Argent(ArgentOutput),
-    Ordinary(OrdinaryOutput),
+pub struct ContextOutput {
+    pub owner: OutputOwner,
+    pub covenant: OutputCovenant,
+    pub value: u64,
 }
 
 /// Artifact-independent description of one complete transaction.
@@ -304,13 +308,57 @@ impl<'a> TxContext<'a> {
         covenant: CovenantBinding,
         value: u64,
     ) -> Self {
-        self.outputs.push(ContextOutput::Argent(ArgentOutput { actor: actor.into(), state, covenant, value }));
+        self.outputs.push(ContextOutput {
+            owner: OutputOwner::Actor { actor: actor.into(), state },
+            covenant: OutputCovenant::Existing(covenant),
+            value,
+        });
+        self
+    }
+
+    /// Append a statically defined Argent output to a new covenant group.
+    ///
+    /// Repeating the same `launch::<name>` and authorizing input places
+    /// multiple outputs in one ordered genesis group.
+    pub fn argent_genesis_output(
+        mut self,
+        authorizing_input: usize,
+        subgroup: impl Into<String>,
+        actor: impl Into<ActorPath>,
+        state: BTreeMap<String, ArtifactValue>,
+        value: u64,
+    ) -> Self {
+        self.outputs.push(ContextOutput {
+            owner: OutputOwner::Actor { actor: actor.into(), state },
+            covenant: OutputCovenant::Genesis { authorizing_input, subgroup: subgroup.into() },
+            value,
+        });
         self
     }
 
     /// Append a non-Argent output.
     pub fn output(mut self, script_public_key: ScriptPublicKey, covenant: Option<CovenantBinding>, value: u64) -> Self {
-        self.outputs.push(ContextOutput::Ordinary(OrdinaryOutput { script_public_key, covenant, value }));
+        self.outputs.push(ContextOutput {
+            owner: OutputOwner::Spk(script_public_key),
+            covenant: covenant.map_or(OutputCovenant::Unbound, OutputCovenant::Existing),
+            value,
+        });
+        self
+    }
+
+    /// Append a concrete-script output to a new covenant group.
+    pub fn genesis_output(
+        mut self,
+        authorizing_input: usize,
+        subgroup: impl Into<String>,
+        script_public_key: ScriptPublicKey,
+        value: u64,
+    ) -> Self {
+        self.outputs.push(ContextOutput {
+            owner: OutputOwner::Spk(script_public_key),
+            covenant: OutputCovenant::Genesis { authorizing_input, subgroup: subgroup.into() },
+            value,
+        });
         self
     }
 }
@@ -351,7 +399,9 @@ mod tests {
             )
             .input(outpoint(2), utxo(None), vec![0xaa], 4)
             .argent_output("Counter", BTreeMap::from([("count".to_string(), ArtifactValue::Int(5))]), binding, 900)
+            .argent_genesis_output(1, "launch::reserve", "Reserve", BTreeMap::new(), 50)
             .output(ScriptPublicKey::default(), None, 100)
+            .genesis_output(1, "launch::script", ScriptPublicKey::default(), 25)
             .lock_time(5)
             .lane(SubnetworkId::from_namespace([1, 2, 3, 4]), 6)
             .payload([0xaa, 0xbb]);
@@ -362,8 +412,19 @@ mod tests {
         assert!(
             matches!(&context.inputs[1], ContextInput::Ordinary(input) if input.sequence == 4 && matches!(input.signature_script, InputSigScript::Static(ref script) if script == &[0xaa]))
         );
-        assert!(matches!(&context.outputs[0], ContextOutput::Argent(output) if output.covenant == binding));
-        assert!(matches!(&context.outputs[1], ContextOutput::Ordinary(output) if output.value == 100));
+        assert!(
+            matches!(&context.outputs[0], ContextOutput { owner: OutputOwner::Actor { actor, .. }, covenant: OutputCovenant::Existing(found), .. } if actor == &ActorPath::primary("Counter") && *found == binding)
+        );
+        assert!(
+            matches!(&context.outputs[1], ContextOutput { owner: OutputOwner::Actor { actor, .. }, covenant: OutputCovenant::Genesis { authorizing_input: 1, subgroup }, .. } if actor == &ActorPath::primary("Reserve") && subgroup == "launch::reserve")
+        );
+        assert!(matches!(
+            &context.outputs[2],
+            ContextOutput { owner: OutputOwner::Spk(_), covenant: OutputCovenant::Unbound, value: 100 }
+        ));
+        assert!(
+            matches!(&context.outputs[3], ContextOutput { owner: OutputOwner::Spk(_), covenant: OutputCovenant::Genesis { authorizing_input: 1, subgroup }, value: 25 } if subgroup == "launch::script")
+        );
         assert_eq!(context.lock_time, 5);
         assert_eq!(context.subnetwork_id, SubnetworkId::from_namespace([1, 2, 3, 4]));
         assert_eq!(context.gas, 6);

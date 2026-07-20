@@ -17,8 +17,8 @@ use std::{collections::BTreeMap, error::Error, fmt};
 
 pub use argent_artifact::Artifact;
 pub use context::{
-    ActorPath, ArgentInput, ArgentOutput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput,
-    OrdinaryOutput, TxContext,
+    ActorPath, ArgentInput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput, OutputCovenant,
+    OutputOwner, TxContext,
 };
 pub use silverscript_abi::ArtifactValue;
 
@@ -343,6 +343,14 @@ pub enum BuilderError {
     MissingSpawnOutput { spawn: String, handle: String, group_index: usize },
     #[error("spawn `{spawn}` has no compatible genesis output group")]
     MissingSpawnGroup { spawn: String },
+    #[error("invalid genesis path `{0}`; expected `launch::<name>`")]
+    InvalidGenesisPath(String),
+    #[error("genesis authorizing input index {0} does not fit a covenant binding")]
+    GenesisAuthorizingInputOverflow(usize),
+    #[error("genesis output index {0} does not fit a covenant group")]
+    GenesisOutputIndexOverflow(usize),
+    #[error("Argent output {output_index} `{actor}` must have an existing or genesis covenant binding")]
+    UnboundArgentOutput { output_index: usize, actor: String },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
@@ -449,6 +457,7 @@ pub struct GenesisOutput {
     pub utxo: UtxoEntry,
 }
 
+#[derive(Clone, Copy)]
 struct ContractRef<'a> {
     artifact: &'a Artifact,
     contract: &'a SilContractArtifact,

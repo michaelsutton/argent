@@ -21,6 +21,7 @@ mod tests {
 
     use kaspa_consensus_core::{
         Hash,
+        errors::tx::PopulateGenesisCovenantsError,
         hashing::{
             covenant_id::covenant_id,
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
@@ -568,6 +569,65 @@ mod tests {
                     index: 1
                 } if observe == "asset" && handle == "badge"
             ),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn context_launches_named_genesis_groups_from_an_ordinary_input() {
+        let source = "tests/fixtures/runtime/context_genesis_spawn/app.ag";
+        let pair_artifact = selected_app_artifact(source, "PairApp", "context-genesis-launch");
+        let builder = TxBuilder::new(&pair_artifact).expect("builder accepts pair artifact");
+
+        let funding_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x61; 32]), 4);
+        let funding_script = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let funding_utxo = UtxoEntry::new(10_000, funding_script, 0, false, None);
+        let unrelated_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let genesis_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
+        let context = TxContext::new()
+            .input(funding_outpoint, funding_utxo, Vec::new(), 0)
+            .argent_genesis_output(0, "launch::pair", "Pair", state! { value: 7 }, 2_000)
+            .output(unrelated_spk, None, 1_000)
+            .genesis_output(0, "launch::pair", genesis_spk.clone(), 500)
+            .argent_genesis_output(0, "launch::pair", "Pair", state! { value: 8 }, 2_000)
+            .genesis_output(0, "launch::other", genesis_spk, 500);
+
+        let transaction = builder.build(&context).expect("ordinary input launches both named covenant groups");
+        let pair_id = covenant_id(
+            funding_outpoint,
+            [(0, &transaction.outputs[0]), (2, &transaction.outputs[2]), (3, &transaction.outputs[3])].into_iter(),
+        );
+        let other_id = covenant_id(funding_outpoint, [(4, &transaction.outputs[4])].into_iter());
+
+        assert_eq!(transaction.outputs[0].covenant, Some(CovenantBinding::new(0, pair_id)));
+        assert_eq!(transaction.outputs[1].covenant, None);
+        assert_eq!(transaction.outputs[2].covenant, Some(CovenantBinding::new(0, pair_id)));
+        assert_eq!(transaction.outputs[3].covenant, Some(CovenantBinding::new(0, pair_id)));
+        assert_eq!(transaction.outputs[4].covenant, Some(CovenantBinding::new(0, other_id)));
+        assert_ne!(pair_id, other_id);
+
+        let invalid_path = TxContext::new()
+            .input(
+                funding_outpoint,
+                UtxoEntry::new(3_000, ScriptPublicKey::new(0, vec![OpTrue].into()), 0, false, None),
+                Vec::new(),
+                0,
+            )
+            .argent_genesis_output(0, "pair", "Pair", state! { value: 7 }, 2_000);
+        let err = builder.build(&invalid_path).expect_err("genesis paths require the launch namespace");
+        assert!(matches!(err, BuilderError::InvalidGenesisPath(ref path) if path == "pair"), "unexpected error: {err}");
+
+        let missing_input = TxContext::new()
+            .input(
+                funding_outpoint,
+                UtxoEntry::new(3_000, ScriptPublicKey::new(0, vec![OpTrue].into()), 0, false, None),
+                Vec::new(),
+                0,
+            )
+            .argent_genesis_output(1, "launch::pair", "Pair", state! { value: 7 }, 2_000);
+        let err = builder.build(&missing_input).expect_err("launch paths must name an existing authorizing input");
+        assert!(
+            matches!(err, BuilderError::PopulateGenesisCovenants(PopulateGenesisCovenantsError::NoSuchInput(1, 1))),
             "unexpected error: {err}"
         );
     }

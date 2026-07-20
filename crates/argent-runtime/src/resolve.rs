@@ -8,15 +8,16 @@ use kaspa_consensus_core::{
     Hash,
     constants::TX_VERSION_TOCCATA,
     subnets::SubnetworkId,
-    tx::{MutableTransaction, Transaction, TransactionInput, TransactionOutput},
+    tx::{GenesisCovenantGroup, MutableTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutput},
 };
 use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
 use kaspa_txscript_errors::TxScriptError;
 
 use crate::{
-    ActorPath, ArgentInput, ArgentOutput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput,
-    ContractRef, EntryArgs, HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput,
-    OrdinaryOutput, Side, SpawnedActorContext, TxBuilder, TxContext, covenant_engine_flags, execute_transaction_with_covenants,
+    ActorPath, ArgentInput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs,
+    HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OutputCovenant,
+    OutputOwner, Side, SpawnedActorContext, TxBuilder, TxContext, artifact_app_alias, covenant_engine_flags,
+    execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -33,6 +34,24 @@ struct GenesisGroup {
     output_indices: Vec<usize>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct LaunchGroupKey {
+    authorizing_input: usize,
+    name: String,
+}
+
+impl LaunchGroupKey {
+    fn parse(authorizing_input: usize, path: &str) -> BuilderResult<Self> {
+        let Some(name) = path.strip_prefix("launch::") else {
+            return Err(BuilderError::InvalidGenesisPath(path.to_string()));
+        };
+        if name.is_empty() || name.contains("::") {
+            return Err(BuilderError::InvalidGenesisPath(path.to_string()));
+        }
+        Ok(Self { authorizing_input, name: name.to_string() })
+    }
+}
+
 /// Artifact-bound working representation of a [`TxContext`].
 ///
 /// Actor paths are resolved once into concrete app, contract, and entry
@@ -42,6 +61,7 @@ struct GenesisGroup {
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
     outputs: Vec<ResolveOutput<'artifact, 'context>>,
+    launch_groups: BTreeMap<LaunchGroupKey, GenesisGroup>,
     lock_time: u64,
     subnetwork_id: SubnetworkId,
     gas: u64,
@@ -55,7 +75,6 @@ enum ResolveInput<'artifact, 'context, 'args> {
 
 struct ResolveArgentInput<'artifact, 'context, 'args> {
     source: &'context ArgentInput<'args>,
-    app: String,
     artifact: &'artifact Artifact,
     actor: &'artifact ActorArtifact,
     contract: &'artifact SilContractArtifact,
@@ -73,29 +92,26 @@ impl<'artifact> ResolveArgentInput<'artifact, '_, '_> {
     }
 }
 
-enum ResolveOutput<'artifact, 'context> {
-    Argent(ResolveArgentOutput<'artifact, 'context>),
-    Ordinary(&'context OrdinaryOutput),
+struct ResolvedActor<'artifact, 'context> {
+    contract: ContractRef<'artifact>,
+    state: &'context BTreeMap<String, ArtifactValue>,
 }
 
-struct ResolveArgentOutput<'artifact, 'context> {
-    source: &'context ArgentOutput,
-    app: String,
-    artifact: &'artifact Artifact,
-    contract: &'artifact SilContractArtifact,
+enum ResolveOutputOwner<'artifact, 'context> {
+    Actor(ResolvedActor<'artifact, 'context>),
+    Spk(&'context ScriptPublicKey),
 }
 
-impl<'artifact> ResolveArgentOutput<'artifact, '_> {
-    fn contract_ref(&self) -> ContractRef<'artifact> {
-        ContractRef { artifact: self.artifact, contract: self.contract }
-    }
+struct ResolveOutput<'artifact, 'context> {
+    source: &'context ContextOutput,
+    owner: ResolveOutputOwner<'artifact, 'context>,
 }
 
 impl<'artifact> TxBuilder<'artifact> {
-    fn bind_actor(&self, actor: &ActorPath) -> BuilderResult<(String, ContractRef<'artifact>)> {
+    fn bind_actor(&self, actor: &ActorPath) -> BuilderResult<ContractRef<'artifact>> {
         let app = actor.app.as_deref().unwrap_or_else(|| self.bundle.primary_alias());
         let artifact = self.bundle.app(app)?;
-        Ok((app.to_string(), self.contract_ref_in_artifact(artifact, &actor.actor)?))
+        self.contract_ref_in_artifact(artifact, &actor.actor)
     }
 
     /// Bind every actor path to one canonical app and its verified artifact objects.
@@ -107,7 +123,7 @@ impl<'artifact> TxBuilder<'artifact> {
         for input in &context.inputs {
             match input {
                 ContextInput::Argent(input) => {
-                    let (app, contract_ref) = self.bind_actor(&input.actor)?;
+                    let contract_ref = self.bind_actor(&input.actor)?;
                     let actor_ref = self.argent_actor_ref_in_artifact(contract_ref.artifact, &input.actor.actor)?;
                     let argent_entry = self.entry_ref_for_actor(actor_ref, &input.actor.actor, &input.entry.name)?;
                     let sil_entry = contract_ref.contract.entry(&input.entry.name).ok_or_else(|| BuilderError::UnknownEntry {
@@ -116,7 +132,6 @@ impl<'artifact> TxBuilder<'artifact> {
                     })?;
                     inputs.push(ResolveInput::Argent(ResolveArgentInput {
                         source: input,
-                        app,
                         artifact: contract_ref.artifact,
                         actor: actor_ref.actor,
                         contract: contract_ref.contract,
@@ -133,24 +148,27 @@ impl<'artifact> TxBuilder<'artifact> {
         }
 
         let mut outputs = Vec::with_capacity(context.outputs.len());
-        for output in &context.outputs {
-            match output {
-                ContextOutput::Argent(output) => {
-                    let (app, contract_ref) = self.bind_actor(&output.actor)?;
-                    outputs.push(ResolveOutput::Argent(ResolveArgentOutput {
-                        source: output,
-                        app,
-                        artifact: contract_ref.artifact,
-                        contract: contract_ref.contract,
-                    }));
+        let mut launch_groups = BTreeMap::<LaunchGroupKey, GenesisGroup>::new();
+        for (output_index, output) in context.outputs.iter().enumerate() {
+            let owner = match &output.owner {
+                OutputOwner::Actor { actor, state } => {
+                    ResolveOutputOwner::Actor(ResolvedActor { contract: self.bind_actor(actor)?, state })
                 }
-                ContextOutput::Ordinary(output) => outputs.push(ResolveOutput::Ordinary(output)),
+                OutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
+            };
+            if let OutputCovenant::Genesis { authorizing_input, subgroup } = &output.covenant {
+                let launch = LaunchGroupKey::parse(*authorizing_input, subgroup)?;
+                launch_groups.entry(launch).or_default().output_indices.push(output_index);
+            } else if let (OutputOwner::Actor { actor, .. }, OutputCovenant::Unbound) = (&output.owner, &output.covenant) {
+                return Err(BuilderError::UnboundArgentOutput { output_index, actor: actor.to_string() });
             }
+            outputs.push(ResolveOutput { source: output, owner });
         }
 
         Ok(ResolveContext {
             inputs,
             outputs,
+            launch_groups,
             lock_time: context.lock_time,
             subnetwork_id: context.subnetwork_id,
             gas: context.gas,
@@ -195,21 +213,17 @@ impl<'artifact> TxBuilder<'artifact> {
 
         let mut outputs = Vec::with_capacity(context.outputs.len());
         for output in &context.outputs {
-            match output {
-                ResolveOutput::Argent(output) => {
-                    let script_public_key = pay_to_script_hash_script(
-                        &self.redeem_script_for_contract(output.contract_ref(), output.source.state.clone())?,
-                    );
-                    outputs.push(TransactionOutput::with_covenant(
-                        output.source.value,
-                        script_public_key,
-                        Some(output.source.covenant),
-                    ));
+            let script_public_key = match &output.owner {
+                ResolveOutputOwner::Actor(actor) => {
+                    pay_to_script_hash_script(&self.redeem_script_for_contract(actor.contract, actor.state.clone())?)
                 }
-                ResolveOutput::Ordinary(output) => {
-                    outputs.push(TransactionOutput::with_covenant(output.value, output.script_public_key.clone(), output.covenant));
-                }
-            }
+                ResolveOutputOwner::Spk(script_public_key) => (*script_public_key).clone(),
+            };
+            let covenant = match output.source.covenant {
+                OutputCovenant::Existing(binding) => Some(binding),
+                OutputCovenant::Unbound | OutputCovenant::Genesis { .. } => None,
+            };
+            outputs.push(TransactionOutput::with_covenant(output.source.value, script_public_key, covenant));
         }
 
         let transaction = Transaction::new(
@@ -222,6 +236,32 @@ impl<'artifact> TxBuilder<'artifact> {
             context.payload.to_vec(),
         );
         Ok(MutableTransaction::with_entries(transaction, entries))
+    }
+
+    /// Populate context-declared `launch::<name>` groups through rusty-kaspa.
+    ///
+    /// The materialized transaction remains the authoritative source for the
+    /// populated bindings used by later resolution passes.
+    fn populate_launch_covenants(
+        &self,
+        context: &ResolveContext<'artifact, '_, '_>,
+        unsigned: &mut MutableTransaction<Transaction>,
+    ) -> BuilderResult<()> {
+        let groups = context
+            .launch_groups
+            .iter()
+            .map(|(launch, group)| {
+                let authorizing_input = u16::try_from(launch.authorizing_input)
+                    .map_err(|_| BuilderError::GenesisAuthorizingInputOverflow(launch.authorizing_input))?;
+                let outputs = group
+                    .output_indices
+                    .iter()
+                    .map(|&index| u32::try_from(index).map_err(|_| BuilderError::GenesisOutputIndexOverflow(index)))
+                    .collect::<BuilderResult<Vec<_>>>()?;
+                Ok(GenesisCovenantGroup::new(authorizing_input, outputs))
+            })
+            .collect::<BuilderResult<Vec<_>>>()?;
+        unsigned.tx.populate_genesis_covenants(&groups).map_err(Into::into)
     }
 
     /// Resolve user-visible entry arguments for every Argent input.
@@ -285,7 +325,11 @@ impl<'artifact> TxBuilder<'artifact> {
 
     /// Resolve every `observes` declaration from the concrete transaction
     /// inputs and outputs selected by its covenant id.
-    fn resolve_context_observations(&self, context: &mut ResolveContext<'artifact, '_, '_>) -> BuilderResult<()> {
+    fn resolve_context_observations(
+        &self,
+        context: &mut ResolveContext<'artifact, '_, '_>,
+        unsigned: &MutableTransaction<Transaction>,
+    ) -> BuilderResult<()> {
         for input_index in 0..context.inputs.len() {
             let ResolveInput::Argent(input) = &context.inputs[input_index] else {
                 continue;
@@ -296,7 +340,7 @@ impl<'artifact> TxBuilder<'artifact> {
 
             for observe in &input.argent_entry.observes {
                 let covenant_id = observed_covenant_id(input.source, args, observe)?;
-                let observation = resolve_observation(context, input.source, observe, covenant_id)?;
+                let observation = resolve_observation(context, unsigned, input.source, observe, covenant_id)?;
                 observations.insert(observe.name.clone(), observation);
             }
 
@@ -327,7 +371,7 @@ impl<'artifact> TxBuilder<'artifact> {
             };
 
             let input_covenant_id = input.source.utxo.covenant_id.expect("Argent input covenant id checked before spawn resolution");
-            let genesis_groups = collect_genesis_groups(context, input_index, input_covenant_id);
+            let genesis_groups = collect_genesis_groups(context, unsigned, input_index, input_covenant_id);
             let mut spawned_actors = BTreeMap::new();
             let mut candidate_groups = genesis_groups.iter();
             for spawn in &input.argent_entry.spawns {
@@ -371,29 +415,25 @@ impl<'artifact> TxBuilder<'artifact> {
 
         let mut spawned_actors = BTreeMap::new();
         for (output, &output_index) in spawn.outputs.iter().zip(&group.output_indices) {
-            let ResolveOutput::Argent(resolved_output) = &context.outputs[output_index] else {
+            let resolved_output = &context.outputs[output_index];
+            let ResolveOutputOwner::Actor(actor) = &resolved_output.owner else {
                 return Ok(None);
             };
+            let actor_name = &actor.contract.contract.name;
             let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
-            let found_handle =
-                match self.actor_type_handle_in_artifact(resolved_output.artifact, &resolved_output.source.actor.actor, &output.state)
-                {
-                    Ok(handle) => handle,
-                    Err(BuilderError::MissingActorTypeHandle { .. }) => {
-                        return Ok(None);
-                    }
-                    Err(error) => return Err(error),
-                };
+            let found_handle = match self.actor_type_handle_in_artifact(actor.contract.artifact, actor_name, &output.state) {
+                Ok(handle) => handle,
+                Err(BuilderError::MissingActorTypeHandle { .. }) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
             if found_handle != expected_handle {
                 return Ok(None);
             }
             spawned_actors.insert(
                 (spawn.name.clone(), output.name.clone()),
-                SpawnedActorContext {
-                    app: resolved_output.app.clone(),
-                    actor: resolved_output.source.actor.actor.clone(),
-                    output_index,
-                },
+                SpawnedActorContext { app: artifact_app_alias(&actor.contract.artifact.app), actor: actor_name.clone(), output_index },
             );
         }
         Ok(Some(spawned_actors))
@@ -474,10 +514,11 @@ impl<'artifact> TxBuilder<'artifact> {
     /// compiler-generated witness arguments.
     pub fn build(&self, context: &TxContext<'_>) -> BuilderResult<Transaction> {
         let mut context = self.bind_context(context)?;
-        let unsigned = self.unsigned_transaction(&context)?;
+        let mut unsigned = self.unsigned_transaction(&context)?;
+        self.populate_launch_covenants(&context, &mut unsigned)?;
         self.validate_leader_actor_input_counts(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
-        self.resolve_context_observations(&mut context)?;
+        self.resolve_context_observations(&mut context, &unsigned)?;
         self.resolve_context_spawns(&mut context, &unsigned)?;
         self.resolve_context_hidden_args(&mut context)?;
         let mut signature_scripts = Vec::with_capacity(context.inputs.len());
@@ -531,13 +572,20 @@ impl<'artifact> TxBuilder<'artifact> {
 /// Collect genesis groups authorized by one input, following consensus's
 /// `(authorizing input, covenant ID)` grouping. Outputs within a group retain
 /// global transaction order; groups are ordered by their first output.
-fn collect_genesis_groups(context: &ResolveContext<'_, '_, '_>, input_index: usize, input_covenant_id: Hash) -> Vec<GenesisGroup> {
+/// Explicit `launch::<name>` groups are independent and do not satisfy an AG
+/// `spawns` clause.
+fn collect_genesis_groups(
+    context: &ResolveContext<'_, '_, '_>,
+    unsigned: &MutableTransaction<Transaction>,
+    input_index: usize,
+    input_covenant_id: Hash,
+) -> Vec<GenesisGroup> {
     let mut groups = BTreeMap::<Hash, GenesisGroup>::new();
     for (output_index, output) in context.outputs.iter().enumerate() {
-        let binding = match output {
-            ResolveOutput::Argent(output) => Some(output.source.covenant),
-            ResolveOutput::Ordinary(output) => output.covenant,
-        };
+        if matches!(output.source.covenant, OutputCovenant::Genesis { .. }) {
+            continue;
+        }
+        let binding = unsigned.tx.outputs[output_index].covenant;
         let Some(binding) = binding else {
             continue;
         };
@@ -609,13 +657,14 @@ fn observed_covenant_id(input: &ArgentInput<'_>, args: &ResolvedEntryArgs, obser
 
 fn resolve_observation(
     context: &ResolveContext<'_, '_, '_>,
+    unsigned: &MutableTransaction<Transaction>,
     input: &ArgentInput<'_>,
     observe: &ObserveArtifact,
     covenant_id: Hash,
 ) -> BuilderResult<ObservedCovenantContext> {
     let matching_inputs = matching_observed_inputs(context, covenant_id);
     require_observed_count(&observe.name, Side::In, observe.inputs.len(), matching_inputs.len())?;
-    let matching_outputs = matching_observed_outputs(context, covenant_id);
+    let matching_outputs = matching_observed_outputs(unsigned, covenant_id);
     require_observed_count(&observe.name, Side::Out, observe.outputs.len(), matching_outputs.len())?;
 
     // Pair both sides positionally: covenant members are indexed by transaction
@@ -653,17 +702,13 @@ fn matching_observed_inputs(context: &ResolveContext<'_, '_, '_>, covenant_id: H
         .collect()
 }
 
-fn matching_observed_outputs(context: &ResolveContext<'_, '_, '_>, covenant_id: Hash) -> Vec<usize> {
-    context
+fn matching_observed_outputs(unsigned: &MutableTransaction<Transaction>, covenant_id: Hash) -> Vec<usize> {
+    unsigned
+        .tx
         .outputs
         .iter()
         .enumerate()
-        .filter(|(_, candidate)| match candidate {
-            ResolveOutput::Argent(candidate) => candidate.source.covenant.covenant_id == covenant_id,
-            ResolveOutput::Ordinary(candidate) => {
-                candidate.covenant.as_ref().is_some_and(|binding| binding.covenant_id == covenant_id)
-            }
-        })
+        .filter(|(_, candidate)| candidate.covenant.as_ref().is_some_and(|binding| binding.covenant_id == covenant_id))
         .map(|(index, _)| index)
         .collect()
 }
@@ -690,7 +735,7 @@ fn resolve_observed_input(
             index,
         });
     };
-    merge_observed_app(observe, app, &candidate.app)?;
+    merge_observed_app(observe, app, &artifact_app_alias(&candidate.artifact.app))?;
     Ok((
         declaration.name.clone(),
         ObservedInput {
@@ -708,7 +753,7 @@ fn resolve_observed_output(
     candidate: &ResolveOutput<'_, '_>,
     app: &mut Option<String>,
 ) -> BuilderResult<(String, ObservedOutput)> {
-    let ResolveOutput::Argent(candidate) = candidate else {
+    let ResolveOutputOwner::Actor(actor) = &candidate.owner else {
         return Err(BuilderError::MissingObservedActorMetadata {
             observe: observe.to_string(),
             side: Side::Out,
@@ -716,11 +761,8 @@ fn resolve_observed_output(
             index,
         });
     };
-    merge_observed_app(observe, app, &candidate.app)?;
-    Ok((
-        declaration.name.clone(),
-        ObservedOutput { actor: candidate.source.actor.actor.clone(), state: candidate.source.state.clone() },
-    ))
+    merge_observed_app(observe, app, &artifact_app_alias(&actor.contract.artifact.app))?;
+    Ok((declaration.name.clone(), ObservedOutput { actor: actor.contract.contract.name.clone(), state: actor.state.clone() }))
 }
 
 fn merge_observed_app(observe: &str, app: &mut Option<String>, candidate: &str) -> BuilderResult<()> {
@@ -892,10 +934,14 @@ mod tests {
             .payload([0xaa, 0xbb]);
 
         let resolved = builder.bind_context(&context).expect("context binds");
-        assert!(matches!(&resolved.inputs[0], ResolveInput::Argent(input) if input.app == "primary"));
-        assert!(matches!(&resolved.inputs[2], ResolveInput::Argent(input) if input.app == "asset"));
-        assert!(matches!(&resolved.outputs[0], ResolveOutput::Argent(output) if output.app == "primary"));
-        assert!(matches!(&resolved.outputs[2], ResolveOutput::Argent(output) if output.app == "asset"));
+        assert!(matches!(&resolved.inputs[0], ResolveInput::Argent(input) if artifact_app_alias(&input.artifact.app) == "primary"));
+        assert!(matches!(&resolved.inputs[2], ResolveInput::Argent(input) if artifact_app_alias(&input.artifact.app) == "asset"));
+        assert!(
+            matches!(&resolved.outputs[0].owner, ResolveOutputOwner::Actor(actor) if artifact_app_alias(&actor.contract.artifact.app) == "primary")
+        );
+        assert!(
+            matches!(&resolved.outputs[2].owner, ResolveOutputOwner::Actor(actor) if artifact_app_alias(&actor.contract.artifact.app) == "asset")
+        );
 
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
 
