@@ -107,16 +107,16 @@ let bundle = ArtifactBundle::new(&core_artifact)?
     .with_app("open_agent", &agent_artifact)?;
 
 let context = TxContext::new()
-    .argent_input("Cell", cell_state, "advance", cell_outpoint, cell_utxo)
-    .argent_input(
+    .actor_input("Cell", cell_state, "advance", cell_outpoint, cell_utxo)
+    .actor_input(
         "open_agent::Forager",
         forager_state,
         EntryCall::new("step").args(args![next_x, next_y, next_energy]),
         agent_outpoint,
         agent_utxo,
     )
-    .argent_output("Cell", next_cell_state, cell_binding, cell_value)
-    .argent_output("open_agent::Forager", next_forager_state, agent_binding, agent_value);
+    .actor_output("Cell", next_cell_state, cell_binding, cell_value)
+    .actor_output("open_agent::Forager", next_forager_state, agent_binding, agent_value);
 
 let tx = TxBuilder::from_bundle(&bundle)?.build(&context)?;
 ```

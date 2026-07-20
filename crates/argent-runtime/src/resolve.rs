@@ -1004,7 +1004,7 @@ mod tests {
         let script_called = Cell::new(false);
 
         let context = TxContext::new()
-            .argent_input(
+            .actor_input(
                 "Counter",
                 state(2),
                 EntryCall::new("bump").args_with(|_, _| {
@@ -1024,10 +1024,10 @@ mod tests {
                 }),
                 12,
             )
-            .argent_input("asset::Reserve", state(7), "move", outpoint(3), reserve_utxo.clone(), 13)
-            .argent_output("Counter", state(3), CovenantBinding::new(0, counter_id), 900)
+            .actor_input("asset::Reserve", state(7), "move", outpoint(3), reserve_utxo.clone(), 13)
+            .actor_output("Counter", state(3), CovenantBinding::new(0, counter_id), 900)
             .output(ScriptPublicKey::default(), Some(CovenantBinding::new(0, counter_id)), 100)
-            .argent_output("asset::Reserve", state(8), CovenantBinding::new(2, reserve_id), 2_000)
+            .actor_output("asset::Reserve", state(8), CovenantBinding::new(2, reserve_id), 2_000)
             .lock_time(14)
             .lane(SubnetworkId::from_namespace([1, 2, 3, 4]), 15)
             .payload([0xaa, 0xbb]);
@@ -1087,8 +1087,8 @@ mod tests {
         let authorizing_utxo = UtxoEntry::new(1_000, ScriptPublicKey::default(), 0, false, None);
         let context = TxContext::new()
             .input(outpoint(9), authorizing_utxo, Vec::new(), 0)
-            .argent_genesis_output(0, "launch::child", "Counter", state(1), 100)
-            .argent_output(
+            .actor_genesis_output(0, "launch::child", "Counter", state(1), 100)
+            .actor_output(
                 "Counter",
                 state_with(|context| {
                     calls.set(calls.get() + 1);
@@ -1127,9 +1127,9 @@ mod tests {
         let context = TxContext::new()
             .input(outpoint(1), first, Vec::new(), 0)
             .input(outpoint(2), second, Vec::new(), 0)
-            .argent_genesis_output(0, "launch::child", "Counter", state(1), 100)
-            .argent_genesis_output(1, "launch::child", "Counter", state(1), 100)
-            .argent_output(
+            .actor_genesis_output(0, "launch::child", "Counter", state(1), 100)
+            .actor_genesis_output(1, "launch::child", "Counter", state(1), 100)
+            .actor_output(
                 "Counter",
                 state_with(|context| {
                     ids.set(Some((
@@ -1151,7 +1151,7 @@ mod tests {
     fn context_binding_rejects_out_of_range_genesis_authorizing_input() {
         let artifact = artifact("primary", "Counter", "bump");
         let builder = TxBuilder::new(&artifact).expect("artifact builds");
-        let context = TxContext::new().argent_genesis_output(1, "launch::child", "Counter", state(1), 100);
+        let context = TxContext::new().actor_genesis_output(1, "launch::child", "Counter", state(1), 100);
 
         assert!(matches!(
             builder.bind_context(&context),
@@ -1164,7 +1164,7 @@ mod tests {
         let artifact = artifact("primary", "Counter", "bump");
         let builder = TxBuilder::new(&artifact).expect("artifact builds");
         let covenant_id = Hash::from_bytes([0x31; 32]);
-        let fallible = TxContext::new().argent_output(
+        let fallible = TxContext::new().actor_output(
             "Counter",
             try_state_with(|_| -> Result<_, std::io::Error> { Err(std::io::Error::other("state failed")) }),
             CovenantBinding::new(0, covenant_id),
@@ -1210,14 +1210,14 @@ mod tests {
         let mut unbound_utxo = matching_utxo.clone();
         unbound_utxo.covenant_id = None;
 
-        let missing_id = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), unbound_utxo, 0);
+        let missing_id = TxContext::new().actor_input("Counter", state(2), "bump", outpoint(1), unbound_utxo, 0);
         let missing_id = builder.bind_context(&missing_id).expect("context binds");
         assert!(matches!(
             builder.unsigned_transaction(&missing_id),
             Err(BuilderError::MissingArgentInputCovenantId { input_index: 0, actor }) if actor == "Counter"
         ));
 
-        let wrong_state = TxContext::new().argent_input("Counter", state(3), "bump", outpoint(1), matching_utxo, 0);
+        let wrong_state = TxContext::new().actor_input("Counter", state(3), "bump", outpoint(1), matching_utxo, 0);
         let wrong_state = builder.bind_context(&wrong_state).expect("context binds");
         assert!(matches!(
             builder.unsigned_transaction(&wrong_state),
@@ -1232,13 +1232,13 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x44; 32]);
         let utxo = builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
 
-        let unknown_app = TxContext::new().argent_input("missing::Counter", state(2), "bump", outpoint(1), utxo.clone(), 0);
+        let unknown_app = TxContext::new().actor_input("missing::Counter", state(2), "bump", outpoint(1), utxo.clone(), 0);
         assert!(matches!(builder.bind_context(&unknown_app), Err(BuilderError::UnknownAppAlias(app)) if app == "missing"));
 
-        let unknown_actor = TxContext::new().argent_input("Missing", state(2), "bump", outpoint(1), utxo.clone(), 0);
+        let unknown_actor = TxContext::new().actor_input("Missing", state(2), "bump", outpoint(1), utxo.clone(), 0);
         assert!(matches!(builder.bind_context(&unknown_actor), Err(BuilderError::UnknownActor(actor)) if actor == "Missing"));
 
-        let unknown_entry = TxContext::new().argent_input("Counter", state(2), "missing", outpoint(1), utxo, 0);
+        let unknown_entry = TxContext::new().actor_input("Counter", state(2), "missing", outpoint(1), utxo, 0);
         assert!(matches!(
             builder.bind_context(&unknown_entry),
             Err(BuilderError::UnknownEntry { actor, entry }) if actor == "Counter" && entry == "missing"
@@ -1262,7 +1262,7 @@ mod tests {
         let entry_callback_called = Cell::new(false);
         let ordinary_callback_called = Cell::new(false);
         let context = TxContext::new()
-            .argent_input(
+            .actor_input(
                 "Counter",
                 state(2),
                 EntryCall::new("bump").args(vec![ArgValue::Value(ArtifactValue::Int(3))]),
@@ -1279,7 +1279,7 @@ mod tests {
                 }),
                 0,
             )
-            .argent_input(
+            .actor_input(
                 "Counter",
                 state(2),
                 EntryCall::new("bump").args_with(|tx, input_index| {
@@ -1295,7 +1295,7 @@ mod tests {
                 counter_utxo,
                 0,
             )
-            .argent_output("Counter", state(3), CovenantBinding::new(0, covenant_id), 900);
+            .actor_output("Counter", state(3), CovenantBinding::new(0, covenant_id), 900);
         let mut resolved = builder.bind_context(&context).expect("context binds");
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
 
@@ -1326,7 +1326,7 @@ mod tests {
         let builder = TxBuilder::new(&artifact).expect("artifact builds");
         let covenant_id = Hash::from_bytes([0x66; 32]);
         let router_utxo = builder.covenant_utxo("Router", state(2), 1_000, 0, false, Some(covenant_id)).expect("router UTXO builds");
-        let context = TxContext::new().argent_input(
+        let context = TxContext::new().actor_input(
             "Router",
             state(2),
             EntryCall::new("choose").args(vec![actor("Beta")]),
@@ -1357,7 +1357,7 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x76; 32]);
         let counter_utxo =
             builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
-        let context = TxContext::new().argent_input(
+        let context = TxContext::new().actor_input(
             "Counter",
             state(2),
             EntryCall::new("replace").args(vec![ArgValue::Value(ArtifactValue::Object(state(9)))]),
@@ -1386,7 +1386,7 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x77; 32]);
         let counter_utxo =
             builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
-        let context = TxContext::new().argent_input("Counter", state(2), "bump", outpoint(1), counter_utxo, 0);
+        let context = TxContext::new().actor_input("Counter", state(2), "bump", outpoint(1), counter_utxo, 0);
         let mut resolved = builder.bind_context(&context).expect("context binds");
         let unsigned = builder.unsigned_transaction(&resolved).expect("context materializes");
 
@@ -1403,7 +1403,7 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x78; 32]);
         let counter_utxo =
             builder.covenant_utxo("Counter", state(2), 1_000, 0, false, Some(covenant_id)).expect("counter UTXO builds");
-        let context = TxContext::new().argent_input(
+        let context = TxContext::new().actor_input(
             "Counter",
             state(2),
             EntryCall::new("bump").try_args_with(|_, _| Err::<Vec<ArgValue>, _>(std::io::Error::other("signer unavailable"))),

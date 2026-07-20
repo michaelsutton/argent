@@ -332,8 +332,8 @@ impl<'a> TxContext<'a> {
         self
     }
 
-    /// Append an Argent covenant input.
-    pub fn argent_input(
+    /// Append an actor covenant input.
+    pub fn actor_input(
         mut self,
         actor: impl Into<ActorPath>,
         state: BTreeMap<String, ArtifactValue>,
@@ -370,8 +370,8 @@ impl<'a> TxContext<'a> {
         self
     }
 
-    /// Append an Argent covenant output.
-    pub fn argent_output(
+    /// Append an actor covenant output.
+    pub fn actor_output(
         mut self,
         actor: impl Into<ActorPath>,
         state: impl Into<OutputState<'a>>,
@@ -386,12 +386,12 @@ impl<'a> TxContext<'a> {
         self
     }
 
-    /// Append a statically defined Argent output to a new covenant group.
+    /// Append a statically defined actor output to a new covenant group.
     ///
     /// Repeating the same genesis path and authorizing input places multiple
     /// outputs in one ordered group. Use `launch::<name>` for an independent
     /// launch or `spawn::<clause>` for an entry's declared spawn.
-    pub fn argent_genesis_output(
+    pub fn actor_genesis_output(
         mut self,
         authorizing_input: u16,
         subgroup: impl Into<String>,
@@ -420,7 +420,7 @@ impl<'a> TxContext<'a> {
     /// Append a concrete-script output to a new covenant group.
     ///
     /// Spawn groups require actor metadata, so `spawn::<clause>` paths must use
-    /// [`Self::argent_genesis_output`].
+    /// [`Self::actor_genesis_output`].
     pub fn genesis_output(
         mut self,
         authorizing_input: u16,
@@ -463,7 +463,7 @@ mod tests {
         let covenant_id = Hash::from_bytes([0x42; 32]);
         let binding = CovenantBinding::new(0, covenant_id);
         let context = TxContext::new()
-            .argent_input(
+            .actor_input(
                 "Counter",
                 BTreeMap::from([("count".to_string(), ArtifactValue::Int(2))]),
                 EntryCall::new("bump").args(vec![ArgValue::Value(ArtifactValue::Int(3))]),
@@ -472,8 +472,8 @@ mod tests {
                 3,
             )
             .input(outpoint(2), utxo(None), vec![0xaa], 4)
-            .argent_output("Counter", BTreeMap::from([("count".to_string(), ArtifactValue::Int(5))]), binding, 900)
-            .argent_genesis_output(1, "launch::reserve", "Reserve", BTreeMap::new(), 50)
+            .actor_output("Counter", BTreeMap::from([("count".to_string(), ArtifactValue::Int(5))]), binding, 900)
+            .actor_genesis_output(1, "launch::reserve", "Reserve", BTreeMap::new(), 50)
             .output(ScriptPublicKey::default(), None, 100)
             .genesis_output(1, "launch::script", ScriptPublicKey::default(), 25)
             .lock_time(5)
