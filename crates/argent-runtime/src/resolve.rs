@@ -7,8 +7,9 @@ use argent_artifact::{
 use kaspa_consensus_core::{
     Hash,
     constants::TX_VERSION_TOCCATA,
+    hashing::covenant_id as rk_hashing,
     subnets::SubnetworkId,
-    tx::{GenesisCovenantGroup, MutableTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutput},
+    tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutput},
 };
 use kaspa_txscript::{covenants::CovenantsContext, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
 use kaspa_txscript_errors::TxScriptError;
@@ -16,8 +17,8 @@ use kaspa_txscript_errors::TxScriptError;
 use crate::{
     ActorPath, ArgentInput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs,
     HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OutputCovenant,
-    OutputOwner, Side, SpawnedActorContext, StateContext, TxBuilder, TxContext, artifact_app_alias, covenant_engine_flags,
-    execute_transaction_with_covenants,
+    OutputOwner, OutputState, Side, SpawnedActorContext, StateContext, TxBuilder, TxContext, artifact_app_alias,
+    covenant_engine_flags, execute_transaction_with_covenants,
 };
 
 type ResolvedObservations = BTreeMap<String, ObservedCovenantContext>;
@@ -36,12 +37,12 @@ struct GenesisGroup {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct LaunchGroupKey {
-    authorizing_input: usize,
+    authorizing_input: u16,
     name: String,
 }
 
 impl LaunchGroupKey {
-    fn parse(authorizing_input: usize, path: &str) -> BuilderResult<Self> {
+    fn parse(authorizing_input: u16, path: &str) -> BuilderResult<Self> {
         let Some(name) = path.strip_prefix("launch::") else {
             return Err(BuilderError::InvalidGenesisPath(path.to_string()));
         };
@@ -61,7 +62,6 @@ impl LaunchGroupKey {
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
     outputs: Vec<ResolveOutput<'artifact, 'context, 'args>>,
-    launch_groups: BTreeMap<LaunchGroupKey, GenesisGroup>,
     lock_time: u64,
     subnetwork_id: SubnetworkId,
     gas: u64,
@@ -105,6 +105,7 @@ enum ResolveOutputOwner<'artifact, 'context> {
 struct ResolveOutput<'artifact, 'context, 'args> {
     source: &'context ContextOutput<'args>,
     owner: ResolveOutputOwner<'artifact, 'context>,
+    covenant: Option<CovenantBinding>,
 }
 
 impl<'artifact> TxBuilder<'artifact> {
@@ -119,6 +120,17 @@ impl<'artifact> TxBuilder<'artifact> {
         &self,
         context: &'context TxContext<'args>,
     ) -> BuilderResult<ResolveContext<'artifact, 'context, 'args>> {
+        enum BoundOutputOwner<'a, 'c, 's> {
+            Actor { path: &'c ActorPath, contract: ContractRef<'a>, state: &'c OutputState<'s> },
+            Spk(&'c ScriptPublicKey),
+        }
+
+        struct BoundOutput<'a, 'c, 's> {
+            source: &'c ContextOutput<'s>,
+            owner: BoundOutputOwner<'a, 'c, 's>,
+        }
+
+        // Bind input actors and entries to their verified artifact metadata.
         let mut inputs = Vec::with_capacity(context.inputs.len());
         for input in &context.inputs {
             match input {
@@ -147,9 +159,9 @@ impl<'artifact> TxBuilder<'artifact> {
             }
         }
 
-        let mut outputs = Vec::with_capacity(context.outputs.len());
+        // First output pass: bind actors, validate genesis declarations, and collect their ordered groups.
+        let mut bound_outputs = Vec::with_capacity(context.outputs.len());
         let mut launch_groups = BTreeMap::<LaunchGroupKey, GenesisGroup>::new();
-        let state_context = StateContext::default();
         for (output_index, output) in context.outputs.iter().enumerate() {
             if let OutputCovenant::Genesis { authorizing_input, subgroup } = &output.covenant {
                 if let OutputOwner::Actor { actor, state } = &output.owner
@@ -163,23 +175,79 @@ impl<'artifact> TxBuilder<'artifact> {
                 return Err(BuilderError::UnboundArgentOutput { output_index, actor: actor.to_string() });
             }
             let owner = match &output.owner {
-                OutputOwner::Actor { actor, state } => ResolveOutputOwner::Actor(ResolvedActor {
-                    contract: self.bind_actor(actor)?,
+                OutputOwner::Actor { actor, state } => {
+                    BoundOutputOwner::Actor { path: actor, contract: self.bind_actor(actor)?, state }
+                }
+                OutputOwner::Spk(script_public_key) => BoundOutputOwner::Spk(script_public_key),
+            };
+            bound_outputs.push(BoundOutput { source: output, owner });
+        }
+
+        // Derive every genesis covenant ID before any deferred output state is evaluated.
+        let mut state_context = StateContext::default();
+        for (launch, group) in &launch_groups {
+            let authorizing_input =
+                context.inputs.get(usize::from(launch.authorizing_input)).ok_or(BuilderError::GenesisAuthorizingInputOutOfRange {
+                    authorizing_input: launch.authorizing_input,
+                    input_count: context.inputs.len(),
+                })?;
+            let outpoint = match authorizing_input {
+                ContextInput::Argent(input) => input.outpoint,
+                ContextInput::Ordinary(input) => input.outpoint,
+            };
+            let genesis_outputs = group
+                .output_indices
+                .iter()
+                .map(|&output_index| {
+                    let output = &bound_outputs[output_index];
+                    let spk = match &output.owner {
+                        BoundOutputOwner::Actor { contract, state, .. } => {
+                            let OutputState::Static(state) = state else {
+                                unreachable!("genesis actor output callbacks are rejected while outputs are bound")
+                            };
+                            pay_to_script_hash_script(&self.redeem_script_for_contract(*contract, state.clone())?)
+                        }
+                        BoundOutputOwner::Spk(spk) => (*spk).clone(),
+                    };
+                    let output_index =
+                        u32::try_from(output_index).map_err(|_| BuilderError::GenesisOutputIndexOverflow(output_index))?;
+                    Ok((output_index, TransactionOutput::new(output.source.value, spk)))
+                })
+                .collect::<BuilderResult<Vec<_>>>()?;
+            let covenant_id = rk_hashing::covenant_id(outpoint, genesis_outputs.iter().map(|(index, output)| (*index, output)));
+            state_context.insert_genesis_covenant_id(launch.authorizing_input, format!("launch::{}", launch.name), covenant_id);
+        }
+
+        // Second output pass: attach resolved bindings and evaluate states against the complete genesis context.
+        let mut outputs = Vec::with_capacity(bound_outputs.len());
+        for (output_index, output) in bound_outputs.into_iter().enumerate() {
+            let covenant = match &output.source.covenant {
+                OutputCovenant::Existing(binding) => Some(*binding),
+                OutputCovenant::Unbound => None,
+                OutputCovenant::Genesis { authorizing_input, subgroup } => {
+                    let covenant_id = state_context
+                        .genesis_covenant_id(*authorizing_input, subgroup)
+                        .expect("genesis covenant IDs are populated before output states resolve");
+                    Some(CovenantBinding::new(*authorizing_input, covenant_id))
+                }
+            };
+            let owner = match output.owner {
+                BoundOutputOwner::Actor { path, contract, state } => ResolveOutputOwner::Actor(ResolvedActor {
+                    contract,
                     state: state.resolve(&state_context).map_err(|source| BuilderError::OutputStateCallback {
                         output_index,
-                        actor: actor.to_string(),
+                        actor: path.to_string(),
                         source,
                     })?,
                 }),
-                OutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
+                BoundOutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
             };
-            outputs.push(ResolveOutput { source: output, owner });
+            outputs.push(ResolveOutput { source: output.source, owner, covenant });
         }
 
         Ok(ResolveContext {
             inputs,
             outputs,
-            launch_groups,
             lock_time: context.lock_time,
             subnetwork_id: context.subnetwork_id,
             gas: context.gas,
@@ -230,11 +298,7 @@ impl<'artifact> TxBuilder<'artifact> {
                 }
                 ResolveOutputOwner::Spk(script_public_key) => (*script_public_key).clone(),
             };
-            let covenant = match output.source.covenant {
-                OutputCovenant::Existing(binding) => Some(binding),
-                OutputCovenant::Unbound | OutputCovenant::Genesis { .. } => None,
-            };
-            outputs.push(TransactionOutput::with_covenant(output.source.value, script_public_key, covenant));
+            outputs.push(TransactionOutput::with_covenant(output.source.value, script_public_key, output.covenant));
         }
 
         let transaction = Transaction::new(
@@ -247,32 +311,6 @@ impl<'artifact> TxBuilder<'artifact> {
             context.payload.to_vec(),
         );
         Ok(MutableTransaction::with_entries(transaction, entries))
-    }
-
-    /// Populate context-declared `launch::<name>` groups through rusty-kaspa.
-    ///
-    /// The materialized transaction remains the authoritative source for the
-    /// populated bindings used by later resolution passes.
-    fn populate_launch_covenants(
-        &self,
-        context: &ResolveContext<'artifact, '_, '_>,
-        unsigned: &mut MutableTransaction<Transaction>,
-    ) -> BuilderResult<()> {
-        let groups = context
-            .launch_groups
-            .iter()
-            .map(|(launch, group)| {
-                let authorizing_input = u16::try_from(launch.authorizing_input)
-                    .map_err(|_| BuilderError::GenesisAuthorizingInputOverflow(launch.authorizing_input))?;
-                let outputs = group
-                    .output_indices
-                    .iter()
-                    .map(|&index| u32::try_from(index).map_err(|_| BuilderError::GenesisOutputIndexOverflow(index)))
-                    .collect::<BuilderResult<Vec<_>>>()?;
-                Ok(GenesisCovenantGroup::new(authorizing_input, outputs))
-            })
-            .collect::<BuilderResult<Vec<_>>>()?;
-        unsigned.tx.populate_genesis_covenants(&groups).map_err(Into::into)
     }
 
     /// Resolve user-visible entry arguments for every Argent input.
@@ -525,8 +563,7 @@ impl<'artifact> TxBuilder<'artifact> {
     /// compiler-generated witness arguments.
     pub fn build(&self, context: &TxContext<'_>) -> BuilderResult<Transaction> {
         let mut context = self.bind_context(context)?;
-        let mut unsigned = self.unsigned_transaction(&context)?;
-        self.populate_launch_covenants(&context, &mut unsigned)?;
+        let unsigned = self.unsigned_transaction(&context)?;
         self.validate_leader_actor_input_counts(&context)?;
         self.resolve_context_args(&mut context, &unsigned)?;
         self.resolve_context_observations(&mut context, &unsigned)?;
@@ -990,33 +1027,85 @@ mod tests {
     }
 
     #[test]
-    fn output_state_callback_resolves_once_before_materialization() {
+    fn output_state_callback_reads_launch_covenant_id_before_materialization() {
         let artifact = artifact("primary", "Counter", "bump");
         let builder = TxBuilder::new(&artifact).expect("artifact builds");
-        let covenant_id = Hash::from_bytes([0x31; 32]);
+        let existing_id = Hash::from_bytes([0x31; 32]);
         let calls = Cell::new(0);
-        let context = TxContext::new().argent_output(
-            "Counter",
-            state_with(|_| {
-                calls.set(calls.get() + 1);
-                state(3)
-            }),
-            CovenantBinding::new(0, covenant_id),
-            900,
-        );
+        let launch_id = Cell::new(None);
+        let authorizing_utxo = UtxoEntry::new(1_000, ScriptPublicKey::default(), 0, false, None);
+        let context = TxContext::new()
+            .input(outpoint(9), authorizing_utxo, Vec::new(), 0)
+            .argent_genesis_output(0, "launch::child", "Counter", state(1), 100)
+            .argent_output(
+                "Counter",
+                state_with(|context| {
+                    calls.set(calls.get() + 1);
+                    launch_id.set(context.genesis_covenant_id(0, "launch::child"));
+                    state(3)
+                }),
+                CovenantBinding::new(0, existing_id),
+                900,
+            )
+            .genesis_output(0, "launch::child", ScriptPublicKey::default(), 50);
 
         let resolved = builder.bind_context(&context).expect("deferred state resolves");
         assert_eq!(calls.get(), 1);
-        assert!(matches!(&resolved.outputs[0].owner, ResolveOutputOwner::Actor(actor) if actor.state == state(3)));
+        let launch_id = launch_id.get().expect("callback sees launch covenant ID");
+        assert!(matches!(&resolved.outputs[1].owner, ResolveOutputOwner::Actor(actor) if actor.state == state(3)));
         let unsigned = builder.unsigned_transaction(&resolved).expect("resolved state materializes");
         assert_eq!(calls.get(), 1);
+        assert_eq!(unsigned.tx.outputs[0].covenant, Some(CovenantBinding::new(0, launch_id)));
+        assert_eq!(unsigned.tx.outputs[2].covenant, Some(CovenantBinding::new(0, launch_id)));
         assert_eq!(
-            unsigned.tx.outputs[0].script_public_key,
+            unsigned.tx.outputs[1].script_public_key,
             builder
-                .covenant_utxo("Counter", state(3), 900, 0, false, Some(covenant_id))
+                .covenant_utxo("Counter", state(3), 900, 0, false, Some(existing_id))
                 .expect("expected output script builds")
                 .script_public_key
         );
+    }
+
+    #[test]
+    fn state_context_scopes_genesis_subgroups_by_authorizing_input() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let first = UtxoEntry::new(1_000, ScriptPublicKey::default(), 0, false, None);
+        let second = UtxoEntry::new(1_000, ScriptPublicKey::default(), 0, false, None);
+        let ids = Cell::new(None);
+        let context = TxContext::new()
+            .input(outpoint(1), first, Vec::new(), 0)
+            .input(outpoint(2), second, Vec::new(), 0)
+            .argent_genesis_output(0, "launch::child", "Counter", state(1), 100)
+            .argent_genesis_output(1, "launch::child", "Counter", state(1), 100)
+            .argent_output(
+                "Counter",
+                state_with(|context| {
+                    ids.set(Some((
+                        context.genesis_covenant_id(0, "launch::child").expect("first launch exists"),
+                        context.genesis_covenant_id(1, "launch::child").expect("second launch exists"),
+                    )));
+                    state(2)
+                }),
+                CovenantBinding::new(0, Hash::from_bytes([0x41; 32])),
+                100,
+            );
+
+        builder.bind_context(&context).expect("context binds");
+        let (first, second) = ids.get().expect("callback sees both launches");
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn context_binding_rejects_out_of_range_genesis_authorizing_input() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let context = TxContext::new().argent_genesis_output(1, "launch::child", "Counter", state(1), 100);
+
+        assert!(matches!(
+            builder.bind_context(&context),
+            Err(BuilderError::GenesisAuthorizingInputOutOfRange { authorizing_input: 1, input_count: 0 })
+        ));
     }
 
     #[test]

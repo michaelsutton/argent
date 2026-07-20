@@ -345,8 +345,8 @@ pub enum BuilderError {
     MissingSpawnGroup { spawn: String },
     #[error("invalid genesis path `{0}`; expected `launch::<name>`")]
     InvalidGenesisPath(String),
-    #[error("genesis authorizing input index {0} does not fit a covenant binding")]
-    GenesisAuthorizingInputOverflow(usize),
+    #[error("genesis authorizing input index {authorizing_input} is out of range for {input_count} inputs")]
+    GenesisAuthorizingInputOutOfRange { authorizing_input: u16, input_count: usize },
     #[error("genesis output index {0} does not fit a covenant group")]
     GenesisOutputIndexOverflow(usize),
     #[error("Argent output {output_index} `{actor}` must have an existing or genesis covenant binding")]

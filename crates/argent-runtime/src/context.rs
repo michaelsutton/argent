@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use kaspa_consensus_core::{
+    Hash,
     subnets::SubnetworkId,
     tx::{CovenantBinding, MutableTransaction, ScriptPublicKey, Transaction, TransactionOutpoint, UtxoEntry},
 };
@@ -192,7 +193,20 @@ pub enum ContextInput<'a> {
 /// Context available while deferred actor output states are resolved.
 #[derive(Debug, Default)]
 #[non_exhaustive]
-pub struct StateContext {}
+pub struct StateContext {
+    genesis_covenant_ids: BTreeMap<u16, BTreeMap<String, Hash>>,
+}
+
+impl StateContext {
+    /// Return the covenant ID assigned to one named genesis subgroup.
+    pub fn genesis_covenant_id(&self, authorizing_input: u16, subgroup: &str) -> Option<Hash> {
+        self.genesis_covenant_ids.get(&authorizing_input)?.get(subgroup).copied()
+    }
+
+    pub(crate) fn insert_genesis_covenant_id(&mut self, authorizing_input: u16, subgroup: String, covenant_id: Hash) {
+        self.genesis_covenant_ids.entry(authorizing_input).or_default().insert(subgroup, covenant_id);
+    }
+}
 
 type OutputStateCallback<'a> = dyn Fn(&StateContext) -> Result<BTreeMap<String, ArtifactValue>, CallbackError> + 'a;
 
@@ -262,7 +276,7 @@ pub enum OutputCovenant {
     /// The output carries an existing covenant binding.
     Existing(CovenantBinding),
     /// The builder assigns a new covenant ID shared by this named subgroup.
-    Genesis { authorizing_input: usize, subgroup: String },
+    Genesis { authorizing_input: u16, subgroup: String },
 }
 
 /// One ordered output in a transaction context.
@@ -378,7 +392,7 @@ impl<'a> TxContext<'a> {
     /// multiple outputs in one ordered genesis group.
     pub fn argent_genesis_output(
         mut self,
-        authorizing_input: usize,
+        authorizing_input: u16,
         subgroup: impl Into<String>,
         actor: impl Into<ActorPath>,
         state: BTreeMap<String, ArtifactValue>,
@@ -405,7 +419,7 @@ impl<'a> TxContext<'a> {
     /// Append a concrete-script output to a new covenant group.
     pub fn genesis_output(
         mut self,
-        authorizing_input: usize,
+        authorizing_input: u16,
         subgroup: impl Into<String>,
         script_public_key: ScriptPublicKey,
         value: u64,

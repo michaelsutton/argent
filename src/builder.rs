@@ -21,7 +21,6 @@ mod tests {
 
     use kaspa_consensus_core::{
         Hash,
-        errors::tx::PopulateGenesisCovenantsError,
         hashing::{
             covenant_id::covenant_id,
             sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash},
@@ -627,7 +626,7 @@ mod tests {
             .argent_genesis_output(1, "launch::pair", "Pair", state! { value: 7 }, 2_000);
         let err = builder.build(&missing_input).expect_err("launch paths must name an existing authorizing input");
         assert!(
-            matches!(err, BuilderError::PopulateGenesisCovenants(PopulateGenesisCovenantsError::NoSuchInput(1, 1))),
+            matches!(err, BuilderError::GenesisAuthorizingInputOutOfRange { authorizing_input: 1, input_count: 1 }),
             "unexpected error: {err}"
         );
     }
