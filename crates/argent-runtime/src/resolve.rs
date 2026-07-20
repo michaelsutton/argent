@@ -16,7 +16,7 @@ use kaspa_txscript_errors::TxScriptError;
 use crate::{
     ActorPath, ArgentInput, Artifact, ArtifactValue, BuilderError, BuilderResult, ContextInput, ContextOutput, ContractRef, EntryArgs,
     HiddenArgContexts, InputSigScript, ObservedCovenantContext, ObservedInput, ObservedOutput, OrdinaryInput, OutputCovenant,
-    OutputOwner, Side, SpawnedActorContext, TxBuilder, TxContext, artifact_app_alias, covenant_engine_flags,
+    OutputOwner, Side, SpawnedActorContext, StateContext, TxBuilder, TxContext, artifact_app_alias, covenant_engine_flags,
     execute_transaction_with_covenants,
 };
 
@@ -60,7 +60,7 @@ impl LaunchGroupKey {
 /// hidden witnesses before the final signature scripts are assembled.
 struct ResolveContext<'artifact, 'context, 'args> {
     inputs: Vec<ResolveInput<'artifact, 'context, 'args>>,
-    outputs: Vec<ResolveOutput<'artifact, 'context>>,
+    outputs: Vec<ResolveOutput<'artifact, 'context, 'args>>,
     launch_groups: BTreeMap<LaunchGroupKey, GenesisGroup>,
     lock_time: u64,
     subnetwork_id: SubnetworkId,
@@ -92,18 +92,18 @@ impl<'artifact> ResolveArgentInput<'artifact, '_, '_> {
     }
 }
 
-struct ResolvedActor<'artifact, 'context> {
+struct ResolvedActor<'artifact> {
     contract: ContractRef<'artifact>,
-    state: &'context BTreeMap<String, ArtifactValue>,
+    state: BTreeMap<String, ArtifactValue>,
 }
 
 enum ResolveOutputOwner<'artifact, 'context> {
-    Actor(ResolvedActor<'artifact, 'context>),
+    Actor(ResolvedActor<'artifact>),
     Spk(&'context ScriptPublicKey),
 }
 
-struct ResolveOutput<'artifact, 'context> {
-    source: &'context ContextOutput,
+struct ResolveOutput<'artifact, 'context, 'args> {
+    source: &'context ContextOutput<'args>,
     owner: ResolveOutputOwner<'artifact, 'context>,
 }
 
@@ -149,19 +149,30 @@ impl<'artifact> TxBuilder<'artifact> {
 
         let mut outputs = Vec::with_capacity(context.outputs.len());
         let mut launch_groups = BTreeMap::<LaunchGroupKey, GenesisGroup>::new();
+        let state_context = StateContext::default();
         for (output_index, output) in context.outputs.iter().enumerate() {
-            let owner = match &output.owner {
-                OutputOwner::Actor { actor, state } => {
-                    ResolveOutputOwner::Actor(ResolvedActor { contract: self.bind_actor(actor)?, state })
-                }
-                OutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
-            };
             if let OutputCovenant::Genesis { authorizing_input, subgroup } = &output.covenant {
+                if let OutputOwner::Actor { actor, state } = &output.owner
+                    && state.is_deferred()
+                {
+                    return Err(BuilderError::GenesisOutputStateCallback { output_index, actor: actor.to_string() });
+                }
                 let launch = LaunchGroupKey::parse(*authorizing_input, subgroup)?;
                 launch_groups.entry(launch).or_default().output_indices.push(output_index);
             } else if let (OutputOwner::Actor { actor, .. }, OutputCovenant::Unbound) = (&output.owner, &output.covenant) {
                 return Err(BuilderError::UnboundArgentOutput { output_index, actor: actor.to_string() });
             }
+            let owner = match &output.owner {
+                OutputOwner::Actor { actor, state } => ResolveOutputOwner::Actor(ResolvedActor {
+                    contract: self.bind_actor(actor)?,
+                    state: state.resolve(&state_context).map_err(|source| BuilderError::OutputStateCallback {
+                        output_index,
+                        actor: actor.to_string(),
+                        source,
+                    })?,
+                }),
+                OutputOwner::Spk(script_public_key) => ResolveOutputOwner::Spk(script_public_key),
+            };
             outputs.push(ResolveOutput { source: output, owner });
         }
 
@@ -750,7 +761,7 @@ fn resolve_observed_output(
     observe: &str,
     declaration: &ObservedActorArtifact,
     index: usize,
-    candidate: &ResolveOutput<'_, '_>,
+    candidate: &ResolveOutput<'_, '_, '_>,
     app: &mut Option<String>,
 ) -> BuilderResult<(String, ObservedOutput)> {
     let ResolveOutputOwner::Actor(actor) = &candidate.owner else {
@@ -797,7 +808,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{ArgValue, ArtifactBundle, ArtifactValue, EntryCall, InputSigScript, actor};
+    use crate::{ArgValue, ArtifactBundle, ArtifactValue, EntryCall, InputSigScript, actor, state_with, try_state_with};
 
     fn artifact(app: &str, actor: &str, entry: &str) -> Artifact {
         artifact_with_entry(app, actor, entry, Vec::new(), Vec::new())
@@ -976,6 +987,77 @@ mod tests {
         assert_eq!(unsigned.tx.outputs[2].covenant, Some(CovenantBinding::new(2, reserve_id)));
         assert!(!args_called.get());
         assert!(!script_called.get());
+    }
+
+    #[test]
+    fn output_state_callback_resolves_once_before_materialization() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x31; 32]);
+        let calls = Cell::new(0);
+        let context = TxContext::new().argent_output(
+            "Counter",
+            state_with(|_| {
+                calls.set(calls.get() + 1);
+                state(3)
+            }),
+            CovenantBinding::new(0, covenant_id),
+            900,
+        );
+
+        let resolved = builder.bind_context(&context).expect("deferred state resolves");
+        assert_eq!(calls.get(), 1);
+        assert!(matches!(&resolved.outputs[0].owner, ResolveOutputOwner::Actor(actor) if actor.state == state(3)));
+        let unsigned = builder.unsigned_transaction(&resolved).expect("resolved state materializes");
+        assert_eq!(calls.get(), 1);
+        assert_eq!(
+            unsigned.tx.outputs[0].script_public_key,
+            builder
+                .covenant_utxo("Counter", state(3), 900, 0, false, Some(covenant_id))
+                .expect("expected output script builds")
+                .script_public_key
+        );
+    }
+
+    #[test]
+    fn output_state_callback_error_reports_output_context() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let covenant_id = Hash::from_bytes([0x31; 32]);
+        let fallible = TxContext::new().argent_output(
+            "Counter",
+            try_state_with(|_| -> Result<_, std::io::Error> { Err(std::io::Error::other("state failed")) }),
+            CovenantBinding::new(0, covenant_id),
+            900,
+        );
+        assert!(matches!(
+            builder.bind_context(&fallible),
+            Err(BuilderError::OutputStateCallback { output_index: 0, actor, .. }) if actor == "Counter"
+        ));
+    }
+
+    #[test]
+    fn genesis_output_rejects_deferred_state_without_calling_it() {
+        let artifact = artifact("primary", "Counter", "bump");
+        let builder = TxBuilder::new(&artifact).expect("artifact builds");
+        let genesis_calls = Cell::new(0);
+        let mut genesis = TxContext::new();
+        genesis.outputs.push(ContextOutput {
+            owner: OutputOwner::Actor {
+                actor: ActorPath::primary("Counter"),
+                state: state_with(|_| {
+                    genesis_calls.set(genesis_calls.get() + 1);
+                    state(3)
+                }),
+            },
+            covenant: OutputCovenant::Genesis { authorizing_input: 0, subgroup: "launch::counter".to_string() },
+            value: 900,
+        });
+        assert!(matches!(
+            builder.bind_context(&genesis),
+            Err(BuilderError::GenesisOutputStateCallback { output_index: 0, actor }) if actor == "Counter"
+        ));
+        assert_eq!(genesis_calls.get(), 0);
     }
 
     #[test]

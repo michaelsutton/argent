@@ -51,7 +51,7 @@ impl fmt::Display for ActorPath {
     }
 }
 
-type CallbackError = Box<dyn Error + Send + Sync + 'static>;
+pub(crate) type CallbackError = Box<dyn Error + Send + Sync + 'static>;
 type EntryArgsCallback<'a> = dyn Fn(&MutableTransaction<Transaction>, usize) -> Result<Vec<ArgValue>, CallbackError> + 'a;
 
 /// User arguments for an Argent entry call.
@@ -189,11 +189,67 @@ pub enum ContextInput<'a> {
     Ordinary(OrdinaryInput<'a>),
 }
 
+/// Context available while deferred actor output states are resolved.
+#[derive(Debug, Default)]
+#[non_exhaustive]
+pub struct StateContext {}
+
+type OutputStateCallback<'a> = dyn Fn(&StateContext) -> Result<BTreeMap<String, ArtifactValue>, CallbackError> + 'a;
+
+/// Static actor state or state derived while the transaction is being built.
+pub enum OutputState<'a> {
+    /// State known when the transaction context is assembled.
+    Static(BTreeMap<String, ArtifactValue>),
+    /// State built later from the transaction state-resolution context.
+    WithContext(Box<OutputStateCallback<'a>>),
+}
+
+impl OutputState<'_> {
+    pub(crate) fn resolve(&self, context: &StateContext) -> Result<BTreeMap<String, ArtifactValue>, CallbackError> {
+        match self {
+            Self::Static(state) => Ok(state.clone()),
+            Self::WithContext(build) => build(context),
+        }
+    }
+
+    pub(crate) fn is_deferred(&self) -> bool {
+        matches!(self, Self::WithContext(_))
+    }
+}
+
+impl fmt::Debug for OutputState<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Static(state) => formatter.debug_tuple("Static").field(state).finish(),
+            Self::WithContext(_) => formatter.write_str("WithContext(<callback>)"),
+        }
+    }
+}
+
+impl<'a> From<BTreeMap<String, ArtifactValue>> for OutputState<'a> {
+    fn from(state: BTreeMap<String, ArtifactValue>) -> Self {
+        Self::Static(state)
+    }
+}
+
+/// Build actor output state from transaction state-resolution context.
+pub fn state_with<'a>(build: impl Fn(&StateContext) -> BTreeMap<String, ArtifactValue> + 'a) -> OutputState<'a> {
+    OutputState::WithContext(Box::new(move |context| Ok(build(context))))
+}
+
+/// Fallibly build actor output state from transaction state-resolution context.
+pub fn try_state_with<'a, E>(build: impl Fn(&StateContext) -> Result<BTreeMap<String, ArtifactValue>, E> + 'a) -> OutputState<'a>
+where
+    E: Error + Send + Sync + 'static,
+{
+    OutputState::WithContext(Box::new(move |context| build(context).map_err(|error| Box::new(error) as CallbackError)))
+}
+
 /// The actor or script that controls one transaction output.
-#[derive(Clone, Debug)]
-pub enum OutputOwner {
+#[derive(Debug)]
+pub enum OutputOwner<'a> {
     /// An Argent actor whose P2SH script is derived from its artifact and state.
-    Actor { actor: ActorPath, state: BTreeMap<String, ArtifactValue> },
+    Actor { actor: ActorPath, state: OutputState<'a> },
     /// A concrete script supplied directly by the caller.
     Spk(ScriptPublicKey),
 }
@@ -210,9 +266,9 @@ pub enum OutputCovenant {
 }
 
 /// One ordered output in a transaction context.
-#[derive(Clone, Debug)]
-pub struct ContextOutput {
-    pub owner: OutputOwner,
+#[derive(Debug)]
+pub struct ContextOutput<'a> {
+    pub owner: OutputOwner<'a>,
     pub covenant: OutputCovenant,
     pub value: u64,
 }
@@ -231,7 +287,7 @@ pub struct ContextOutput {
 #[derive(Debug, Default)]
 pub struct TxContext<'a> {
     pub inputs: Vec<ContextInput<'a>>,
-    pub outputs: Vec<ContextOutput>,
+    pub outputs: Vec<ContextOutput<'a>>,
     pub lock_time: u64,
     pub subnetwork_id: SubnetworkId,
     pub gas: u64,
@@ -304,12 +360,12 @@ impl<'a> TxContext<'a> {
     pub fn argent_output(
         mut self,
         actor: impl Into<ActorPath>,
-        state: BTreeMap<String, ArtifactValue>,
+        state: impl Into<OutputState<'a>>,
         covenant: CovenantBinding,
         value: u64,
     ) -> Self {
         self.outputs.push(ContextOutput {
-            owner: OutputOwner::Actor { actor: actor.into(), state },
+            owner: OutputOwner::Actor { actor: actor.into(), state: state.into() },
             covenant: OutputCovenant::Existing(covenant),
             value,
         });
@@ -329,7 +385,7 @@ impl<'a> TxContext<'a> {
         value: u64,
     ) -> Self {
         self.outputs.push(ContextOutput {
-            owner: OutputOwner::Actor { actor: actor.into(), state },
+            owner: OutputOwner::Actor { actor: actor.into(), state: OutputState::Static(state) },
             covenant: OutputCovenant::Genesis { authorizing_input, subgroup: subgroup.into() },
             value,
         });

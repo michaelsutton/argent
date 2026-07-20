@@ -18,7 +18,7 @@ use std::{collections::BTreeMap, error::Error, fmt};
 pub use argent_artifact::Artifact;
 pub use context::{
     ActorPath, ArgentInput, ContextInput, ContextOutput, EntryArgs, EntryCall, InputSigScript, OrdinaryInput, OutputCovenant,
-    OutputOwner, TxContext,
+    OutputOwner, OutputState, StateContext, TxContext, state_with, try_state_with,
 };
 pub use silverscript_abi::ArtifactValue;
 
@@ -351,6 +351,15 @@ pub enum BuilderError {
     GenesisOutputIndexOverflow(usize),
     #[error("Argent output {output_index} `{actor}` must have an existing or genesis covenant binding")]
     UnboundArgentOutput { output_index: usize, actor: String },
+    #[error("genesis actor output {output_index} `{actor}` must have static state")]
+    GenesisOutputStateCallback { output_index: usize, actor: String },
+    #[error("failed to build state for actor output {output_index} `{actor}`: {source}")]
+    OutputStateCallback {
+        output_index: usize,
+        actor: String,
+        #[source]
+        source: Box<dyn Error + Send + Sync + 'static>,
+    },
     #[error("observe `{observe}` spans apps `{expected}` and `{found}`")]
     ObservedAppMismatch { observe: String, expected: String, found: String },
     #[error("unknown entry `{actor}::{entry}`")]
