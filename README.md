@@ -170,7 +170,7 @@ let input_utxo = builder.covenant_utxo(
 )?;
 
 let context = TxContext::new()
-    .argent_input(
+    .actor_input(
         "Counter",
         input_state,
         EntryCall::new("bump").args(args![3]),
@@ -178,7 +178,7 @@ let context = TxContext::new()
         input_utxo,
         0, // sequence
     )
-    .argent_output(
+    .actor_output(
         "Counter",
         output_state,
         CovenantBinding::new(0, covenant_id),
