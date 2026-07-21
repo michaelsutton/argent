@@ -8,7 +8,7 @@ use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
 use crate::language::word;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
-use crate::routing::{RouteGraph, components};
+use crate::routing::{RouteGraph, route_plan};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
@@ -1485,17 +1485,22 @@ fn infer_direct_route_families<'a>(
 ) -> Result<Vec<RouteFamily>> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut graph = RouteGraph::default();
-    let mut domains = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut domains = BTreeMap::<String, Vec<String>>::new();
     let mut selectors_by_actor = BTreeMap::<String, Vec<TemplateSelector>>::new();
 
     for actor in actors {
         if template_actor_set.contains(&actor.name) {
             graph.add_actor(actor.name.clone());
-            domains.entry(actor.state.clone()).or_default().insert(actor.name.clone());
+            domains.entry(actor.state.clone()).or_default().push(actor.name.clone());
         }
         for entry in &actor.entries {
             let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
             selectors_by_actor.entry(actor.name.clone()).or_default().extend(selectors.values().cloned());
+            for consume in &entry.consumes {
+                if template_actor_set.contains(&consume.actor) {
+                    graph.add_consume(actor.name.clone(), consume.actor.clone());
+                }
+            }
             for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
@@ -1511,36 +1516,18 @@ fn infer_direct_route_families<'a>(
     }
 
     let mut families = Vec::new();
-    for (state, domain) in domains {
-        for component in components(&graph, &domain) {
-            // A two-actor component needs two template hashes either way;
-            // direct fields avoid the extra table hash and slice operations.
-            if component.members.len() < 3 {
-                continue;
-            }
-            let actors = template_actors.iter().filter(|actor| component.members.contains(*actor)).cloned().collect::<Vec<_>>();
-            let entry_actors = template_actors.iter().filter(|actor| component.gates.contains(*actor)).cloned().collect::<Vec<_>>();
-            let anchor_actor = entry_actors.first().or_else(|| actors.first()).expect("component has at least two actors");
-            let direct_template_actors = if entry_actors.is_empty() { vec![anchor_actor.clone()] } else { entry_actors.clone() };
-            let direct_template_actor_set = direct_template_actors.iter().cloned().collect::<BTreeSet<_>>();
-            let default_table_actors =
-                actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
-            let table_actors =
-                route_family_table_actors_from_selector_order(&state, &actors, &default_table_actors, &selectors_by_actor)?;
-            // Multiple direct entry actors can leave only one table entry even
-            // in a larger component. Such a table has no storage benefit.
-            if table_actors.len() < 2 {
-                continue;
-            }
-            families.push(RouteFamily {
-                id: route_template_family_receipt_id(&state, anchor_actor),
-                state: state.clone(),
-                actors,
-                entry_actors,
-                direct_template_actors,
-                table_actors,
-            });
-        }
+    for planned in route_plan(&graph, &domains).map_err(|err| ArgentError::new(err.to_string()))?.families {
+        let table_actors =
+            route_family_table_actors_from_selector_order(&planned.domain, &planned.members, &planned.table, &selectors_by_actor)?;
+        let anchor_actor = planned.direct.first().expect("planned route families contain a direct actor");
+        families.push(RouteFamily {
+            id: route_template_family_receipt_id(&planned.domain, anchor_actor),
+            state: planned.domain,
+            actors: planned.members,
+            entry_actors: planned.gates,
+            direct_template_actors: planned.direct,
+            table_actors,
+        });
     }
 
     Ok(families)
