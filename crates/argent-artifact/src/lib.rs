@@ -981,12 +981,7 @@ impl TemplatePlanArtifact {
                     RouteTemplateLeafArtifact::RouteFamily { .. } => None,
                 })
                 .collect::<Vec<_>>();
-            let direct_template_actors = if family.entry_actors.is_empty() {
-                vec![family.anchor_actor.as_str()]
-            } else {
-                family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>()
-            };
-            let direct_template_actor_set = direct_template_actors.into_iter().collect::<BTreeSet<_>>();
+            let direct_template_actor_set = family.entry_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
             let expected_table_actors =
                 family.actors.iter().filter(|actor| !direct_template_actor_set.contains(actor.as_str())).cloned().collect::<Vec<_>>();
             let expected_table_actor_set = expected_table_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();

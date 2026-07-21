@@ -96,19 +96,19 @@ impl TemplateSelector {
 struct RouteFamily {
     id: String,
     state: String,
+    rep: String,
     actors: Vec<String>,
     entry_actors: Vec<String>,
-    direct_template_actors: Vec<String>,
     table_actors: Vec<String>,
 }
 
 impl RouteFamily {
-    fn anchor_actor(&self) -> &str {
-        self.direct_template_actors.first().map(String::as_str).expect("route families contain at least one direct template actor")
+    fn rep(&self) -> &str {
+        &self.rep
     }
 
     fn direct_template_actors(&self) -> &[String] {
-        &self.direct_template_actors
+        &self.entry_actors
     }
 
     fn table_actors(&self) -> &[String] {
@@ -1516,16 +1516,15 @@ fn infer_direct_route_families<'a>(
     }
 
     let mut families = Vec::new();
-    for planned in route_plan(&graph, &domains).map_err(|err| ArgentError::new(err.to_string()))?.families {
+    for plan in route_plan(&graph, &domains).map_err(|err| ArgentError::new(err.to_string()))?.families {
         let table_actors =
-            route_family_table_actors_from_selector_order(&planned.domain, &planned.members, &planned.table, &selectors_by_actor)?;
-        let anchor_actor = planned.direct.first().expect("planned route families contain a direct actor");
+            route_family_table_actors_from_selector_order(&plan.domain, &plan.members, &plan.rep, &plan.table, &selectors_by_actor)?;
         families.push(RouteFamily {
-            id: route_template_family_receipt_id(&planned.domain, anchor_actor),
-            state: planned.domain,
-            actors: planned.members,
-            entry_actors: planned.gates,
-            direct_template_actors: planned.direct,
+            id: route_template_family_receipt_id(&plan.domain, &plan.rep),
+            state: plan.domain,
+            actors: plan.members,
+            entry_actors: plan.gates,
+            rep: plan.rep,
             table_actors,
         });
     }
@@ -1536,6 +1535,7 @@ fn infer_direct_route_families<'a>(
 fn route_family_table_actors_from_selector_order(
     state: &str,
     component_actors: &[String],
+    rep: &str,
     default_table_actors: &[String],
     selectors_by_actor: &BTreeMap<String, Vec<TemplateSelector>>,
 ) -> Result<Vec<String>> {
@@ -1548,22 +1548,41 @@ fn route_family_table_actors_from_selector_order(
         };
         for selector in selectors.iter().filter(|selector| selector.state == state) {
             let selector_actor_set = selector.variants.iter().cloned().collect::<BTreeSet<_>>();
-            if selector_actor_set != table_actor_set {
+            let table_order = if selector_actor_set == table_actor_set {
+                selector.variants.clone()
+            } else {
+                let selectable_actors = table_actor_set.iter().filter(|actor| actor.as_str() != rep);
+                if !selectable_actors.eq(selector_actor_set.iter()) {
+                    let expected = table_actor_set.iter().filter(|actor| actor.as_str() != rep).collect::<Vec<_>>();
+                    return Err(ArgentError::new(format!(
+                        "actor enum `{}` variants must cover the selectable route table actors for state `{state}`; expected {:?}, found {:?}",
+                        selector.actor_enum, expected, selector_actor_set
+                    )));
+                }
+
+                // Keep actor-enum indices unchanged. The non-selectable family
+                // representative remains committed as the final table entry.
+                let mut order = selector.variants.clone();
+                order.push(rep.to_string());
+                order
+            };
+
+            if table_order.len() != table_actor_set.len() || table_order.iter().cloned().collect::<BTreeSet<_>>() != table_actor_set {
                 return Err(ArgentError::new(format!(
-                    "actor enum `{}` variants must exactly match the route table actors for state `{state}`; expected {:?}, found {:?}",
-                    selector.actor_enum, table_actor_set, selector_actor_set
+                    "actor enum `{}` does not define a valid route table order for state `{state}`",
+                    selector.actor_enum
                 )));
             }
 
-            if let Some((source_actor_enum, order)) = &selected_order {
-                if order != &selector.variants {
+            if let Some((source_actor_enum, selected_table_order)) = &selected_order {
+                if selected_table_order != &table_order {
                     return Err(ArgentError::new(format!(
                         "actor enum `{}` uses a different selector order than actor enum `{source_actor_enum}` for state `{state}`",
                         selector.actor_enum
                     )));
                 }
             } else {
-                selected_order = Some((&selector.actor_enum, selector.variants.clone()));
+                selected_order = Some((&selector.actor_enum, table_order));
             }
         }
     }
@@ -2410,9 +2429,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{selector_name}`")))?
             .clone();
         let family = self.selector_family(&selector)?;
-        if family.table_actors() != selector.variants.as_slice() {
+        if !family.table_actors().starts_with(&selector.variants) {
             return Err(ArgentError::new(format!(
-                "actor enum `{}` order must match route family `{}` table order for selector lowering",
+                "actor enum `{}` order must prefix route family `{}` table order for selector lowering",
                 selector.actor_enum, family.id
             )));
         }
@@ -4596,7 +4615,7 @@ fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamil
         .map(|family| RouteTemplateFamilyArtifact {
             id: family.id.clone(),
             state: family.state.clone(),
-            anchor_actor: family.anchor_actor().to_string(),
+            anchor_actor: family.rep().to_string(),
             entry_actors: family.entry_actors.clone(),
             table_id: route_template_table_receipt_id(&family.state, &hidden_route_family_table_name(family)),
             actors: family.actors.clone(),
@@ -6046,8 +6065,8 @@ fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) 
     format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
 
-fn route_template_family_receipt_id(state: &str, anchor_actor: &str) -> String {
-    format!("route_family/{state}/{}", hidden_actor_suffix(anchor_actor))
+fn route_template_family_receipt_id(state: &str, rep_actor: &str) -> String {
+    format!("route_family/{state}/{}", hidden_actor_suffix(rep_actor))
 }
 
 fn route_family_witness_recipe_id(family_id: &str, purpose: HiddenParamPurposeArtifact) -> String {
@@ -8445,7 +8464,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_actor_enum_selector_still_builds_full_selector_table() {
+    fn gate_less_family_appends_rep_after_selector_variants() {
         let path = PathBuf::from("fixed-selector-table.ag");
         let module = crate::parser::parse_module(
             path.clone(),
@@ -8496,6 +8515,10 @@ mod tests {
         let actor_sil = actor_sil_for_model(&model);
         let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
 
+        let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
+        assert!(family.entry_actors.is_empty());
+        assert_eq!(family.anchor_actor, "Mux");
+
         let board_table = artifact
             .argent
             .template_plan
@@ -8508,6 +8531,7 @@ mod tests {
             vec![
                 RouteTemplateLeafArtifact::Template { actor: "Pawn".to_string(), template_id: "template/pawn".to_string() },
                 RouteTemplateLeafArtifact::Template { actor: "Knight".to_string(), template_id: "template/knight".to_string() },
+                RouteTemplateLeafArtifact::Template { actor: "Mux".to_string(), template_id: "template/mux".to_string() },
             ]
         );
 
@@ -8525,6 +8549,7 @@ mod tests {
 
         let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
         assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
+        assert!(mux_sil.contains("require(gen__target_selector < 2);"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__target_template = byte[32]("), "{mux_sil}");
         assert!(mux_sil.contains("gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)"), "{mux_sil}");
         artifact.verify_template_plan().expect("template plan receipt verifies");
@@ -8635,7 +8660,7 @@ mod tests {
         let program = Program { root: path, modules: vec![module] };
 
         let err = Model::from_program(&program).expect_err("incomplete route-family selector sets must be rejected");
-        assert!(err.to_string().contains("variants must exactly match the route table actors"), "unexpected error: {err}");
+        assert!(err.to_string().contains("variants must cover the selectable route table actors"), "unexpected error: {err}");
     }
 
     #[test]
@@ -8838,6 +8863,7 @@ mod tests {
                 (
                     "route_table/BoardState/gen__a_routes",
                     vec![
+                        RouteTemplateLeafArtifact::Template { actor: "A".to_string(), template_id: "template/a".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "B".to_string(), template_id: "template/b".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "C".to_string(), template_id: "template/c".to_string() },
                     ],
@@ -8845,6 +8871,7 @@ mod tests {
                 (
                     "route_table/BoardState/gen__d_routes",
                     vec![
+                        RouteTemplateLeafArtifact::Template { actor: "D".to_string(), template_id: "template/d".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "E".to_string(), template_id: "template/e".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "F".to_string(), template_id: "template/f".to_string() },
                     ],
@@ -8860,10 +8887,14 @@ mod tests {
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
             vec![
-                ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
-                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string(), "C".to_string()] }),
-                ("gen__d_template", RuntimeFieldRoleArtifact::Template { contract: "D".to_string() }),
-                ("gen__d_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["E".to_string(), "F".to_string()] }),
+                (
+                    "gen__a_routes",
+                    RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["A".to_string(), "B".to_string(), "C".to_string()] }
+                ),
+                (
+                    "gen__d_routes",
+                    RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string(), "E".to_string(), "F".to_string()] }
+                ),
             ]
         );
         artifact.verify_template_plan().expect("multi-family route state receipt verifies");

@@ -1404,6 +1404,96 @@ mod tests {
     }
 
     #[test]
+    fn gate_less_route_family_rejects_selector_for_appended_rep() {
+        let artifact = inline_artifact(
+            "gate-less-selector-bound",
+            r#"
+            state BoardState {
+                int ply;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Mux owns BoardState {
+                entry choose(target: MoveActor) emits one MoveActor {
+                    BoardState next = {
+                        ply: ply + 1,
+                    };
+
+                    become target(next);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry idle() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            app GateLessSelectorBound {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+            }
+            "#,
+        );
+        let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
+        let covenant_id = Hash::from_bytes([0x71; 32]);
+        let input_value = 1_000;
+        let initial_state = state! { ply: 0 };
+        let next_state = state! { ply: 1 };
+        let outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x72; 32]), index: 0 };
+        let input_utxo =
+            builder.covenant_utxo("Mux", initial_state.clone(), input_value, 0, false, Some(covenant_id)).expect("Mux utxo builds");
+        let context = TxContext::new()
+            .actor_input("Mux", initial_state, EntryCall::new("choose").args(args![actor("Pawn")]), outpoint, input_utxo.clone(), 0)
+            .actor_output("Pawn", next_state.clone(), CovenantBinding::new(0, covenant_id), input_value);
+        let mut tx = builder.build(&context).expect("valid selector transaction builds");
+
+        // Make table slot 2 otherwise valid for Mux, then bypass the builder's
+        // actor-enum check and pass the raw selector directly to the Sil entry.
+        let mux_output = builder
+            .covenant_utxo("Mux", next_state, input_value, 0, false, Some(covenant_id))
+            .expect("Mux continuation output builds");
+        tx.outputs[0].script_public_key = mux_output.script_public_key;
+
+        let mux_contract = artifact.sil_abi.contract("Mux").expect("Mux contract exists");
+        let choose = mux_contract.entry("choose").expect("choose entry exists");
+        let mux_template = &mux_contract.compiled.template;
+        let malicious_entry_sigscript = encode_entry_sig_script(
+            &artifact.sil_abi,
+            mux_contract,
+            choose,
+            &[
+                ArtifactValue::Int(2),
+                ArtifactValue::Bytes(decode_hex(&mux_template.prefix_hex).expect("Mux prefix decodes")),
+                ArtifactValue::Bytes(decode_hex(&mux_template.suffix_hex).expect("Mux suffix decodes")),
+            ],
+        )
+        .expect("raw selector sigscript encodes");
+        tx.inputs[0].signature_script = pay_to_script_hash_signature_script_with_flags(
+            p2sh_redeem_script(&tx.inputs[0].signature_script),
+            malicious_entry_sigscript,
+            covenant_engine_flags(),
+        )
+        .expect("raw selector P2SH sigscript builds");
+
+        assert!(
+            execute_input_with_covenants(&tx, vec![input_utxo], 0).is_err(),
+            "Sil must reject selector 2 even though the representative occupies table slot 2"
+        );
+    }
+
+    #[test]
     fn builder_rejects_template_plan_hash_mismatch() {
         let mut artifact = tickets_artifact();
         artifact.verify_template_plan().expect("fixture receipt verifies before mutation");

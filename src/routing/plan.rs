@@ -9,9 +9,9 @@ use super::graph::{RouteGraph, components};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FamilyPlan {
     pub domain: String,
+    pub rep: String,
     pub members: Vec<String>,
     pub gates: Vec<String>,
-    pub direct: Vec<String>,
     pub table: Vec<String>,
 }
 
@@ -26,9 +26,10 @@ pub struct RoutePlan {
 ///
 /// Each domain maps its identifier to actors in compiler order. Weak emit
 /// components with at least three members become family candidates. Their
-/// inbound gates remain direct; a component without gates keeps its first actor
-/// direct. The remaining actors form a commitment family when at least two
-/// table entries remain, while all component members form one cut cohort.
+/// inbound gates remain direct. The first gate, or the first member when there
+/// are no gates, represents the family without affecting its structure. All
+/// non-gate members form the commitment family, while all component members
+/// form one cut cohort.
 pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -> Result<RoutePlan, ConstraintError> {
     let mut families = Vec::new();
     let mut constraints = CommitmentConstraints::default();
@@ -36,17 +37,17 @@ pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -
     for (domain, actor_order) in domains {
         let domain_actors = actor_order.iter().cloned().collect::<BTreeSet<_>>();
         for component in components(graph, &domain_actors) {
-            // With at least one gate, the table would have at most one entry,
-            // adding a commitment and slicing without reducing template storage.
+            // A table for two actors saves no template space and adds slicing.
+            // With a gate, it would contain only one actor and be even less useful.
             if component.members.len() < 3 {
                 continue;
             }
 
             let members = ordered_members(actor_order, &component.members);
             let gates = ordered_members(actor_order, &component.gates);
-            let direct = if gates.is_empty() { vec![members[0].clone()] } else { gates.clone() };
-            let direct_set = direct.iter().cloned().collect::<BTreeSet<_>>();
-            let table = members.iter().filter(|actor| !direct_set.contains(*actor)).cloned().collect::<Vec<_>>();
+            let rep = gates.first().or_else(|| members.first()).expect("components are nonempty").clone();
+            let gate_set = gates.iter().cloned().collect::<BTreeSet<_>>();
+            let table = members.iter().filter(|actor| !gate_set.contains(*actor)).cloned().collect::<Vec<_>>();
 
             // Multiple gates can leave only one table member even in a larger
             // component. A one-entry table has no storage benefit.
@@ -54,9 +55,10 @@ pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -
                 continue;
             }
 
-            constraints.families.push(table.iter().cloned().collect());
+            let family = members.iter().filter(|actor| !gate_set.contains(*actor)).cloned().collect();
+            constraints.families.push(family);
             constraints.cohorts.push(component.members);
-            families.push(FamilyPlan { domain: domain.clone(), members, gates, direct, table });
+            families.push(FamilyPlan { domain: domain.clone(), rep, members, gates, table });
         }
     }
 
@@ -96,7 +98,7 @@ mod tests {
                 domain: "PieceState".to_string(),
                 members: strings(["Knight", "Mux", "Pawn"]),
                 gates: strings(["Mux"]),
-                direct: strings(["Mux"]),
+                rep: "Mux".to_string(),
                 table: strings(["Knight", "Pawn"]),
             }]
         );
@@ -115,6 +117,25 @@ mod tests {
         assert_eq!(plan.commitments.cuts["Knight"], cohort_cut);
         assert_eq!(plan.commitments.cuts["Mux"], cohort_cut);
         assert_eq!(plan.commitments.cuts["Pawn"], cohort_cut);
+    }
+
+    #[test]
+    fn gate_less_family_keeps_its_representative_in_the_table() {
+        let mut graph = RouteGraph::default();
+        graph.add_emit("A", "B");
+        graph.add_emit("B", "C");
+        graph.add_emit("C", "A");
+        let domains = BTreeMap::from([("State".to_string(), strings(["A", "B", "C"]))]);
+
+        let plan = route_plan(&graph, &domains).expect("inferred constraints are valid");
+
+        assert_eq!(plan.families[0].rep, "A");
+        assert!(plan.families[0].gates.is_empty());
+        assert_eq!(plan.families[0].table, strings(["A", "B", "C"]));
+        assert_eq!(
+            plan.commitments.forest,
+            CommitmentForest { roots: vec![CommitmentNode::Branch { children: vec![leaf("A"), leaf("B"), leaf("C")] }] }
+        );
     }
 
     fn leaf(actor: &str) -> CommitmentNode {
