@@ -4799,7 +4799,9 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
             args.extend(actor_templates.into_iter().map(|_| zero_byte_array_expr(32)));
             args.extend(family_commitments.into_iter().map(|_| zero_byte_array_expr(32)));
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            args.extend(actor_templates.into_iter().map(|_| zero_byte_array_expr(32)));
+            args.extend(family_commitments.into_iter().map(|_| zero_byte_array_expr(32)));
             for family in families {
                 args.extend(family.direct_template_actors().iter().map(|_| zero_byte_array_expr(32)));
                 args.push(zero_byte_array_expr(family.table_byte_len()));
@@ -4898,7 +4900,21 @@ fn runtime_state_field_defs_for_source(
                 ));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                fields.push((
+                    hidden_template_name(actor),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::Template { contract: actor.to_string() }),
+                ));
+            }
+            for family in family_commitments {
+                fields.push((
+                    hidden_route_family_commitment_name(family),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::TemplateDigest { id: family.id.clone() }),
+                ));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     fields.push((
@@ -5824,7 +5840,27 @@ fn route_family_proof_id_from_id(family_id: &str) -> String {
 fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
     let families = model.route_families_for_state(state);
     if !families.is_empty() {
-        return RouteFieldKind::FamilyTables { families };
+        let family_actors = families.iter().flat_map(|family| family.actors.iter().map(String::as_str)).collect::<BTreeSet<_>>();
+        let family_ids = families.iter().map(|family| family.id.as_str()).collect::<BTreeSet<_>>();
+        let actor_templates = model
+            .route_leaves_for_state(state)
+            .iter()
+            .filter_map(|leaf| match leaf {
+                RouteRootLeaf::Actor(actor) if !family_actors.contains(actor.as_str()) => Some(actor.as_str()),
+                RouteRootLeaf::Actor(_) | RouteRootLeaf::Family(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let family_commitments = model
+            .route_leaves_for_state(state)
+            .iter()
+            .filter_map(|leaf| match leaf {
+                RouteRootLeaf::Family(family_id) if !family_ids.contains(family_id.as_str()) => {
+                    model.route_families.iter().find(|family| family.id == *family_id)
+                }
+                RouteRootLeaf::Actor(_) | RouteRootLeaf::Family(_) => None,
+            })
+            .collect::<Vec<_>>();
+        return RouteFieldKind::FamilyTables { actor_templates, family_commitments, families };
     }
 
     let actor_templates = model
@@ -5854,7 +5890,7 @@ fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<
 enum RouteFieldKind<'a> {
     None,
     Direct { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily> },
-    FamilyTables { families: Vec<&'a RouteFamily> },
+    FamilyTables { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily>, families: Vec<&'a RouteFamily> },
 }
 
 fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
@@ -5868,8 +5904,12 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
             );
             args
         }
-        RouteFieldKind::FamilyTables { families } => {
-            let mut args = Vec::new();
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            let mut args =
+                actor_templates.into_iter().map(|actor| format!("byte[32] {}", hidden_template_init_name(actor))).collect::<Vec<_>>();
+            args.extend(
+                family_commitments.into_iter().map(|family| format!("byte[32] {}", hidden_route_family_commitment_init_name(family))),
+            );
             for family in families {
                 args.extend(
                     family.direct_template_actors().iter().map(|actor| format!("byte[32] {}", hidden_template_init_name(actor))),
@@ -5903,7 +5943,17 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
                 ));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
+            }
+            for family in family_commitments {
+                out.push_str(&format!(
+                    "    byte[32] {} = {};\n",
+                    hidden_route_family_commitment_name(family),
+                    hidden_route_family_commitment_init_name(family)
+                ));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
@@ -5946,7 +5996,13 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
+            }
+            for family in family_commitments {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_route_family_commitment_name(family)));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
@@ -5972,15 +6028,25 @@ fn hidden_template_object_fields_for_state(source_state: &str, target_state: &st
                 .into_iter()
                 .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
                 .collect::<Vec<_>>();
-            fields.extend(
-                family_commitments
-                    .into_iter()
-                    .map(|family| (hidden_route_family_commitment_name(family), hidden_route_family_commitment_name(family))),
-            );
+            fields.extend(family_commitments.into_iter().map(|family| {
+                (
+                    hidden_route_family_commitment_name(family),
+                    hidden_route_family_commitment_expr_for_state(source_state, family, model),
+                )
+            }));
             fields
         }
-        RouteFieldKind::FamilyTables { families } => {
-            let mut fields = Vec::new();
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            let mut fields = actor_templates
+                .into_iter()
+                .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
+                .collect::<Vec<_>>();
+            fields.extend(family_commitments.into_iter().map(|family| {
+                (
+                    hidden_route_family_commitment_name(family),
+                    hidden_route_family_commitment_expr_for_state(source_state, family, model),
+                )
+            }));
             for family in families {
                 let table_expr = hidden_route_family_table_name(family);
                 fields.extend(
@@ -5999,6 +6065,14 @@ fn hidden_template_object_fields_for_state(source_state: &str, target_state: &st
         (field.clone(), field)
     }));
     fields
+}
+
+fn hidden_route_family_commitment_expr_for_state(source_state: &str, family: &RouteFamily, model: &Model<'_>) -> String {
+    if model.route_families_for_state(source_state).iter().any(|source_family| source_family.id == family.id) {
+        format!("blake2b({})", hidden_route_family_table_name(family))
+    } else {
+        hidden_route_family_commitment_name(family)
+    }
 }
 
 fn hidden_template_expr_for_actor(source_state: &str, actor: &str, model: &Model<'_>) -> String {
@@ -8290,6 +8364,90 @@ mod tests {
         assert!(pawn_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__pawn_template"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__knight_template"), "{pawn_sil}");
+    }
+
+    #[test]
+    fn route_family_state_keeps_downstream_templates() {
+        let path = PathBuf::from("route-family-with-downstream-actor.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state BoardState {
+                int ply;
+            }
+
+            state ReceiptState {
+                int final_ply;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Mux owns BoardState {
+                entry choose(target: MoveActor) emits one MoveActor {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+
+                entry finish() emits one Receipt {
+                    ReceiptState receipt = {
+                        final_ply: ply,
+                    };
+                    become Receipt(receipt);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            actor Receipt owns ReceiptState {
+                entry resume() emits one Mux {
+                    BoardState next_board = {
+                        ply: final_ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            app RoutedLifecycle {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+                actor Receipt;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor_sil = actor_sil_for_model(&model);
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("byte[32] gen__receipt_template = gen__init_receipt_template;"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes_digest: blake2b(gen__mux_routes),"), "{mux_sil}");
+
+        emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
     }
 
     #[test]
