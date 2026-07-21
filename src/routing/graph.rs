@@ -34,6 +34,33 @@ impl RouteGraph {
         self.actors.insert(target.clone());
         self.consumes.entry(source).or_default().insert(target);
     }
+
+    /// Equalize the outgoing dependencies of an actor subset.
+    ///
+    /// For each edge kind independently, replace every subset actor's outgoing
+    /// targets with the union of the subset's outgoing targets. This does not
+    /// add edges between subset actors unless such an edge already exists.
+    pub(super) fn equalize_outgoing(&mut self, actor_subset: &BTreeSet<String>) {
+        assert!(actor_subset.is_subset(&self.actors), "dependency group contains actors absent from the route graph");
+
+        let emits =
+            actor_subset.iter().flat_map(|actor| self.emits.get(actor).into_iter().flatten()).cloned().collect::<BTreeSet<_>>();
+        let consumes =
+            actor_subset.iter().flat_map(|actor| self.consumes.get(actor).into_iter().flatten()).cloned().collect::<BTreeSet<_>>();
+
+        for actor in actor_subset {
+            if emits.is_empty() {
+                self.emits.remove(actor);
+            } else {
+                self.emits.insert(actor.clone(), emits.clone());
+            }
+            if consumes.is_empty() {
+                self.consumes.remove(actor);
+            } else {
+                self.consumes.insert(actor.clone(), consumes.clone());
+            }
+        }
+    }
 }
 
 /// One weakly connected emit component inside a selected graph domain.
@@ -237,6 +264,27 @@ mod tests {
         let result = needs(&graph);
         assert_eq!(result["Source"], strings(["Consumed", "Inherited", "Shared"]));
         assert_eq!(result["Consumed"], strings(["NotInherited"]));
+    }
+
+    #[test]
+    fn equalized_outgoing_dependencies_propagate_to_upstream_emitters_without_peer_edges() {
+        let mut graph = RouteGraph::default();
+        graph.add_emit("A", "B");
+        graph.add_emit("B", "E");
+        graph.add_emit("C", "D");
+        graph.add_consume("C", "Consumed");
+
+        let mut equalized = graph.clone();
+        equalized.equalize_outgoing(&strings(["B", "C"]));
+
+        assert_eq!(needs(&graph)["A"], strings(["B", "E"]));
+
+        let result = needs(&equalized);
+        let cohort_needs = strings(["Consumed", "D", "E"]);
+        assert_eq!(result["B"], cohort_needs);
+        assert_eq!(result["C"], cohort_needs);
+        assert_eq!(result["A"], strings(["B", "Consumed", "D", "E"]));
+        assert!(!result["A"].contains("C"));
     }
 
     fn strings<const N: usize>(values: [&str; N]) -> BTreeSet<String> {
