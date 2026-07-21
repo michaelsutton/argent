@@ -139,8 +139,8 @@ impl NodePath {
 /// A partial commitment-tree cut, represented by structural node locations.
 pub type Cut = BTreeSet<NodePath>;
 
-/// Actor groups represented as branches in the commitment forest.
-pub type Families = Vec<BTreeSet<String>>;
+/// Ordered actor groups represented as branches in the commitment forest.
+pub type Families = Vec<Vec<String>>;
 
 /// Actor groups that share one cut and appear directly in that cut.
 pub type Cohorts = Vec<BTreeSet<String>>;
@@ -192,6 +192,8 @@ pub enum ConstraintError {
     EmptyFamily { family_index: usize },
     #[error("family {family_index} contains unknown actor `{actor}`")]
     UnknownFamilyActor { family_index: usize, actor: String },
+    #[error("family {family_index} repeats actor `{actor}`")]
+    DuplicateFamilyActor { family_index: usize, actor: String },
     #[error("actor `{actor}` belongs to more than one family")]
     OverlappingFamilyActor { actor: String },
     #[error("cohort {cohort_index} is empty")]
@@ -205,9 +207,9 @@ pub enum ConstraintError {
 /// Build a deterministic forest with one branch per family and one actor root
 /// for every actor outside a family.
 ///
-/// Family children follow actor order. A family branch occupies the root
-/// position of its first actor, so the order of `families` does not affect the
-/// forest structure.
+/// Family children follow their supplied order. A family branch occupies the
+/// root position of its earliest member in global actor order, so the order of
+/// `families` does not affect the forest structure.
 pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<CommitmentForest, ConstraintError> {
     let family_by_actor = validate_families(g, families)?;
 
@@ -310,7 +312,7 @@ fn build_commitment_forest(
 
     let mut emitted_families = BTreeSet::new();
     // Actor order places each family at its lowest member independently of the
-    // order in which the family sets were supplied.
+    // order in which the families were supplied.
     for actor in &g.actors {
         let Some(family_index) = family_by_actor.get(actor).copied() else {
             actor_paths.insert(actor.clone(), NodePath::root(roots.len()));
@@ -394,9 +396,13 @@ fn validate_families(g: &RouteGraph, families: &Families) -> Result<BTreeMap<Str
         if family.is_empty() {
             return Err(ConstraintError::EmptyFamily { family_index });
         }
+        let mut members = BTreeSet::new();
         for actor in family {
             if !g.actors.contains(actor) {
                 return Err(ConstraintError::UnknownFamilyActor { family_index, actor: actor.clone() });
+            }
+            if !members.insert(actor) {
+                return Err(ConstraintError::DuplicateFamilyActor { family_index, actor: actor.clone() });
             }
             if family_by_actor.insert(actor.clone(), family_index).is_some() {
                 return Err(ConstraintError::OverlappingFamilyActor { actor: actor.clone() });
@@ -435,14 +441,14 @@ mod tests {
         for actor in ["Knight", "Mux", "Pawn", "Player", "Settle"] {
             graph.add_actor(actor);
         }
-        let families = vec![strings(["Knight", "Mux", "Pawn"])];
+        let families = vec![actors(["Pawn", "Knight", "Mux"])];
 
         let forest = commitment_forest(&graph, &families).expect("family is valid");
         assert_eq!(
             forest,
             CommitmentForest {
                 roots: vec![
-                    CommitmentNode::Branch { children: vec![leaf("Knight"), leaf("Mux"), leaf("Pawn")] },
+                    CommitmentNode::Branch { children: vec![leaf("Pawn"), leaf("Knight"), leaf("Mux")] },
                     leaf("Player"),
                     leaf("Settle"),
                 ],
@@ -474,7 +480,7 @@ mod tests {
         graph.add_emit("Pawn", "Mux");
         graph.add_emit("Mux", "Settle");
         let constraints =
-            CommitmentConstraints { families: vec![strings(["Knight", "Pawn"])], cohorts: vec![strings(["Knight", "Mux", "Pawn"])] };
+            CommitmentConstraints { families: vec![actors(["Knight", "Pawn"])], cohorts: vec![strings(["Knight", "Mux", "Pawn"])] };
 
         let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
         let cohort_cut = cut([&[0, 0], &[0, 1], &[1], &[3]]);
@@ -518,7 +524,7 @@ mod tests {
         let mut graph = RouteGraph::default();
         graph.add_actor("B");
         graph.add_emit("A", "External");
-        let constraints = CommitmentConstraints { families: vec![strings(["A", "B"])], cohorts: Vec::new() };
+        let constraints = CommitmentConstraints { families: vec![actors(["A", "B"])], cohorts: Vec::new() };
 
         let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
 
@@ -532,7 +538,7 @@ mod tests {
         for actor in ["A", "Anchor", "Sibling"] {
             graph.add_actor(actor);
         }
-        let constraints = CommitmentConstraints { families: vec![strings(["A", "Sibling"])], cohorts: vec![strings(["A", "Anchor"])] };
+        let constraints = CommitmentConstraints { families: vec![actors(["A", "Sibling"])], cohorts: vec![strings(["A", "Anchor"])] };
 
         let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
         let cohort_cut = cut([&[0, 0], &[0, 1], &[1]]);
@@ -548,13 +554,17 @@ mod tests {
         graph.add_actor("A");
         graph.add_actor("B");
 
-        assert_eq!(commitment_forest(&graph, &vec![BTreeSet::new()]), Err(ConstraintError::EmptyFamily { family_index: 0 }));
+        assert_eq!(commitment_forest(&graph, &vec![Vec::new()]), Err(ConstraintError::EmptyFamily { family_index: 0 }));
         assert_eq!(
-            commitment_forest(&graph, &vec![strings(["Unknown"])]),
+            commitment_forest(&graph, &vec![actors(["Unknown"])]),
             Err(ConstraintError::UnknownFamilyActor { family_index: 0, actor: "Unknown".to_string() })
         );
         assert_eq!(
-            commitment_forest(&graph, &vec![strings(["A"]), strings(["A", "B"])]),
+            commitment_forest(&graph, &vec![actors(["A", "A"])]),
+            Err(ConstraintError::DuplicateFamilyActor { family_index: 0, actor: "A".to_string() })
+        );
+        assert_eq!(
+            commitment_forest(&graph, &vec![actors(["A"]), actors(["A", "B"])]),
             Err(ConstraintError::OverlappingFamilyActor { actor: "A".to_string() })
         );
     }
@@ -602,6 +612,10 @@ mod tests {
 
     fn cut<const N: usize>(paths: [&[usize]; N]) -> Cut {
         paths.into_iter().map(path).collect()
+    }
+
+    fn actors<const N: usize>(values: [&str; N]) -> Vec<String> {
+        values.into_iter().map(str::to_string).collect()
     }
 
     fn strings<const N: usize>(values: [&str; N]) -> BTreeSet<String> {
