@@ -222,14 +222,15 @@ pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<Commitme
 /// 1. Validate disjoint family and cohort membership, then build the
 ///    deterministic forest. Forest construction also records direct paths to
 ///    actor leaves and family branches.
-/// 2. Compute each actor's transitive emit and direct consume needs.
+/// 2. Equalize each cohort's outgoing dependencies, then compute every actor's
+///    transitive emit and direct consume needs. Equalization happens before
+///    propagation so upstream emitters inherit complete cohort requirements.
 /// 3. Translate actors outside cohorts independently. A needed standalone actor
 ///    becomes its leaf; any needed family member becomes its packed family
 ///    branch.
-/// 4. For each cohort, union every member's needs and construct one shared cut.
-///    Every cohort member appears directly in that cut. Exposing a family
-///    member opens its family branch, which necessarily exposes its siblings as
-///    well.
+/// 4. Construct one shared cut from each cohort's equal needs. Every cohort
+///    member appears directly in that cut. Exposing a family member opens its
+///    family branch, which necessarily exposes its siblings as well.
 ///
 /// Cuts are partial: roots unrelated to an actor's needs or cohort are omitted.
 /// Cohort members receive the same cut by construction, not by comparing
@@ -242,7 +243,11 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
     let (forest, locations) = build_commitment_forest(g, families, &family_by_actor);
 
     // Phase 2 resolves graph semantics before they are mapped onto the tree.
-    let actor_needs = needs(g);
+    let mut needs_graph = g.clone();
+    for cohort in &constraints.cohorts {
+        needs_graph.equalize_outgoing(cohort);
+    }
+    let actor_needs = needs(&needs_graph);
     let mut cuts = BTreeMap::new();
 
     for actor in &g.actors {
@@ -261,15 +266,13 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
             continue;
         };
 
-        // Phase 4: a cohort uses one route representation, so its cut must
-        // satisfy the needs of every member.
+        // Phase 4: equalized cohort members use one route representation.
         let cohort = &constraints.cohorts[cohort_index];
-        let mut cohort_needs = BTreeSet::new();
-        for member in cohort {
-            cohort_needs.extend(actor_needs[member].iter().cloned());
-        }
+        let first = cohort.iter().next().expect("validated cohorts are nonempty");
+        let cohort_needs = &actor_needs[first];
+        debug_assert!(cohort.iter().all(|member| &actor_needs[member] == cohort_needs));
 
-        let mut cut = cut_for_needs(&cohort_needs, &family_by_actor, &locations);
+        let mut cut = cut_for_needs(cohort_needs, &family_by_actor, &locations);
         expose_actors(&mut cut, cohort, families, &family_by_actor, &locations);
         debug_assert!(forest.is_valid_cut(&cut));
 
@@ -493,6 +496,21 @@ mod tests {
         assert_eq!(plan.cuts["Player"], cut([&[0], &[1], &[3]]));
         assert_eq!(plan.cuts["Settle"], Cut::new());
         assert!(plan.cuts.values().all(|cut| plan.forest.is_valid_cut(cut)));
+    }
+
+    #[test]
+    fn cohort_dependencies_propagate_to_upstream_emitters_without_peer_edges() {
+        let mut graph = RouteGraph::default();
+        graph.add_emit("A", "B");
+        graph.add_actor("C");
+        graph.add_emit("C", "D");
+        let constraints = CommitmentConstraints { families: Vec::new(), cohorts: vec![strings(["B", "C"])] };
+
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+
+        assert_eq!(plan.cuts["A"], cut([&[1], &[3]]));
+        assert_eq!(plan.cuts["B"], cut([&[1], &[2], &[3]]));
+        assert_eq!(plan.cuts["C"], plan.cuts["B"]);
     }
 
     #[test]
