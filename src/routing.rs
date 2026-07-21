@@ -173,6 +173,16 @@ pub type Cut = BTreeSet<NodePath>;
 /// Actor groups represented as branches in the commitment forest.
 pub type Families = Vec<BTreeSet<String>>;
 
+/// Actor groups that share one cut and appear directly in that cut.
+pub type Cohorts = Vec<BTreeSet<String>>;
+
+/// Structural and cut-selection constraints used to plan commitments.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommitmentConstraints {
+    pub families: Families,
+    pub cohorts: Cohorts,
+}
+
 /// A global commitment forest together with the canonical partial cut carried
 /// by each actor.
 ///
@@ -187,9 +197,10 @@ pub type Families = Vec<BTreeSet<String>>;
 /// [1] C
 /// ```
 ///
-/// An outsider needing `A` and `C` carries `{ [0], [1] }`: the foreign family
-/// remains packed. Members `A` and `B` carry their own family open as
-/// `{ [0, 0], [0, 1] }`, plus any external nodes needed by either member.
+/// An actor outside a cohort needing `A` and `C` carries `{ [0], [1] }`: the
+/// foreign family remains packed. If `A` and `B` form a cohort, both receive a
+/// cut containing `{ [0, 0], [0, 1] }`, plus any external nodes needed by
+/// either member.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CommitmentPlan {
     pub forest: CommitmentForest,
@@ -205,15 +216,21 @@ struct CommitmentLocations {
     family_paths: BTreeMap<usize, NodePath>,
 }
 
-/// Invalid family membership supplied to commitment-forest construction.
+/// Invalid input supplied to commitment planning.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-pub enum FamilyError {
+pub enum ConstraintError {
     #[error("family {family_index} is empty")]
-    Empty { family_index: usize },
+    EmptyFamily { family_index: usize },
     #[error("family {family_index} contains unknown actor `{actor}`")]
-    UnknownActor { family_index: usize, actor: String },
+    UnknownFamilyActor { family_index: usize, actor: String },
     #[error("actor `{actor}` belongs to more than one family")]
-    OverlappingActor { actor: String },
+    OverlappingFamilyActor { actor: String },
+    #[error("cohort {cohort_index} is empty")]
+    EmptyCohort { cohort_index: usize },
+    #[error("cohort {cohort_index} contains unknown actor `{actor}`")]
+    UnknownCohortActor { cohort_index: usize, actor: String },
+    #[error("actor `{actor}` belongs to more than one cohort")]
+    OverlappingCohortActor { actor: String },
 }
 
 /// Build a deterministic forest with one branch per family and one actor root
@@ -222,7 +239,7 @@ pub enum FamilyError {
 /// Family children follow actor order. A family branch occupies the root
 /// position of its first actor, so the order of `families` does not affect the
 /// forest structure.
-pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<CommitmentForest, FamilyError> {
+pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<CommitmentForest, ConstraintError> {
     let family_by_actor = validate_families(g, families)?;
 
     Ok(build_commitment_forest(g, families, &family_by_actor).0)
@@ -233,23 +250,26 @@ pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<Commitme
 ///
 /// Planning proceeds in four phases:
 ///
-/// 1. Validate disjoint family membership and build the deterministic forest.
-///    Forest construction also records direct paths to actor leaves and family
-///    branches.
+/// 1. Validate disjoint family and cohort membership, then build the
+///    deterministic forest. Forest construction also records direct paths to
+///    actor leaves and family branches.
 /// 2. Compute each actor's transitive emit and direct consume needs.
-/// 3. Translate standalone actors' needs into cuts. A needed standalone actor
-///    becomes its leaf; any needed member of a foreign family becomes that
-///    family's packed branch.
-/// 4. For each family, union every member's needs and construct one shared cut.
-///    The family's own packed branch is replaced by all of its immediate actor
-///    leaves, while foreign families remain packed.
+/// 3. Translate actors outside cohorts independently. A needed standalone actor
+///    becomes its leaf; any needed family member becomes its packed family
+///    branch.
+/// 4. For each cohort, union every member's needs and construct one shared cut.
+///    Every cohort member appears directly in that cut. Exposing a family
+///    member opens its family branch, which necessarily exposes its siblings as
+///    well.
 ///
-/// Cuts are partial: roots unrelated to an actor's needs are omitted. Family
-/// members receive the same cut by construction, not by comparing independently
-/// computed cuts afterward.
-pub fn commitment_plan(g: &RouteGraph, families: &Families) -> Result<CommitmentPlan, FamilyError> {
+/// Cuts are partial: roots unrelated to an actor's needs or cohort are omitted.
+/// Cohort members receive the same cut by construction, not by comparing
+/// independently computed cuts afterward.
+pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> Result<CommitmentPlan, ConstraintError> {
     // Phase 1 establishes the shared forest topology and stable paths into it.
+    let families = &constraints.families;
     let family_by_actor = validate_families(g, families)?;
+    let cohort_by_actor = validate_cohorts(g, &constraints.cohorts)?;
     let (forest, locations) = build_commitment_forest(g, families, &family_by_actor);
 
     // Phase 2 resolves graph semantics before they are mapped onto the tree.
@@ -257,14 +277,14 @@ pub fn commitment_plan(g: &RouteGraph, families: &Families) -> Result<Commitment
     let mut cuts = BTreeMap::new();
 
     for actor in &g.actors {
-        // Processing one family member publishes the shared cut for every
+        // Processing one cohort member publishes the shared cut for every
         // member, so later members require no independent calculation.
         if cuts.contains_key(actor) {
             continue;
         }
 
-        let Some(family_index) = family_by_actor.get(actor).copied() else {
-            // Phase 3: standalone actors preserve foreign families as packed
+        let Some(cohort_index) = cohort_by_actor.get(actor).copied() else {
+            // Phase 3: actors outside cohorts preserve all families as packed
             // branch commitments.
             let cut = cut_for_needs(&actor_needs[actor], &family_by_actor, &locations);
             debug_assert!(forest.is_valid_cut(&cut));
@@ -272,24 +292,19 @@ pub fn commitment_plan(g: &RouteGraph, families: &Families) -> Result<Commitment
             continue;
         };
 
-        // Phase 4: a family uses one route representation, so its cut must
-        // satisfy the needs of every member rather than only the first actor
-        // encountered in graph order.
-        let family = &families[family_index];
-        let mut family_needs = BTreeSet::new();
-        for member in family {
-            family_needs.extend(actor_needs[member].iter().cloned());
+        // Phase 4: a cohort uses one route representation, so its cut must
+        // satisfy the needs of every member.
+        let cohort = &constraints.cohorts[cohort_index];
+        let mut cohort_needs = BTreeSet::new();
+        for member in cohort {
+            cohort_needs.extend(actor_needs[member].iter().cloned());
         }
 
-        let mut cut = cut_for_needs(&family_needs, &family_by_actor, &locations);
-        // The generic translation above packs all families. Replace this
-        // family's branch with its immediate actor leaves so members carry
-        // their shared family commitment open.
-        cut.remove(&locations.family_paths[&family_index]);
-        cut.extend(family.iter().map(|member| locations.actor_paths[member].clone()));
+        let mut cut = cut_for_needs(&cohort_needs, &family_by_actor, &locations);
+        expose_actors(&mut cut, cohort, families, &family_by_actor, &locations);
         debug_assert!(forest.is_valid_cut(&cut));
 
-        for member in family {
+        for member in cohort {
             cuts.insert(member.clone(), cut.clone());
         }
     }
@@ -373,23 +388,69 @@ fn cut_for_needs(actor_needs: &BTreeSet<String>, family_by_actor: &BTreeMap<Stri
         .collect()
 }
 
+/// Add actors directly to a cut, opening their family branches when needed.
+///
+/// A valid tree cut cannot mix a packed family branch with individual children
+/// or expose only some of those children. Therefore exposing one family member
+/// replaces the packed branch, if present, with every leaf in that family.
+fn expose_actors(
+    cut: &mut Cut,
+    actors: &BTreeSet<String>,
+    families: &Families,
+    family_by_actor: &BTreeMap<String, usize>,
+    locations: &CommitmentLocations,
+) {
+    let mut opened_families = BTreeSet::new();
+    for actor in actors {
+        let Some(family_index) = family_by_actor.get(actor).copied() else {
+            cut.insert(locations.actor_paths[actor].clone());
+            continue;
+        };
+        if !opened_families.insert(family_index) {
+            continue;
+        }
+
+        cut.remove(&locations.family_paths[&family_index]);
+        cut.extend(families[family_index].iter().map(|member| locations.actor_paths[member].clone()));
+    }
+}
+
 /// Validate family membership and return each family actor's family index.
-fn validate_families(g: &RouteGraph, families: &Families) -> Result<BTreeMap<String, usize>, FamilyError> {
+fn validate_families(g: &RouteGraph, families: &Families) -> Result<BTreeMap<String, usize>, ConstraintError> {
     let mut family_by_actor = BTreeMap::<String, usize>::new();
     for (family_index, family) in families.iter().enumerate() {
         if family.is_empty() {
-            return Err(FamilyError::Empty { family_index });
+            return Err(ConstraintError::EmptyFamily { family_index });
         }
         for actor in family {
             if !g.actors.contains(actor) {
-                return Err(FamilyError::UnknownActor { family_index, actor: actor.clone() });
+                return Err(ConstraintError::UnknownFamilyActor { family_index, actor: actor.clone() });
             }
             if family_by_actor.insert(actor.clone(), family_index).is_some() {
-                return Err(FamilyError::OverlappingActor { actor: actor.clone() });
+                return Err(ConstraintError::OverlappingFamilyActor { actor: actor.clone() });
             }
         }
     }
     Ok(family_by_actor)
+}
+
+/// Validate cohort membership and return each cohort actor's cohort index.
+fn validate_cohorts(g: &RouteGraph, cohorts: &Cohorts) -> Result<BTreeMap<String, usize>, ConstraintError> {
+    let mut cohort_by_actor = BTreeMap::<String, usize>::new();
+    for (cohort_index, cohort) in cohorts.iter().enumerate() {
+        if cohort.is_empty() {
+            return Err(ConstraintError::EmptyCohort { cohort_index });
+        }
+        for actor in cohort {
+            if !g.actors.contains(actor) {
+                return Err(ConstraintError::UnknownCohortActor { cohort_index, actor: actor.clone() });
+            }
+            if cohort_by_actor.insert(actor.clone(), cohort_index).is_some() {
+                return Err(ConstraintError::OverlappingCohortActor { actor: actor.clone() });
+            }
+        }
+    }
+    Ok(cohort_by_actor)
 }
 
 /// The actor templates needed by each actor through transitive emits and direct
@@ -522,24 +583,65 @@ mod tests {
     }
 
     #[test]
-    fn commitment_plan_opens_a_family_for_members_and_packs_it_for_outsiders() {
+    fn commitment_plan_uses_families_for_structure_and_cohorts_for_shared_cuts() {
         let mut graph = RouteGraph::default();
         graph.add_actor("Knight");
         graph.add_emit("Player", "Mux");
         graph.add_emit("Mux", "Pawn");
         graph.add_emit("Pawn", "Mux");
         graph.add_emit("Mux", "Settle");
-        let families = vec![strings(["Knight", "Mux", "Pawn"])];
+        let constraints =
+            CommitmentConstraints { families: vec![strings(["Knight", "Pawn"])], cohorts: vec![strings(["Knight", "Mux", "Pawn"])] };
 
-        let plan = commitment_plan(&graph, &families).expect("family is valid");
-        let open_family = cut([&[0, 0], &[0, 1], &[0, 2], &[2]]);
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+        let cohort_cut = cut([&[0, 0], &[0, 1], &[1], &[3]]);
 
-        assert_eq!(plan.cuts["Knight"], open_family);
-        assert_eq!(plan.cuts["Mux"], open_family);
-        assert_eq!(plan.cuts["Pawn"], open_family);
-        assert_eq!(plan.cuts["Player"], cut([&[0], &[2]]));
+        assert_eq!(
+            plan.forest,
+            CommitmentForest {
+                roots: vec![
+                    CommitmentNode::Branch { children: vec![leaf("Knight"), leaf("Pawn")] },
+                    leaf("Mux"),
+                    leaf("Player"),
+                    leaf("Settle"),
+                ],
+            }
+        );
+        assert_eq!(plan.cuts["Knight"], cohort_cut);
+        assert_eq!(plan.cuts["Mux"], cohort_cut);
+        assert_eq!(plan.cuts["Pawn"], cohort_cut);
+        assert_eq!(plan.cuts["Player"], cut([&[0], &[1], &[3]]));
         assert_eq!(plan.cuts["Settle"], Cut::new());
         assert!(plan.cuts.values().all(|cut| plan.forest.is_valid_cut(cut)));
+    }
+
+    #[test]
+    fn family_members_do_not_share_cuts_without_a_cohort() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("B");
+        graph.add_emit("A", "External");
+        let constraints = CommitmentConstraints { families: vec![strings(["A", "B"])], cohorts: Vec::new() };
+
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+
+        assert_eq!(plan.cuts["A"], cut([&[1]]));
+        assert_eq!(plan.cuts["B"], Cut::new());
+    }
+
+    #[test]
+    fn exposing_a_cohort_member_opens_its_entire_family() {
+        let mut graph = RouteGraph::default();
+        for actor in ["A", "Anchor", "Sibling"] {
+            graph.add_actor(actor);
+        }
+        let constraints = CommitmentConstraints { families: vec![strings(["A", "Sibling"])], cohorts: vec![strings(["A", "Anchor"])] };
+
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+        let cohort_cut = cut([&[0, 0], &[0, 1], &[1]]);
+
+        assert_eq!(plan.cuts["A"], cohort_cut);
+        assert_eq!(plan.cuts["Anchor"], cohort_cut);
+        assert_eq!(plan.cuts["Sibling"], Cut::new());
     }
 
     #[test]
@@ -548,15 +650,34 @@ mod tests {
         graph.add_actor("A");
         graph.add_actor("B");
 
-        assert_eq!(commitment_forest(&graph, &vec![BTreeSet::new()]), Err(FamilyError::Empty { family_index: 0 }));
+        assert_eq!(commitment_forest(&graph, &vec![BTreeSet::new()]), Err(ConstraintError::EmptyFamily { family_index: 0 }));
         assert_eq!(
             commitment_forest(&graph, &vec![strings(["Unknown"])]),
-            Err(FamilyError::UnknownActor { family_index: 0, actor: "Unknown".to_string() })
+            Err(ConstraintError::UnknownFamilyActor { family_index: 0, actor: "Unknown".to_string() })
         );
         assert_eq!(
             commitment_forest(&graph, &vec![strings(["A"]), strings(["A", "B"])]),
-            Err(FamilyError::OverlappingActor { actor: "A".to_string() })
+            Err(ConstraintError::OverlappingFamilyActor { actor: "A".to_string() })
         );
+    }
+
+    #[test]
+    fn commitment_plan_rejects_invalid_cohorts() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("A");
+        graph.add_actor("B");
+
+        let constraints = CommitmentConstraints { cohorts: vec![BTreeSet::new()], ..Default::default() };
+        assert_eq!(commitment_plan(&graph, &constraints), Err(ConstraintError::EmptyCohort { cohort_index: 0 }));
+
+        let constraints = CommitmentConstraints { cohorts: vec![strings(["Unknown"])], ..Default::default() };
+        assert_eq!(
+            commitment_plan(&graph, &constraints),
+            Err(ConstraintError::UnknownCohortActor { cohort_index: 0, actor: "Unknown".to_string() })
+        );
+
+        let constraints = CommitmentConstraints { cohorts: vec![strings(["A"]), strings(["A", "B"])], ..Default::default() };
+        assert_eq!(commitment_plan(&graph, &constraints), Err(ConstraintError::OverlappingCohortActor { actor: "A".to_string() }));
     }
 
     #[test]
