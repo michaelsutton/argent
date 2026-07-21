@@ -24,12 +24,13 @@ pub struct RoutePlan {
 
 /// Derive current route-family constraints and plan their commitments.
 ///
-/// Each domain maps its identifier to actors in compiler order. Weak emit
-/// components with at least three members become family candidates. Their
-/// inbound gates remain direct. The first gate, or the first member when there
-/// are no gates, represents the family without affecting its structure. All
-/// non-gate members form the commitment family, while all component members
-/// form one cut cohort.
+/// Each domain maps its identifier to actors in compiler order. Every
+/// nontrivial weak emit component forms a cut cohort so its actors can exchange
+/// one generated state layout. Components with at least three members also
+/// become family candidates. Their inbound gates remain direct. The first
+/// gate, or the first member when there are no gates, represents the family
+/// without affecting its structure. All non-gate members form the commitment
+/// family.
 pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -> Result<RoutePlan, ConstraintError> {
     let mut families = Vec::new();
     let mut constraints = CommitmentConstraints::default();
@@ -37,6 +38,10 @@ pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -
     for (domain, actor_order) in domains {
         let domain_actors = actor_order.iter().cloned().collect::<BTreeSet<_>>();
         for component in components(graph, &domain_actors) {
+            if component.members.len() > 1 {
+                constraints.cohorts.push(component.members.clone());
+            }
+
             // A table for two actors saves no template space and adds slicing.
             // With a gate, it would contain only one actor and be even less useful.
             if component.members.len() < 3 {
@@ -57,7 +62,6 @@ pub fn route_plan(graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>) -
 
             let family = members.iter().filter(|actor| !gate_set.contains(*actor)).cloned().collect();
             constraints.families.push(family);
-            constraints.cohorts.push(component.members);
             families.push(FamilyPlan { domain: domain.clone(), rep, members, gates, table });
         }
     }
@@ -136,6 +140,28 @@ mod tests {
             plan.commitments.forest,
             CommitmentForest { roots: vec![CommitmentNode::Branch { children: vec![leaf("A"), leaf("B"), leaf("C")] }] }
         );
+    }
+
+    #[test]
+    fn small_component_forms_a_cohort_without_a_family() {
+        let mut graph = RouteGraph::default();
+        graph.add_emit("Left", "Right");
+        graph.add_emit("Right", "Tail");
+        graph.add_emit("Source", "Left");
+        let domains = BTreeMap::from([
+            ("PairState".to_string(), strings(["Left", "Right"])),
+            ("SourceState".to_string(), strings(["Source"])),
+            ("TailState".to_string(), strings(["Tail"])),
+        ]);
+
+        let plan = route_plan(&graph, &domains).expect("inferred constraints are valid");
+        let cohort_cut = cut([&[0], &[1], &[3]]);
+
+        assert!(plan.families.is_empty());
+        assert_eq!(plan.commitments.cuts["Left"], cohort_cut);
+        assert_eq!(plan.commitments.cuts["Right"], cohort_cut);
+        assert_eq!(plan.commitments.cuts["Source"], cohort_cut);
+        assert_eq!(plan.commitments.cuts["Tail"], Cut::new());
     }
 
     fn leaf(actor: &str) -> CommitmentNode {
