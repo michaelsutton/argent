@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "66cd982fe97898ca15ed96c39a835120d15c2cef2e519aba86f62c797d4460ec",
+  "id": "ef65d03d34e9ad75d05cce198a0aa4d23795778b88a70d08837072a9ba5e6260",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -259,7 +259,7 @@
         {
           "id": "route_family/BoardState/mux",
           "state": "BoardState",
-          "anchor_actor": "Mux",
+          "representative_actor": "Mux",
           "entry_actors": [
             "Mux"
           ],

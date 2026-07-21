@@ -4615,7 +4615,7 @@ fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamil
         .map(|family| RouteTemplateFamilyArtifact {
             id: family.id.clone(),
             state: family.state.clone(),
-            anchor_actor: family.rep().to_string(),
+            representative_actor: family.rep().to_string(),
             entry_actors: family.entry_actors.clone(),
             table_id: route_template_table_receipt_id(&family.state, &hidden_route_family_table_name(family)),
             actors: family.actors.clone(),
@@ -8133,7 +8133,7 @@ mod tests {
             (
                 family.id.as_str(),
                 family.state.as_str(),
-                family.anchor_actor.as_str(),
+                family.representative_actor.as_str(),
                 family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>(),
                 family.table_id.as_str(),
                 family.actors.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -8517,7 +8517,7 @@ mod tests {
 
         let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
         assert!(family.entry_actors.is_empty());
-        assert_eq!(family.anchor_actor, "Mux");
+        assert_eq!(family.representative_actor, "Mux");
 
         let board_table = artifact
             .argent
@@ -8837,7 +8837,7 @@ mod tests {
             .map(|family| {
                 (
                     family.id.as_str(),
-                    family.anchor_actor.as_str(),
+                    family.representative_actor.as_str(),
                     family.actors.iter().map(String::as_str).collect::<Vec<_>>(),
                     family.table_id.as_str(),
                 )
@@ -8984,7 +8984,7 @@ mod tests {
     }
 
     #[test]
-    fn route_family_with_multiple_external_entries_uses_first_entry_as_anchor() {
+    fn route_family_with_multiple_external_entries_uses_first_entry_as_representative() {
         let artifact = inline_artifact(
             "multi-entry-route-family",
             r#"
@@ -9069,7 +9069,7 @@ mod tests {
 
         let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
         assert_eq!(family.id, "route_family/BoardState/hub_b");
-        assert_eq!(family.anchor_actor, "HubB");
+        assert_eq!(family.representative_actor, "HubB");
         assert_eq!(family.entry_actors, vec!["HubB", "HubA"]);
         assert_eq!(family.actors, vec!["HubB", "HubA", "LeafA", "LeafB"]);
         assert_eq!(family.table_id, "route_table/BoardState/gen__hub_b_routes");
