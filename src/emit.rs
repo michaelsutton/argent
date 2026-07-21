@@ -1516,7 +1516,7 @@ fn infer_direct_route_families<'a>(
     }
 
     let mut families = Vec::new();
-    for plan in route_plan(&graph, &domains).map_err(|err| ArgentError::new(err.to_string()))?.families {
+    for plan in route_plan(&graph, &domains, &[]).map_err(|err| ArgentError::new(err.to_string()))?.families {
         let table_actors =
             route_family_table_actors_from_selector_order(&plan.domain, &plan.members, &plan.rep, &plan.table, &selectors_by_actor)?;
         families.push(RouteFamily {
