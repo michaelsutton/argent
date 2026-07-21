@@ -8,7 +8,7 @@ use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
 use crate::language::word;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
-use crate::routing::{RouteGraph, route_plan};
+use crate::routing::{RouteGraph, SelectorRequirement, route_plan};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
@@ -1486,7 +1486,7 @@ fn infer_direct_route_families<'a>(
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut graph = RouteGraph::default();
     let mut domains = BTreeMap::<String, Vec<String>>::new();
-    let mut selectors_by_actor = BTreeMap::<String, Vec<TemplateSelector>>::new();
+    let mut selector_requirements = Vec::new();
 
     for actor in actors {
         if template_actor_set.contains(&actor.name) {
@@ -1495,7 +1495,11 @@ fn infer_direct_route_families<'a>(
         }
         for entry in &actor.entries {
             let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
-            selectors_by_actor.entry(actor.name.clone()).or_default().extend(selectors.values().cloned());
+            selector_requirements.extend(selectors.values().map(|selector| SelectorRequirement {
+                domain: selector.state.clone(),
+                source: actor.name.clone(),
+                variants: selector.variants.clone(),
+            }));
             for consume in &entry.consumes {
                 if template_actor_set.contains(&consume.actor) {
                     graph.add_consume(actor.name.clone(), consume.actor.clone());
@@ -1516,78 +1520,18 @@ fn infer_direct_route_families<'a>(
     }
 
     let mut families = Vec::new();
-    for plan in route_plan(&graph, &domains, &[]).map_err(|err| ArgentError::new(err.to_string()))?.families {
-        let table_actors =
-            route_family_table_actors_from_selector_order(&plan.domain, &plan.members, &plan.rep, &plan.table, &selectors_by_actor)?;
+    for plan in route_plan(&graph, &domains, &selector_requirements).map_err(|err| ArgentError::new(err.to_string()))?.families {
         families.push(RouteFamily {
             id: route_template_family_receipt_id(&plan.domain, &plan.rep),
             state: plan.domain,
             actors: plan.members,
             entry_actors: plan.gates,
             rep: plan.rep,
-            table_actors,
+            table_actors: plan.table,
         });
     }
 
     Ok(families)
-}
-
-fn route_family_table_actors_from_selector_order(
-    state: &str,
-    component_actors: &[String],
-    rep: &str,
-    default_table_actors: &[String],
-    selectors_by_actor: &BTreeMap<String, Vec<TemplateSelector>>,
-) -> Result<Vec<String>> {
-    let table_actor_set = default_table_actors.iter().cloned().collect::<BTreeSet<_>>();
-    let mut selected_order = None::<(&str, Vec<String>)>;
-
-    for actor in component_actors {
-        let Some(selectors) = selectors_by_actor.get(actor) else {
-            continue;
-        };
-        for selector in selectors.iter().filter(|selector| selector.state == state) {
-            let selector_actor_set = selector.variants.iter().cloned().collect::<BTreeSet<_>>();
-            let table_order = if selector_actor_set == table_actor_set {
-                selector.variants.clone()
-            } else {
-                let selectable_actors = table_actor_set.iter().filter(|actor| actor.as_str() != rep);
-                if !selectable_actors.eq(selector_actor_set.iter()) {
-                    let expected = table_actor_set.iter().filter(|actor| actor.as_str() != rep).collect::<Vec<_>>();
-                    return Err(ArgentError::new(format!(
-                        "actor enum `{}` variants must cover the selectable route table actors for state `{state}`; expected {:?}, found {:?}",
-                        selector.actor_enum, expected, selector_actor_set
-                    )));
-                }
-
-                // Keep actor-enum indices unchanged. The non-selectable family
-                // representative remains committed as the final table entry.
-                let mut order = selector.variants.clone();
-                order.push(rep.to_string());
-                order
-            };
-
-            if table_order.len() != table_actor_set.len() || table_order.iter().cloned().collect::<BTreeSet<_>>() != table_actor_set {
-                return Err(ArgentError::new(format!(
-                    "actor enum `{}` does not define a valid route table order for state `{state}`",
-                    selector.actor_enum
-                )));
-            }
-
-            if let Some((source_actor_enum, selected_table_order)) = &selected_order {
-                if selected_table_order != &table_order {
-                    return Err(ArgentError::new(format!(
-                        "actor enum `{}` uses a different selector order than actor enum `{source_actor_enum}` for state `{state}`",
-                        selector.actor_enum
-                    )));
-                }
-            } else {
-                selected_order = Some((&selector.actor_enum, table_order));
-            }
-        }
-    }
-
-    Ok(selected_order.map_or_else(|| default_table_actors.to_vec(), |(_, order)| order))
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -8605,29 +8549,24 @@ mod tests {
         let program = Program { root: path, modules: vec![module] };
 
         let err = Model::from_program(&program).expect_err("conflicting actor enum orders must be rejected");
-        assert!(err.to_string().contains("different selector order"), "unexpected error: {err}");
+        assert!(err.to_string().contains("conflicts with requirement"), "unexpected error: {err}");
     }
 
     #[test]
-    fn actor_enum_selectors_must_cover_the_inferred_route_family() {
+    fn actor_enum_variants_form_a_prefix_of_the_inferred_route_family() {
         let source = r#"
             state BoardState {
                 int selector;
                 int ply;
             }
 
-            actor enum FirstMove {
+            actor enum MoveActor {
                 Pawn;
                 Knight;
             }
 
-            actor enum SecondMove {
-                Pawn;
-                Bishop;
-            }
-
             actor Mux owns BoardState {
-                entry choose_first(target: FirstMove) emits one FirstMove {
+                entry choose(target: MoveActor) emits one MoveActor {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
@@ -8635,12 +8574,12 @@ mod tests {
                     become target(next_board);
                 }
 
-                entry choose_second(target: SecondMove) emits one SecondMove {
+                entry visit_bishop() emits one Bishop {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
                     };
-                    become target(next_board);
+                    become Bishop(next_board);
                 }
             }
 
@@ -8648,19 +8587,21 @@ mod tests {
             actor Knight owns BoardState {}
             actor Bishop owns BoardState {}
 
-            app IncompleteSelectorSet {
+            app SelectorPrefix {
                 actor Mux;
                 actor Pawn;
                 actor Knight;
                 actor Bishop;
             }
         "#;
-        let path = PathBuf::from("incomplete-selector-set.ag");
+        let path = PathBuf::from("selector-prefix.ag");
         let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
         let program = Program { root: path, modules: vec![module] };
 
-        let err = Model::from_program(&program).expect_err("incomplete route-family selector sets must be rejected");
-        assert!(err.to_string().contains("variants must cover the selectable route table actors"), "unexpected error: {err}");
+        let model = Model::from_program(&program).expect("selector variants may prefix other family actors");
+
+        assert_eq!(model.route_families.len(), 1);
+        assert_eq!(model.route_families[0].table_actors, ["Pawn", "Knight", "Mux", "Bishop"]);
     }
 
     #[test]
