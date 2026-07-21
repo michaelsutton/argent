@@ -173,6 +173,38 @@ pub type Cut = BTreeSet<NodePath>;
 /// Actor groups represented as branches in the commitment forest.
 pub type Families = Vec<BTreeSet<String>>;
 
+/// A global commitment forest together with the canonical partial cut carried
+/// by each actor.
+///
+/// The forest defines one shared address space for all possible actor
+/// commitments. A cut selects only the nodes an actor must carry from that
+/// forest. For example, given a family branch and one standalone actor:
+///
+/// ```text
+/// [0] family
+///     [0, 0] A
+///     [0, 1] B
+/// [1] C
+/// ```
+///
+/// An outsider needing `A` and `C` carries `{ [0], [1] }`: the foreign family
+/// remains packed. Members `A` and `B` carry their own family open as
+/// `{ [0, 0], [0, 1] }`, plus any external nodes needed by either member.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommitmentPlan {
+    pub forest: CommitmentForest,
+    pub cuts: BTreeMap<String, Cut>,
+}
+
+/// Direct paths recorded while constructing a forest so cut planning does not
+/// need to search the completed tree or reconstruct its ordering rules.
+struct CommitmentLocations {
+    /// The leaf path for every actor, including actors inside family branches.
+    actor_paths: BTreeMap<String, NodePath>,
+    /// The packed branch path for every family.
+    family_paths: BTreeMap<usize, NodePath>,
+}
+
 /// Invalid family membership supplied to commitment-forest construction.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum FamilyError {
@@ -193,12 +225,108 @@ pub enum FamilyError {
 pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<CommitmentForest, FamilyError> {
     let family_by_actor = validate_families(g, families)?;
 
+    Ok(build_commitment_forest(g, families, &family_by_actor).0)
+}
+
+/// Build the commitment forest and the canonical partial cut carried by every
+/// actor.
+///
+/// Planning proceeds in four phases:
+///
+/// 1. Validate disjoint family membership and build the deterministic forest.
+///    Forest construction also records direct paths to actor leaves and family
+///    branches.
+/// 2. Compute each actor's transitive emit and direct consume needs.
+/// 3. Translate standalone actors' needs into cuts. A needed standalone actor
+///    becomes its leaf; any needed member of a foreign family becomes that
+///    family's packed branch.
+/// 4. For each family, union every member's needs and construct one shared cut.
+///    The family's own packed branch is replaced by all of its immediate actor
+///    leaves, while foreign families remain packed.
+///
+/// Cuts are partial: roots unrelated to an actor's needs are omitted. Family
+/// members receive the same cut by construction, not by comparing independently
+/// computed cuts afterward.
+pub fn commitment_plan(g: &RouteGraph, families: &Families) -> Result<CommitmentPlan, FamilyError> {
+    // Phase 1 establishes the shared forest topology and stable paths into it.
+    let family_by_actor = validate_families(g, families)?;
+    let (forest, locations) = build_commitment_forest(g, families, &family_by_actor);
+
+    // Phase 2 resolves graph semantics before they are mapped onto the tree.
+    let actor_needs = needs(g);
+    let mut cuts = BTreeMap::new();
+
+    for actor in &g.actors {
+        // Processing one family member publishes the shared cut for every
+        // member, so later members require no independent calculation.
+        if cuts.contains_key(actor) {
+            continue;
+        }
+
+        let Some(family_index) = family_by_actor.get(actor).copied() else {
+            // Phase 3: standalone actors preserve foreign families as packed
+            // branch commitments.
+            let cut = cut_for_needs(&actor_needs[actor], &family_by_actor, &locations);
+            debug_assert!(forest.is_valid_cut(&cut));
+            cuts.insert(actor.clone(), cut);
+            continue;
+        };
+
+        // Phase 4: a family uses one route representation, so its cut must
+        // satisfy the needs of every member rather than only the first actor
+        // encountered in graph order.
+        let family = &families[family_index];
+        let mut family_needs = BTreeSet::new();
+        for member in family {
+            family_needs.extend(actor_needs[member].iter().cloned());
+        }
+
+        let mut cut = cut_for_needs(&family_needs, &family_by_actor, &locations);
+        // The generic translation above packs all families. Replace this
+        // family's branch with its immediate actor leaves so members carry
+        // their shared family commitment open.
+        cut.remove(&locations.family_paths[&family_index]);
+        cut.extend(family.iter().map(|member| locations.actor_paths[member].clone()));
+        debug_assert!(forest.is_valid_cut(&cut));
+
+        for member in family {
+            cuts.insert(member.clone(), cut.clone());
+        }
+    }
+
+    Ok(CommitmentPlan { forest, cuts })
+}
+
+/// Construct the deterministic forest and retain paths needed by cut planning.
+///
+/// A standalone actor becomes a root leaf. The first actor of each family in
+/// global actor order emits one root branch, and all other family members are
+/// skipped because they are already children of that branch. For example:
+///
+/// ```text
+/// actors   = { A, B, C }
+/// families = [ { A, B } ]
+///
+/// roots[0] = Branch(Leaf(A), Leaf(B))
+/// roots[1] = Leaf(C)
+/// ```
+///
+/// `family_by_actor` must already have been produced by `validate_families`.
+fn build_commitment_forest(
+    g: &RouteGraph,
+    families: &Families,
+    family_by_actor: &BTreeMap<String, usize>,
+) -> (CommitmentForest, CommitmentLocations) {
     let mut roots = Vec::new();
+    let mut actor_paths = BTreeMap::new();
+    let mut family_paths = BTreeMap::new();
+
     let mut emitted_families = BTreeSet::new();
     // Actor order places each family at its lowest member independently of the
     // order in which the family sets were supplied.
     for actor in &g.actors {
         let Some(family_index) = family_by_actor.get(actor).copied() else {
+            actor_paths.insert(actor.clone(), NodePath::root(roots.len()));
             roots.push(CommitmentNode::Leaf { actor: actor.clone() });
             continue;
         };
@@ -206,11 +334,43 @@ pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<Commitme
             continue;
         }
 
-        let children = families[family_index].iter().map(|actor| CommitmentNode::Leaf { actor: actor.clone() }).collect();
+        let family_path = NodePath::root(roots.len());
+        family_paths.insert(family_index, family_path.clone());
+        let children = families[family_index]
+            .iter()
+            .enumerate()
+            .map(|(child_index, actor)| {
+                actor_paths.insert(actor.clone(), family_path.child(child_index));
+                CommitmentNode::Leaf { actor: actor.clone() }
+            })
+            .collect();
         roots.push(CommitmentNode::Branch { children });
     }
 
-    Ok(CommitmentForest { roots })
+    (CommitmentForest { roots }, CommitmentLocations { actor_paths, family_paths })
+}
+
+/// Translate actor needs into leaf paths and packed family paths.
+///
+/// Each standalone need maps to its actor leaf. All needs belonging to the
+/// same family map to the same family branch and collapse naturally in the
+/// returned `BTreeSet`:
+///
+/// ```text
+/// need A in family 0 -> [0]
+/// need B in family 0 -> [0]
+/// need C standalone  -> [1]
+/// result             -> { [0], [1] }
+/// ```
+fn cut_for_needs(actor_needs: &BTreeSet<String>, family_by_actor: &BTreeMap<String, usize>, locations: &CommitmentLocations) -> Cut {
+    actor_needs
+        .iter()
+        .map(|actor| {
+            family_by_actor
+                .get(actor)
+                .map_or_else(|| locations.actor_paths[actor].clone(), |family| locations.family_paths[family].clone())
+        })
+        .collect()
 }
 
 /// Validate family membership and return each family actor's family index.
@@ -359,6 +519,27 @@ mod tests {
         let invalid = cut([&[0], &[0, 0]]);
         assert!(!forest.is_valid_cut(&invalid));
         assert_eq!(forest.open(&invalid, &family), None);
+    }
+
+    #[test]
+    fn commitment_plan_opens_a_family_for_members_and_packs_it_for_outsiders() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("Knight");
+        graph.add_emit("Player", "Mux");
+        graph.add_emit("Mux", "Pawn");
+        graph.add_emit("Pawn", "Mux");
+        graph.add_emit("Mux", "Settle");
+        let families = vec![strings(["Knight", "Mux", "Pawn"])];
+
+        let plan = commitment_plan(&graph, &families).expect("family is valid");
+        let open_family = cut([&[0, 0], &[0, 1], &[0, 2], &[2]]);
+
+        assert_eq!(plan.cuts["Knight"], open_family);
+        assert_eq!(plan.cuts["Mux"], open_family);
+        assert_eq!(plan.cuts["Pawn"], open_family);
+        assert_eq!(plan.cuts["Player"], cut([&[0], &[2]]));
+        assert_eq!(plan.cuts["Settle"], Cut::new());
+        assert!(plan.cuts.values().all(|cut| plan.forest.is_valid_cut(cut)));
     }
 
     #[test]
