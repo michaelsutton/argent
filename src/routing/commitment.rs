@@ -176,6 +176,18 @@ pub struct CommitmentPlan {
     pub cuts: BTreeMap<String, Cut>,
 }
 
+impl CommitmentPlan {
+    /// Resolve an actor's cut to its selected forest nodes in canonical path
+    /// order.
+    ///
+    /// Returns `None` when the actor has no planned cut.
+    pub fn cut_nodes(&self, actor: &str) -> Option<Vec<&CommitmentNode>> {
+        let cut = self.cuts.get(actor)?;
+        debug_assert!(self.forest.is_valid_cut(cut), "planned actor cut must be valid for its commitment forest");
+        Some(cut.iter().map(|path| self.forest.node(path).expect("planned cut path must belong to its commitment forest")).collect())
+    }
+}
+
 /// Direct paths recorded while constructing a forest so cut planning does not
 /// need to search the completed tree or reconstruct its ordering rules.
 struct CommitmentLocations {
@@ -502,6 +514,26 @@ mod tests {
         assert_eq!(plan.cuts["Player"], cut([&[0], &[1], &[3]]));
         assert_eq!(plan.cuts["Settle"], Cut::new());
         assert!(plan.cuts.values().all(|cut| plan.forest.is_valid_cut(cut)));
+    }
+
+    #[test]
+    fn cut_nodes_hide_paths_while_preserving_packed_and_opened_structure() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("B");
+        graph.add_actor("Idle");
+        graph.add_emit("Outside", "A");
+        let constraints = CommitmentConstraints { families: vec![actors(["A", "B"])], cohorts: vec![strings(["A", "B"])] };
+
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+        let CommitmentNode::Branch { children } = &plan.forest.roots[0] else {
+            panic!("family root is a branch");
+        };
+
+        assert_eq!(plan.cut_nodes("Outside"), Some(vec![&plan.forest.roots[0]]));
+        assert_eq!(plan.cut_nodes("A"), Some(children.iter().collect()));
+        assert_eq!(plan.cut_nodes("B"), plan.cut_nodes("A"));
+        assert_eq!(plan.cut_nodes("Idle"), Some(Vec::new()));
+        assert_eq!(plan.cut_nodes("Unknown"), None);
     }
 
     #[test]
