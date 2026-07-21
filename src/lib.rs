@@ -11,6 +11,7 @@ pub mod lexer;
 pub mod loader;
 pub mod parser;
 pub mod routes;
+pub mod routing;
 
 pub use error::{ArgentError, Result};
 
