@@ -2,12 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A directed graph whose vertices are actor names and whose edges are possible
-/// actor-to-actor routes.
+/// A directed graph of actor emit and consume relations.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RouteGraph {
     actors: BTreeSet<String>,
-    outgoing: BTreeMap<String, BTreeSet<String>>,
+    emits: BTreeMap<String, BTreeSet<String>>,
+    consumes: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl RouteGraph {
@@ -16,13 +16,22 @@ impl RouteGraph {
         self.actors.insert(actor.into());
     }
 
-    /// Add a directed route and, by definition, both of its endpoint actors.
-    pub fn add_route(&mut self, source: impl Into<String>, target: impl Into<String>) {
+    /// Add an emit relation whose target and transitive needs belong to its source.
+    pub fn add_emit(&mut self, source: impl Into<String>, target: impl Into<String>) {
         let source = source.into();
         let target = target.into();
         self.actors.insert(source.clone());
         self.actors.insert(target.clone());
-        self.outgoing.entry(source).or_default().insert(target);
+        self.emits.entry(source).or_default().insert(target);
+    }
+
+    /// Add a consume relation whose target belongs directly to its source.
+    pub fn add_consume(&mut self, source: impl Into<String>, target: impl Into<String>) {
+        let source = source.into();
+        let target = target.into();
+        self.actors.insert(source.clone());
+        self.actors.insert(target.clone());
+        self.consumes.entry(source).or_default().insert(target);
     }
 }
 
@@ -49,54 +58,56 @@ pub struct NodePath {
 /// A partial commitment-tree cut, represented by structural node locations.
 pub type Cut = BTreeSet<NodePath>;
 
-/// The actor templates transitively needed by each actor.
+/// The actor templates needed by each actor through transitive emits and direct
+/// consumes.
 pub type Needs = BTreeMap<String, BTreeSet<String>>;
 
-/// Compute positive-length route reachability for every actor.
+/// Compute the actor templates needed by every actor.
 ///
-/// Direct targets initialize the result. Actors are resolved in sorted order,
-/// so traversal reuses complete needs sets for actors preceding the source and
-/// follows direct targets for the rest. An actor needs itself only when
-/// traversal returns through a non-empty cycle.
-pub fn needs(graph: &RouteGraph) -> Needs {
-    // Every entry starts as direct reachability. During the ordered pass, each
-    // completed entry is replaced with its full transitive closure.
-    let mut needs =
-        graph.actors.iter().map(|actor| (actor.clone(), graph.outgoing.get(actor).cloned().unwrap_or_default())).collect::<Needs>();
+/// Emit targets contribute themselves and their complete needs. Consume targets
+/// contribute only themselves. Actors are resolved in sorted order, allowing a
+/// traversal to reuse complete needs sets for emit targets preceding its source.
+///
+/// A source actor is included in its own needs only when reached through a
+/// non-empty route, such as an emit cycle, a consume from an emit-reachable
+/// actor, or a self-consume.
+pub fn needs(g: &RouteGraph) -> Needs {
+    let mut reachable = Needs::new();
 
-    for source in &graph.actors {
-        // Resolve into a local set so the shared entry for `source` continues
-        // to mean direct reachability until this traversal is complete.
-        let mut source_needs = needs.get(source).cloned().expect("graph actors have a needs entry");
-        // Direct targets are unique because `source_needs` is a set. Later
-        // targets are queued only when first inserted into that same set.
-        let mut pending = source_needs.iter().cloned().collect::<Vec<_>>();
+    for src in &g.actors {
+        // Consume targets are direct needs, but never enter the emit traversal.
+        let mut src_reachable = g.consumes.get(src).cloned().unwrap_or_default();
+        let mut stack = g.emits.get(src).into_iter().flatten().cloned().collect::<Vec<_>>();
+        let mut expanded = BTreeSet::new();
 
-        while let Some(actor) = pending.pop() {
-            let actor_needs = needs.get(&actor).expect("route targets are graph actors");
+        while let Some(dst) = stack.pop() {
+            src_reachable.insert(dst.clone());
+
+            // An actor may already be reachable through consumes but still
+            // require expansion after being reached through emits.
+            if !expanded.insert(dst.clone()) {
+                continue;
+            }
 
             // Sources are visited in BTreeSet order. A lower actor was therefore
-            // resolved in an earlier iteration, while this actor and all higher
-            // actors still hold only their direct targets.
-            if &actor < source {
+            // resolved in an earlier iteration.
+            if &dst < src {
                 // A resolved actor contributes its complete closure at once.
-                source_needs.extend(actor_needs.iter().cloned());
+                let dst_reachable = reachable.get(&dst).expect("lower actors are resolved");
+                src_reachable.extend(dst_reachable.iter().cloned());
             } else {
-                // An unresolved actor still holds direct targets. Insertion is
-                // also the queue guard, so cycles cannot enqueue an actor twice.
-                for needed in actor_needs {
-                    if source_needs.insert(needed.clone()) {
-                        pending.push(needed.clone());
-                    }
-                }
+                // An unresolved actor contributes its consumes directly, while
+                // its emits continue the traversal.
+                src_reachable.extend(g.consumes.get(&dst).into_iter().flatten().cloned());
+                stack.extend(g.emits.get(&dst).into_iter().flatten().cloned());
             }
         }
 
         // Publishing the closure makes it reusable by all later sources.
-        needs.insert(source.clone(), source_needs);
+        reachable.insert(src.clone(), src_reachable);
     }
 
-    needs
+    reachable
 }
 
 #[cfg(test)]
@@ -107,10 +118,10 @@ mod tests {
     fn needs_propagates_through_cycles_and_downstream_routes() {
         let mut graph = RouteGraph::default();
         graph.add_actor("Spectator");
-        graph.add_route("Player", "Mux");
-        graph.add_route("Mux", "Pawn");
-        graph.add_route("Pawn", "Mux");
-        graph.add_route("Mux", "Settle");
+        graph.add_emit("Player", "Mux");
+        graph.add_emit("Mux", "Pawn");
+        graph.add_emit("Pawn", "Mux");
+        graph.add_emit("Mux", "Settle");
 
         let expected = BTreeMap::from([
             ("Mux".to_string(), strings(["Mux", "Pawn", "Settle"])),
@@ -121,6 +132,23 @@ mod tests {
         ]);
 
         assert_eq!(needs(&graph), expected);
+    }
+
+    #[test]
+    fn needs_only_propagates_through_emit_edges() {
+        let mut graph = RouteGraph::default();
+        graph.add_consume("Source", "Consumed");
+        graph.add_emit("Consumed", "NotInherited");
+
+        // `Shared` is already a direct consume need, but its emit edge must
+        // still be traversed because Source also emits it.
+        graph.add_consume("Source", "Shared");
+        graph.add_emit("Source", "Shared");
+        graph.add_emit("Shared", "Inherited");
+
+        let result = needs(&graph);
+        assert_eq!(result["Source"], strings(["Consumed", "Inherited", "Shared"]));
+        assert_eq!(result["Consumed"], strings(["NotInherited"]));
     }
 
     fn strings<const N: usize>(values: [&str; N]) -> BTreeSet<String> {
