@@ -1,0 +1,43 @@
+state LauncherState {
+    int launches;
+}
+
+state ChildState {
+    int value;
+}
+
+actor Launcher owns LauncherState {
+    entry launch(value: int)
+    spawns child_group by child_id {
+        outputs {
+            child: Child;
+        }
+    }
+    emits one Launcher {
+        ChildState child_state = {
+            value: value,
+        };
+        LauncherState next = {
+            launches: launches + 1,
+        };
+
+        require child_group.outputs become {
+            child <- Child(child_state);
+        };
+        become Launcher(next);
+    }
+}
+
+actor Child owns ChildState {
+    entry return_to_launcher() emits one Launcher {
+        LauncherState next = {
+            launches: 0,
+        };
+        become Launcher(next);
+    }
+}
+
+app StaticActorSpawn {
+    actor Launcher;
+    actor Child;
+}

@@ -517,23 +517,29 @@ impl<'artifact> TxBuilder<'artifact> {
                 ));
             };
             let actor_name = &actor.contract.contract.name;
-            let expected_handle = spawn_actor_type_handle(input, &output.actor)?;
-            let found_handle = match self.actor_type_handle_in_artifact(actor.contract.artifact, actor_name, &output.state) {
-                Ok(handle) => handle,
-                Err(BuilderError::MissingActorTypeHandle { .. }) => {
-                    return Err(BuilderError::InvalidSpawnGroup(
-                        spawn.name.clone(),
-                        format!(
-                            "output `{}` actor `{}::{actor_name}` does not expose actor_type<{}>",
-                            output.name,
-                            artifact_app_alias(&actor.contract.artifact.app),
-                            output.state
-                        ),
-                    ));
-                }
-                Err(error) => return Err(error),
+            let target_matches = if input.artifact.argent.actors.iter().any(|actor| actor.name == output.actor) {
+                let expected = self.contract_in_artifact(input.artifact, &output.actor)?;
+                actor.contract.contract.compiled.template.hash_hex == expected.compiled.template.hash_hex
+            } else {
+                let expected = dynamic_spawn_actor_type_handle(input, &output.actor)?;
+                let found = match self.actor_type_handle_in_artifact(actor.contract.artifact, actor_name, &output.state) {
+                    Ok(handle) => handle,
+                    Err(BuilderError::MissingActorTypeHandle { .. }) => {
+                        return Err(BuilderError::InvalidSpawnGroup(
+                            spawn.name.clone(),
+                            format!(
+                                "output `{}` actor `{}::{actor_name}` does not expose actor_type<{}>",
+                                output.name,
+                                artifact_app_alias(&actor.contract.artifact.app),
+                                output.state
+                            ),
+                        ));
+                    }
+                    Err(error) => return Err(error),
+                };
+                found == expected
             };
-            if found_handle != expected_handle {
+            if !target_matches {
                 return Err(BuilderError::InvalidSpawnGroup(
                     spawn.name.clone(),
                     format!(
@@ -701,7 +707,7 @@ fn named_genesis_group(context: &ResolveContext<'_, '_, '_>, key: &GenesisGroupK
 
 /// Resolve a spawn actor expression from the input's source state or user
 /// arguments into its concrete 32-byte actor-type handle.
-fn spawn_actor_type_handle(input: &ResolveActorInput<'_, '_, '_>, actor: &str) -> BuilderResult<Vec<u8>> {
+fn dynamic_spawn_actor_type_handle(input: &ResolveActorInput<'_, '_, '_>, actor: &str) -> BuilderResult<Vec<u8>> {
     let args = input.args.as_ref().expect("argument resolution precedes spawn resolution");
     let value = if let Some(field) = actor.strip_prefix("self.") {
         input.source.state.get(field)
