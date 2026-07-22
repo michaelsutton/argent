@@ -8,8 +8,6 @@ contract Controller(
 ) {
     // :: state layouts
     struct PeerState {
-        // :: generated fields
-
         // :: user declared fields
         int count;
     }
@@ -40,8 +38,6 @@ contract Controller(
         int gen__peer_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // output peer: Peer
 
         PeerState next_peer = {
-            // :: generated fields
-
             // :: user declared fields
             count: peer.count + 1,
         };

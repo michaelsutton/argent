@@ -14,7 +14,6 @@ contract Mux(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -23,7 +22,6 @@ contract Mux(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int final_ply;
     }
@@ -39,10 +37,6 @@ contract Mux(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
-        // :: witness lens
-        int gen__target_prefix_len = gen__target_prefix.length;
-        int gen__target_suffix_len = gen__target_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
@@ -52,7 +46,6 @@ contract Mux(
             gen__archive_template: gen__archive_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             ply: ply + 1,
         };
@@ -74,10 +67,6 @@ contract Mux(
 
     // :: leader entry (1:N)
     entrypoint function archive(byte[] gen__archive_prefix, byte[] gen__archive_suffix) {
-        // :: witness lens
-        int gen__archive_prefix_len = gen__archive_prefix.length;
-        int gen__archive_suffix_len = gen__archive_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Archive
@@ -87,7 +76,6 @@ contract Mux(
             gen__archive_template: gen__archive_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes_digest: blake2b(gen__mux_routes),
-
             // :: user declared fields
             final_ply: ply,
         };

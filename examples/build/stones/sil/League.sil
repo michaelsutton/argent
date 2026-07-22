@@ -23,7 +23,6 @@ contract League(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] owner;
         byte[32] player_id;
@@ -37,7 +36,6 @@ contract League(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] player_a;
         byte[32] player_b;
@@ -50,7 +48,6 @@ contract League(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] player_a;
         byte[32] player_b;
@@ -104,10 +101,6 @@ contract League(
         byte[] gen__player_prefix,
         byte[] gen__player_suffix
     ) {
-        // :: witness lens
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         // :: output league: League
@@ -123,7 +116,6 @@ contract League(
             gen__player_template: gen__player_template,
             gen__stones_game_template: gen__stones_game_template,
             gen__stones_settle_template: gen__stones_settle_template,
-
             // :: user declared fields
             owner: owner,
             player_id: player_id,

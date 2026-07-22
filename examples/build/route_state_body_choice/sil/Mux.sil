@@ -13,7 +13,6 @@ contract Mux(
         byte[32] gen__mux_template;
         byte[32] gen__spectator_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -28,10 +27,6 @@ contract Mux(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
-        // :: witness lens
-        int gen__target_prefix_len = gen__target_prefix.length;
-        int gen__target_suffix_len = gen__target_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
@@ -40,7 +35,6 @@ contract Mux(
             // :: generated fields
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             ply: ply + 1,
         };

@@ -16,8 +16,6 @@ contract Agent(
 ) {
     // :: state layouts
     struct ForagerState {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] world_id;
         byte[32] agent_id;

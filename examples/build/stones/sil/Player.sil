@@ -26,7 +26,6 @@ contract Player(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] admin;
         int default_pile;
@@ -37,7 +36,6 @@ contract Player(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] player_a;
         byte[32] player_b;
@@ -50,7 +48,6 @@ contract Player(
         byte[32] gen__player_template;
         byte[32] gen__stones_game_template;
         byte[32] gen__stones_settle_template;
-
         // :: user declared fields
         byte[32] player_a;
         byte[32] player_b;
@@ -112,10 +109,6 @@ contract Player(
         byte[] gen__stones_game_prefix,
         byte[] gen__stones_game_suffix
     ) {
-        // :: witness lens
-        int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
-        int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
-
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) == 2);
@@ -150,7 +143,6 @@ contract Player(
             gen__player_template: gen__player_template,
             gen__stones_game_template: gen__stones_game_template,
             gen__stones_settle_template: gen__stones_settle_template,
-
             // :: user declared fields
             owner: owner,
             player_id: player_id,
@@ -164,7 +156,6 @@ contract Player(
             gen__player_template: gen__player_template,
             gen__stones_game_template: gen__stones_game_template,
             gen__stones_settle_template: gen__stones_settle_template,
-
             // :: user declared fields
             owner: opponent.owner,
             player_id: opponent.player_id,
@@ -178,7 +169,6 @@ contract Player(
             gen__player_template: gen__player_template,
             gen__stones_game_template: gen__stones_game_template,
             gen__stones_settle_template: gen__stones_settle_template,
-
             // :: user declared fields
             player_a: self_ref,
             player_b: opponent_ref,

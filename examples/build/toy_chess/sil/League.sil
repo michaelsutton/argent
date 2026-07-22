@@ -13,7 +13,6 @@ contract League(
         // :: generated fields
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -21,7 +20,6 @@ contract League(
         // :: generated fields
         byte[32] gen__mux_template;
         byte[64] gen__mux_routes;
-
         // :: user declared fields
         int selector;
         int ply;
@@ -38,10 +36,6 @@ contract League(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function register(byte[] gen__player_prefix, byte[] gen__player_suffix) {
-        // :: witness lens
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Player
@@ -50,7 +44,6 @@ contract League(
             // :: generated fields
             gen__mux_template: gen__mux_template,
             gen__mux_routes_digest: gen__mux_routes_digest,
-
             // :: user declared fields
             nonce: nonce + 1,
         };

@@ -27,8 +27,6 @@ contract Forager(
 
         require(energy > 0);
         State next_state = {
-            // :: generated fields
-
             // :: user declared fields
             strategy: blake2b(byte[8](gen__strategy_hunger + 1)),
             energy: energy - 1,

@@ -12,8 +12,6 @@ contract MinterProxy(
 
     // :: state layouts
     struct KCC20State {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] owner_identifier;
         byte identifier_type;
@@ -34,10 +32,6 @@ contract MinterProxy(
         byte[] gen__kcc20_prefix,
         byte[] gen__kcc20_suffix
     ) {
-        // :: witness lens
-        int gen__kcc20_prefix_len = gen__kcc20_prefix.length;
-        int gen__kcc20_suffix_len = gen__kcc20_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         // :: output proxy: MinterProxy

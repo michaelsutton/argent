@@ -15,7 +15,6 @@ contract KCC20(
     struct MinterProxyState {
         // :: generated fields
         byte[32] gen__kcc20_template;
-
         // :: user declared fields
         byte[32] controller_id;
     }
@@ -47,8 +46,6 @@ contract KCC20(
             require(false);
         }
         State next_state = {
-            // :: generated fields
-
             // :: user declared fields
             owner_identifier: new_owner_identifier,
             identifier_type: new_identifier_type,

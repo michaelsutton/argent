@@ -18,13 +18,10 @@ contract Minter(
     struct MinterProxyState {
         // :: generated fields
         byte[32] gen__kcc20_template;
-
         // :: user declared fields
         byte[32] controller_id;
     }
     struct KCC20State {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] owner_identifier;
         byte identifier_type;
@@ -82,13 +79,10 @@ contract Minter(
         MinterProxyState next_proxy = {
             // :: generated fields
             gen__kcc20_template: gen__asset_kcc20_template,
-
             // :: user declared fields
             controller_id: OpInputCovenantId(this.activeInputIndex),
         };
         KCC20State next_recipient = {
-            // :: generated fields
-
             // :: user declared fields
             owner_identifier: recipient_owner,
             identifier_type: IDENTIFIER_PUBKEY,
@@ -115,7 +109,6 @@ contract Minter(
             // :: generated fields
             gen__asset_minter_proxy_template: gen__asset_minter_proxy_template,
             gen__asset_kcc20_template: gen__asset_kcc20_template,
-
             // :: user declared fields
             owner: owner,
             kcc20_covid: kcc20_covid,

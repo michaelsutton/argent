@@ -40,7 +40,6 @@ contract ReserveAsset(
             // :: generated fields
             gen__reserve_asset_template: gen__reserve_asset_template,
             gen__wallet_asset_template: gen__wallet_asset_template,
-
             // :: user declared fields
             owner_kind: owner_kind,
             owner_id: owner_id,
@@ -58,10 +57,6 @@ contract ReserveAsset(
         byte[] gen__wallet_asset_suffix,
         byte[8] gen__policy_reserve_policy_preimage
     ) {
-        // :: witness lens
-        int gen__wallet_asset_prefix_len = gen__wallet_asset_prefix.length;
-        int gen__wallet_asset_suffix_len = gen__wallet_asset_suffix.length;
-
         // :: expanded state
         require(blake2b(gen__policy_reserve_policy_preimage) == policy);
         int gen__policy_nonce = OpBin2Num(gen__policy_reserve_policy_preimage.slice(0, 8));
@@ -77,7 +72,6 @@ contract ReserveAsset(
             // :: generated fields
             gen__reserve_asset_template: gen__reserve_asset_template,
             gen__wallet_asset_template: gen__wallet_asset_template,
-
             // :: user declared fields
             owner_kind: owner_kind,
             owner_id: owner_id,

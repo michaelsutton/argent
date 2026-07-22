@@ -12,7 +12,6 @@ contract Child(
         // :: generated fields
         byte[32] gen__child_template;
         byte[32] gen__launcher_template;
-
         // :: user declared fields
         int launches;
     }
@@ -30,10 +29,6 @@ contract Child(
         byte[] gen__launcher_prefix,
         byte[] gen__launcher_suffix
     ) {
-        // :: witness lens
-        int gen__launcher_prefix_len = gen__launcher_prefix.length;
-        int gen__launcher_suffix_len = gen__launcher_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Launcher
@@ -42,7 +37,6 @@ contract Child(
             // :: generated fields
             gen__child_template: gen__child_template,
             gen__launcher_template: gen__launcher_template,
-
             // :: user declared fields
             launches: 0,
         };

@@ -12,7 +12,6 @@ contract Launcher(
         // :: generated fields
         byte[32] gen__child_template;
         byte[32] gen__launcher_template;
-
         // :: user declared fields
         int value;
     }
@@ -53,7 +52,6 @@ contract Launcher(
             // :: generated fields
             gen__child_template: gen__child_template,
             gen__launcher_template: gen__launcher_template,
-
             // :: user declared fields
             value: value,
         };
@@ -61,7 +59,6 @@ contract Launcher(
             // :: generated fields
             gen__child_template: gen__child_template,
             gen__launcher_template: gen__launcher_template,
-
             // :: user declared fields
             launches: launches + 1,
         };

@@ -378,7 +378,9 @@ impl<'a> Model<'a> {
     fn validate_state_expansions(&self) -> Result<()> {
         for state in self.states.values() {
             for field in &state.fields {
-                if field.virtual_slot && (field.ty.name != "byte" || field.ty.array != Some(32) || field.ty.actor_state.is_some()) {
+                if field.virtual_slot
+                    && (field.ty.name != "byte" || field.ty.array != Some(ArrayDim::Fixed(32)) || field.ty.actor_state.is_some())
+                {
                     return Err(ArgentError::new(format!(
                         "state `{}` field `{}` is virtual, but virtual slots must be byte[32]",
                         state.name, field.name
@@ -426,7 +428,11 @@ impl<'a> Model<'a> {
                         state.name, expansion.base, digest.field, expansion.base
                     ))
                 })?;
-                if !field.virtual_slot || field.ty.name != "byte" || field.ty.array != Some(32) || field.ty.actor_state.is_some() {
+                if !field.virtual_slot
+                    || field.ty.name != "byte"
+                    || field.ty.array != Some(ArrayDim::Fixed(32))
+                    || field.ty.actor_state.is_some()
+                {
                     return Err(ArgentError::new(format!(
                         "state `{}` binds `{}` slot `{}`, but expanded slots must be virtual",
                         state.name, expansion.base, digest.field
@@ -1845,19 +1851,27 @@ fn emit_state_layouts(
         }
         let state = model.storage_state(&state_name)?;
         out.push_str(&format!("    struct {state_name} {{\n"));
-        out.push_str("        // :: generated fields\n");
-        emit_hidden_template_fields(out, state_name.as_str(), model, 8);
-        out.push_str("\n        // :: user declared fields\n");
-        for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        let mut generated_fields = String::new();
+        emit_hidden_template_fields(&mut generated_fields, state_name.as_str(), model, 8);
+        if !generated_fields.is_empty() {
+            out.push_str("        // :: generated fields\n");
+            out.push_str(&generated_fields);
+        }
+        if !state.fields.is_empty() {
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
         }
         out.push_str("    }\n");
 
         if required_state_bodies.contains(&state_name) {
             out.push_str(&format!("    struct {} {{\n", hidden_state_body_type_name(&state_name)));
-            out.push_str("        // :: user declared fields\n");
-            for field in &state.fields {
-                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            if !state.fields.is_empty() {
+                out.push_str("        // :: user declared fields\n");
+                for field in &state.fields {
+                    out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+                }
             }
             out.push_str("    }\n");
         }
@@ -1887,11 +1901,17 @@ fn emit_state_layouts(
         }
         let state = model.storage_state(&actor.state)?;
         out.push_str(&format!("    struct {} {{\n", hidden_actor_state_type_name(&actor.name)));
-        out.push_str("        // :: generated fields\n");
-        emit_hidden_template_fields_for_actor(out, &actor.name, model, 8);
-        out.push_str("\n        // :: user declared fields\n");
-        for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        let mut generated_fields = String::new();
+        emit_hidden_template_fields_for_actor(&mut generated_fields, &actor.name, model, 8);
+        if !generated_fields.is_empty() {
+            out.push_str("        // :: generated fields\n");
+            out.push_str(&generated_fields);
+        }
+        if !state.fields.is_empty() {
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
         }
         out.push_str("    }\n");
     }
@@ -1929,32 +1949,6 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         EntryKind::Delegate => out.push_str("    // :: delegate entry\n"),
     }
     push_entry_signature(out, &entry.name, &sil_params);
-
-    let has_byte_witnesses =
-        witness_specs.templates.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) || !witness_specs.selectors.is_empty();
-    if has_byte_witnesses {
-        out.push_str("        // :: witness lens\n");
-        for spec in &witness_specs.templates {
-            if spec.form != TemplateWitnessForm::Bytes {
-                continue;
-            }
-            let prefix = hidden_witness_prefix_name(&spec.actor);
-            let suffix = hidden_witness_suffix_name(&spec.actor);
-            let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
-            let suffix_len = hidden_witness_suffix_len_name(&spec.actor);
-            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
-        }
-        for spec in &witness_specs.selectors {
-            let prefix = hidden_template_selector_prefix_name(&spec.name);
-            let suffix = hidden_template_selector_suffix_name(&spec.name);
-            let prefix_len = hidden_template_selector_prefix_len_name(&spec.name);
-            let suffix_len = hidden_template_selector_suffix_len_name(&spec.name);
-            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
-        }
-        out.push('\n');
-    }
 
     if emit_entry_template_locals(out, actor, &witness_specs, model) {
         out.push('\n');
@@ -2274,7 +2268,7 @@ fn packed_field_expr(ty: &TypeRef, expr: &str) -> Result<String> {
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(format!("byte[8]({expr})")),
         ("bool", None) | ("byte", None) => Ok(format!("byte[1]({expr})")),
-        ("byte", Some(_)) | ("pubkey", None) | (word::COVENANT_ID, None) | ("sig", None) | ("datasig", None) => {
+        ("byte", Some(ArrayDim::Fixed(_))) | ("pubkey", None) | (word::COVENANT_ID, None) | ("sig", None) | ("datasig", None) => {
             Ok(format!("byte[]({expr})"))
         }
         ("bytes", None) | ("string", None) | (_, Some(_)) => {
@@ -2292,7 +2286,7 @@ fn unpack_packed_field_expr(ty: &TypeRef, slice_expr: &str) -> Result<String> {
         ("int", None) => Ok(format!("OpBin2Num({slice_expr})")),
         ("bool", None) => Ok(format!("OpBin2Num({slice_expr}) != 0")),
         ("byte", None) => Ok(format!("byte({slice_expr})")),
-        ("byte", Some(len)) => Ok(format!("byte[{len}]({slice_expr})")),
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(format!("byte[{len}]({slice_expr})")),
         ("pubkey", None) | (word::COVENANT_ID, None) => Ok(format!("byte[32]({slice_expr})")),
         ("sig", None) => Ok(format!("byte[65]({slice_expr})")),
         ("datasig", None) => Ok(format!("byte[64]({slice_expr})")),
@@ -2310,7 +2304,7 @@ fn packed_field_len(ty: &TypeRef) -> Result<usize> {
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(8),
         ("bool", None) | ("byte", None) => Ok(1),
-        ("byte", Some(len)) => Ok(len),
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(len),
         ("pubkey", None) | (word::COVENANT_ID, None) => Ok(32),
         ("sig", None) => Ok(65),
         ("datasig", None) => Ok(64),
@@ -3446,12 +3440,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
         let mut out = String::new();
         out.push_str("{\n");
-        out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        if !generated_fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        }
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
         }
-        out.push_str(&format!("\n{field_indent}// :: user declared fields\n"));
-        for field in &self.model.storage_state(state_name)?.fields {
+        let state = self.model.storage_state(state_name)?;
+        if !state.fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: user declared fields\n"));
+        }
+        for field in &state.fields {
             let expr = if let Some(expr) = pending.remove(&field.name) {
                 expr
             } else if field.virtual_slot {
@@ -3501,11 +3500,15 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        if !generated_fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        }
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
         }
-        out.push_str(&format!("\n{field_indent}// :: user declared fields\n"));
+        if !storage_state.fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: user declared fields\n"));
+        }
 
         for field in &storage_state.fields {
             if let Some(digest) = expansion.digests.iter().find(|digest| digest.field == field.name) {
@@ -5305,12 +5308,13 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
         return Ok(zero_byte_array_expr(32));
     }
     match (&ty.name[..], ty.array) {
-        ("byte", Some(len)) => Ok(zero_byte_array_expr(len)),
-        (_, Some(len)) => {
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(zero_byte_array_expr(len)),
+        (_, Some(ArrayDim::Fixed(len))) => {
             let item = TypeRef::new(ty.name.clone());
             let values = (0..len).map(|_| placeholder_expr_for_type(&item)).collect::<Result<Vec<_>>>()?;
             Ok(values.into())
         }
+        (_, Some(ArrayDim::Dynamic)) => Err(ArgentError::new("dynamic arrays are not supported in actor state")),
         ("int", None) => Ok(SilExpr::int(0)),
         ("bool", None) => Ok(SilExpr::bool(false)),
         ("byte", None) => Ok(SilExpr::byte(0)),
@@ -5957,13 +5961,19 @@ fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
         TypeArtifact::FixedBytes { len: 32 }
     } else if ty.name == word::COVENANT_ID {
         match ty.array {
-            Some(len) => TypeArtifact::FixedArray { item: Box::new(TypeArtifact::FixedBytes { len: 32 }), len },
+            Some(ArrayDim::Fixed(len)) => TypeArtifact::FixedArray { item: Box::new(TypeArtifact::FixedBytes { len: 32 }), len },
+            Some(ArrayDim::Dynamic) => TypeArtifact::dynamic_array(TypeArtifact::FixedBytes { len: 32 }),
             None => TypeArtifact::FixedBytes { len: 32 },
         }
     } else if model.is_actor_enum_type(ty) {
         TypeArtifact::Int
     } else {
-        TypeArtifact::from_parts(&ty.name, ty.array)
+        match ty.array {
+            Some(ArrayDim::Dynamic) if ty.name == "byte" => TypeArtifact::Bytes,
+            Some(ArrayDim::Dynamic) => TypeArtifact::dynamic_array(TypeArtifact::from_parts(&ty.name, None)),
+            Some(ArrayDim::Fixed(len)) => TypeArtifact::from_parts(&ty.name, Some(len)),
+            None => TypeArtifact::from_parts(&ty.name, None),
+        }
     }
 }
 
@@ -6785,14 +6795,6 @@ fn hidden_template_selector_prefix_name(selector: &str) -> String {
 
 fn hidden_template_selector_suffix_name(selector: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix")
-}
-
-fn hidden_template_selector_prefix_len_name(selector: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{selector}_prefix_len")
-}
-
-fn hidden_template_selector_suffix_len_name(selector: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix_len")
 }
 
 fn hidden_template_selector_index_name(selector: &str) -> String {

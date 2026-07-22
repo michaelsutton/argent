@@ -171,8 +171,14 @@ pub struct RouteCall {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TypeRef {
     pub name: String,
-    pub array: Option<usize>,
+    pub array: Option<ArrayDim>,
     pub actor_state: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum ArrayDim {
+    Dynamic,
+    Fixed(usize),
 }
 
 impl TypeRef {
@@ -181,7 +187,11 @@ impl TypeRef {
     }
 
     pub fn array(name: impl Into<String>, len: usize) -> Self {
-        Self { name: name.into(), array: Some(len), actor_state: None }
+        Self { name: name.into(), array: Some(ArrayDim::Fixed(len)), actor_state: None }
+    }
+
+    pub fn dynamic_array(name: impl Into<String>) -> Self {
+        Self { name: name.into(), array: Some(ArrayDim::Dynamic), actor_state: None }
     }
 
     pub fn actor_type(state: impl Into<String>) -> Self {
@@ -197,7 +207,8 @@ impl TypeRef {
             return "byte[32]".to_string();
         }
         match self.array {
-            Some(len) => format!("{}[{}]", self.name, len),
+            Some(ArrayDim::Dynamic) => format!("{}[]", self.name),
+            Some(ArrayDim::Fixed(len)) => format!("{}[{}]", self.name, len),
             None => self.name.clone(),
         }
     }

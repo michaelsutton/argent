@@ -9,8 +9,6 @@ contract Issuer(
 ) {
     // :: state layouts
     struct TicketState {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] owner;
         int serial;
@@ -33,10 +31,6 @@ contract Issuer(
         byte[] gen__ticket_prefix,
         byte[] gen__ticket_suffix
     ) {
-        // :: witness lens
-        int gen__ticket_prefix_len = gen__ticket_prefix.length;
-        int gen__ticket_suffix_len = gen__ticket_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         // :: output issuer: Issuer
@@ -51,14 +45,11 @@ contract Issuer(
         State next_issuer = {
             // :: generated fields
             gen__ticket_template: gen__ticket_template,
-
             // :: user declared fields
             admin: admin,
             next_serial: next_serial + 1,
         };
         TicketState new_ticket = {
-            // :: generated fields
-
             // :: user declared fields
             owner: owner,
             serial: serial,

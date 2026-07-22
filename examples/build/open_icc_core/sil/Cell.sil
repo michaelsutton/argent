@@ -14,8 +14,6 @@ contract Cell(
 ) {
     // :: state layouts
     struct AgentCapsule {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] world_id;
         byte[32] agent_id;
@@ -80,8 +78,6 @@ contract Cell(
         require(prev_state.world_id == world_id);
         require(prev_state.capabilities_digest == occupant_caps_digest);
         AgentCapsule next_state = {
-            // :: generated fields
-
             // :: user declared fields
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
@@ -106,7 +102,6 @@ contract Cell(
         State next_cell = {
             // :: generated fields
             gen__cell_template: gen__cell_template,
-
             // :: user declared fields
             world_id: world_id,
             x: x,
@@ -182,8 +177,6 @@ contract Cell(
         require(target_cell.occupant_agent_type == empty_agent_type);
         require(target_cell.occupant_caps_digest == empty_caps_digest);
         AgentCapsule next_agent = {
-            // :: generated fields
-
             // :: user declared fields
             world_id: prev_state.world_id,
             agent_id: prev_state.agent_id,
@@ -199,7 +192,6 @@ contract Cell(
         State next_source = {
             // :: generated fields
             gen__cell_template: gen__cell_template,
-
             // :: user declared fields
             world_id: world_id,
             x: x,
@@ -212,7 +204,6 @@ contract Cell(
         State next_target = {
             // :: generated fields
             gen__cell_template: gen__cell_template,
-
             // :: user declared fields
             world_id: target_cell.world_id,
             x: target_cell.x,
