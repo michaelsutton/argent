@@ -7,8 +7,6 @@ contract Pair(
 ) {
     // :: state layouts
     struct ControllerState {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] pair_type;
         int launches;

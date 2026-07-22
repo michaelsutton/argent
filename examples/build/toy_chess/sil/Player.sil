@@ -13,7 +13,6 @@ contract Player(
         byte[32] gen__mux_template;
         byte[32] gen__player_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -21,7 +20,6 @@ contract Player(
         // :: generated fields
         byte[32] gen__mux_template;
         byte[64] gen__mux_routes;
-
         // :: user declared fields
         int selector;
         int ply;
@@ -56,7 +54,6 @@ contract Player(
             // :: generated fields
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             selector: nonce,
             ply: 0,

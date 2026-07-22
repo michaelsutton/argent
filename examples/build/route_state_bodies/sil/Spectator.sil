@@ -11,7 +11,6 @@ contract Spectator(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -20,7 +19,6 @@ contract Spectator(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int final_ply;
     }

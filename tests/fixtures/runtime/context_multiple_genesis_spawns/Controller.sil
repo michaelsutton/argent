@@ -8,8 +8,6 @@ contract Controller(
 ) {
     // :: state layouts
     struct PairState {
-        // :: generated fields
-
         // :: user declared fields
         int value;
     }
@@ -89,38 +87,26 @@ contract Controller(
         require(OpOutputCovenantId(gen__third_pair_left_output_idx) == third_pair_id);
 
         PairState first_left = {
-            // :: generated fields
-
             // :: user declared fields
             value: first_left_value,
         };
         PairState first_right = {
-            // :: generated fields
-
             // :: user declared fields
             value: first_right_value,
         };
         PairState second = {
-            // :: generated fields
-
             // :: user declared fields
             value: second_value,
         };
         PairState third_left = {
-            // :: generated fields
-
             // :: user declared fields
             value: third_left_value,
         };
         PairState third_right = {
-            // :: generated fields
-
             // :: user declared fields
             value: third_right_value,
         };
         State next = {
-            // :: generated fields
-
             // :: user declared fields
             pair_type: pair_type,
             launches: launches + 3,

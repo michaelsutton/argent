@@ -1851,19 +1851,27 @@ fn emit_state_layouts(
         }
         let state = model.storage_state(&state_name)?;
         out.push_str(&format!("    struct {state_name} {{\n"));
-        out.push_str("        // :: generated fields\n");
-        emit_hidden_template_fields(out, state_name.as_str(), model, 8);
-        out.push_str("\n        // :: user declared fields\n");
-        for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        let mut generated_fields = String::new();
+        emit_hidden_template_fields(&mut generated_fields, state_name.as_str(), model, 8);
+        if !generated_fields.is_empty() {
+            out.push_str("        // :: generated fields\n");
+            out.push_str(&generated_fields);
+        }
+        if !state.fields.is_empty() {
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
         }
         out.push_str("    }\n");
 
         if required_state_bodies.contains(&state_name) {
             out.push_str(&format!("    struct {} {{\n", hidden_state_body_type_name(&state_name)));
-            out.push_str("        // :: user declared fields\n");
-            for field in &state.fields {
-                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            if !state.fields.is_empty() {
+                out.push_str("        // :: user declared fields\n");
+                for field in &state.fields {
+                    out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+                }
             }
             out.push_str("    }\n");
         }
@@ -1893,11 +1901,17 @@ fn emit_state_layouts(
         }
         let state = model.storage_state(&actor.state)?;
         out.push_str(&format!("    struct {} {{\n", hidden_actor_state_type_name(&actor.name)));
-        out.push_str("        // :: generated fields\n");
-        emit_hidden_template_fields_for_actor(out, &actor.name, model, 8);
-        out.push_str("\n        // :: user declared fields\n");
-        for field in &state.fields {
-            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        let mut generated_fields = String::new();
+        emit_hidden_template_fields_for_actor(&mut generated_fields, &actor.name, model, 8);
+        if !generated_fields.is_empty() {
+            out.push_str("        // :: generated fields\n");
+            out.push_str(&generated_fields);
+        }
+        if !state.fields.is_empty() {
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
         }
         out.push_str("    }\n");
     }
@@ -3452,12 +3466,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
         let mut out = String::new();
         out.push_str("{\n");
-        out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        if !generated_fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        }
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
         }
-        out.push_str(&format!("\n{field_indent}// :: user declared fields\n"));
-        for field in &self.model.storage_state(state_name)?.fields {
+        let state = self.model.storage_state(state_name)?;
+        if !state.fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: user declared fields\n"));
+        }
+        for field in &state.fields {
             let expr = if let Some(expr) = pending.remove(&field.name) {
                 expr
             } else if field.virtual_slot {
@@ -3507,11 +3526,15 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        if !generated_fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: generated fields\n"));
+        }
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
         }
-        out.push_str(&format!("\n{field_indent}// :: user declared fields\n"));
+        if !storage_state.fields.is_empty() {
+            out.push_str(&format!("{field_indent}// :: user declared fields\n"));
+        }
 
         for field in &storage_state.fields {
             if let Some(digest) = expansion.digests.iter().find(|digest| digest.field == field.name) {

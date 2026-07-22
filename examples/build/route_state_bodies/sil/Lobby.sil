@@ -14,7 +14,6 @@ contract Lobby(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[64] gen__mux_routes;
-
         // :: user declared fields
         int ply;
     }
@@ -23,7 +22,6 @@ contract Lobby(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int final_ply;
     }
@@ -59,7 +57,6 @@ contract Lobby(
             gen__archive_template: gen__archive_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             ply: nonce,
         };

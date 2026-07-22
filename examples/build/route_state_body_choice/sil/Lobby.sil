@@ -13,7 +13,6 @@ contract Lobby(
         // :: generated fields
         byte[32] gen__mux_template;
         byte[64] gen__mux_routes;
-
         // :: user declared fields
         int ply;
     }
@@ -55,8 +54,6 @@ contract Lobby(
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
         Gen__BoardStateBody next_board = {
-            // :: generated fields
-
             // :: user declared fields
             ply: nonce,
         };
@@ -74,7 +71,6 @@ contract Lobby(
                 // :: generated fields
                 gen__mux_template: gen__mux_template,
                 gen__mux_routes: gen__mux_routes,
-
                 // :: user declared fields
                 ply: next_board.ply,
             };

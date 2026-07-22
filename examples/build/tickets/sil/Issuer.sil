@@ -9,8 +9,6 @@ contract Issuer(
 ) {
     // :: state layouts
     struct TicketState {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] owner;
         int serial;
@@ -51,14 +49,11 @@ contract Issuer(
         State next_issuer = {
             // :: generated fields
             gen__ticket_template: gen__ticket_template,
-
             // :: user declared fields
             admin: admin,
             next_serial: next_serial + 1,
         };
         TicketState new_ticket = {
-            // :: generated fields
-
             // :: user declared fields
             owner: owner,
             serial: serial,

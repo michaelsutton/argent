@@ -14,7 +14,6 @@ contract Knight(
         byte[32] gen__mux_template;
         byte[32] gen__player_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -22,7 +21,6 @@ contract Knight(
         // :: generated fields
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -51,7 +49,6 @@ contract Knight(
             // :: generated fields
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             selector: selector,
             ply: ply + 1,

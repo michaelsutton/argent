@@ -12,7 +12,6 @@ contract Child(
         // :: generated fields
         byte[32] gen__child_template;
         byte[32] gen__launcher_template;
-
         // :: user declared fields
         int launches;
     }
@@ -42,7 +41,6 @@ contract Child(
             // :: generated fields
             gen__child_template: gen__child_template,
             gen__launcher_template: gen__launcher_template,
-
             // :: user declared fields
             launches: 0,
         };

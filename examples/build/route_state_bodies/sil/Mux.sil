@@ -14,7 +14,6 @@ contract Mux(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -23,7 +22,6 @@ contract Mux(
         byte[32] gen__archive_template;
         byte[32] gen__mux_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int final_ply;
     }
@@ -52,7 +50,6 @@ contract Mux(
             gen__archive_template: gen__archive_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             ply: ply + 1,
         };
@@ -87,7 +84,6 @@ contract Mux(
             gen__archive_template: gen__archive_template,
             gen__mux_template: gen__mux_template,
             gen__mux_routes_digest: blake2b(gen__mux_routes),
-
             // :: user declared fields
             final_ply: ply,
         };

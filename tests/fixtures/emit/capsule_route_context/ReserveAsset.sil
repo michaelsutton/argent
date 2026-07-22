@@ -40,7 +40,6 @@ contract ReserveAsset(
             // :: generated fields
             gen__reserve_asset_template: gen__reserve_asset_template,
             gen__wallet_asset_template: gen__wallet_asset_template,
-
             // :: user declared fields
             owner_kind: owner_kind,
             owner_id: owner_id,
@@ -77,7 +76,6 @@ contract ReserveAsset(
             // :: generated fields
             gen__reserve_asset_template: gen__reserve_asset_template,
             gen__wallet_asset_template: gen__wallet_asset_template,
-
             // :: user declared fields
             owner_kind: owner_kind,
             owner_id: owner_id,

@@ -13,7 +13,6 @@ contract Mux(
         byte[32] gen__mux_template;
         byte[32] gen__spectator_template;
         byte[32] gen__mux_routes_digest;
-
         // :: user declared fields
         int nonce;
     }
@@ -40,7 +39,6 @@ contract Mux(
             // :: generated fields
             gen__mux_template: gen__mux_template,
             gen__mux_routes: gen__mux_routes,
-
             // :: user declared fields
             ply: ply + 1,
         };

@@ -9,8 +9,6 @@ contract Cell(
 ) {
     // :: state layouts
     struct AgentCapsule {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] controller_id;
         byte[32] caps_digest;
@@ -55,8 +53,6 @@ contract Cell(
         require(agent_type == observed_agent);
         require(prev_state.controller_id == OpInputCovenantId(this.activeInputIndex));
         AgentCapsule next_state = {
-            // :: generated fields
-
             // :: user declared fields
             controller_id: prev_state.controller_id,
             caps_digest: prev_state.caps_digest,
@@ -72,8 +68,6 @@ contract Cell(
             observed_agent
         );
         State next_cell = {
-            // :: generated fields
-
             // :: user declared fields
             agent_covid: agent_covid,
             agent_type: agent_type,

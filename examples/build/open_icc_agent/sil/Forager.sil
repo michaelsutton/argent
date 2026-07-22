@@ -16,8 +16,6 @@ contract Forager(
 ) {
     // :: state layouts
     struct AgentCapsule {
-        // :: generated fields
-
         // :: user declared fields
         byte[32] world_id;
         byte[32] agent_id;
@@ -78,8 +76,6 @@ contract Forager(
         require(next_energy == energy - 1);
         require(next_energy >= 0);
         State next_agent = {
-            // :: generated fields
-
             // :: user declared fields
             world_id: world_id,
             agent_id: agent_id,

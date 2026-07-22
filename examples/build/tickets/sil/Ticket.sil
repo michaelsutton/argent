@@ -11,7 +11,6 @@ contract Ticket(
     struct IssuerState {
         // :: generated fields
         byte[32] gen__ticket_template;
-
         // :: user declared fields
         byte[32] admin;
         int next_serial;
@@ -36,8 +35,6 @@ contract Ticket(
         require(redeemed == 0);
         require(tx.outputs[gen__next_output_idx].value == tx.inputs[this.activeInputIndex].value);
         State redeemed_ticket = {
-            // :: generated fields
-
             // :: user declared fields
             owner: owner,
             serial: serial,

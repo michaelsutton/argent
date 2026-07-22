@@ -8,8 +8,6 @@ contract Local(
 ) {
     // :: state layouts
     struct ForeignState {
-        // :: generated fields
-
         // :: user declared fields
         int count;
     }
@@ -43,8 +41,6 @@ contract Local(
 
         ForeignState prev = gen__asset_src_state;
         ForeignState next = {
-            // :: generated fields
-
             // :: user declared fields
             count: prev.count + 1,
         };
