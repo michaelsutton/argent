@@ -1950,32 +1950,6 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     }
     push_entry_signature(out, &entry.name, &sil_params);
 
-    let has_byte_witnesses =
-        witness_specs.templates.iter().any(|spec| spec.form == TemplateWitnessForm::Bytes) || !witness_specs.selectors.is_empty();
-    if has_byte_witnesses {
-        out.push_str("        // :: witness lens\n");
-        for spec in &witness_specs.templates {
-            if spec.form != TemplateWitnessForm::Bytes {
-                continue;
-            }
-            let prefix = hidden_witness_prefix_name(&spec.actor);
-            let suffix = hidden_witness_suffix_name(&spec.actor);
-            let prefix_len = hidden_witness_prefix_len_name(&spec.actor);
-            let suffix_len = hidden_witness_suffix_len_name(&spec.actor);
-            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
-        }
-        for spec in &witness_specs.selectors {
-            let prefix = hidden_template_selector_prefix_name(&spec.name);
-            let suffix = hidden_template_selector_suffix_name(&spec.name);
-            let prefix_len = hidden_template_selector_prefix_len_name(&spec.name);
-            let suffix_len = hidden_template_selector_suffix_len_name(&spec.name);
-            out.push_str(&format!("        int {prefix_len} = {prefix}.length;\n"));
-            out.push_str(&format!("        int {suffix_len} = {suffix}.length;\n"));
-        }
-        out.push('\n');
-    }
-
     if emit_entry_template_locals(out, actor, &witness_specs, model) {
         out.push('\n');
     }
@@ -6821,14 +6795,6 @@ fn hidden_template_selector_prefix_name(selector: &str) -> String {
 
 fn hidden_template_selector_suffix_name(selector: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix")
-}
-
-fn hidden_template_selector_prefix_len_name(selector: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{selector}_prefix_len")
-}
-
-fn hidden_template_selector_suffix_len_name(selector: &str) -> String {
-    format!("{RESERVED_GENERATED_PREFIX}{selector}_suffix_len")
 }
 
 fn hidden_template_selector_index_name(selector: &str) -> String {

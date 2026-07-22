@@ -105,10 +105,6 @@ contract StonesGame(
         byte[] gen__stones_settle_prefix,
         byte[] gen__stones_settle_suffix
     ) {
-        // :: witness lens
-        int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
-        int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         // :: output next: StonesGame | StonesSettle
@@ -169,10 +165,6 @@ contract StonesGame(
         byte[] gen__stones_settle_prefix,
         byte[] gen__stones_settle_suffix
     ) {
-        // :: witness lens
-        int gen__stones_settle_prefix_len = gen__stones_settle_prefix.length;
-        int gen__stones_settle_suffix_len = gen__stones_settle_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         // :: output settle: StonesSettle

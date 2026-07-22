@@ -36,10 +36,6 @@ contract League(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function register(byte[] gen__player_prefix, byte[] gen__player_suffix) {
-        // :: witness lens
-        int gen__player_prefix_len = gen__player_prefix.length;
-        int gen__player_suffix_len = gen__player_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Player

@@ -37,10 +37,6 @@ contract Mux(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
-        // :: witness lens
-        int gen__target_prefix_len = gen__target_prefix.length;
-        int gen__target_suffix_len = gen__target_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
@@ -71,10 +67,6 @@ contract Mux(
 
     // :: leader entry (1:N)
     entrypoint function archive(byte[] gen__archive_prefix, byte[] gen__archive_suffix) {
-        // :: witness lens
-        int gen__archive_prefix_len = gen__archive_prefix.length;
-        int gen__archive_suffix_len = gen__archive_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Archive

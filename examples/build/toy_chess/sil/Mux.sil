@@ -36,10 +36,6 @@ contract Mux(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function choose(int target, byte[] gen__target_prefix, byte[] gen__target_suffix) {
-        // :: witness lens
-        int gen__target_prefix_len = gen__target_prefix.length;
-        int gen__target_suffix_len = gen__target_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
@@ -73,10 +69,6 @@ contract Mux(
 
     // :: leader entry (1:N)
     entrypoint function choose_knight_const(byte[] gen__target_prefix, byte[] gen__target_suffix) {
-        // :: witness lens
-        int gen__target_prefix_len = gen__target_prefix.length;
-        int gen__target_suffix_len = gen__target_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one MoveActor
@@ -107,10 +99,6 @@ contract Mux(
 
     // :: leader entry (1:N)
     entrypoint function choose_pawn(byte[] gen__pawn_prefix, byte[] gen__pawn_suffix) {
-        // :: witness lens
-        int gen__pawn_prefix_len = gen__pawn_prefix.length;
-        int gen__pawn_suffix_len = gen__pawn_suffix.length;
-
         // :: routes: Pawn
         byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));
 
@@ -138,10 +126,6 @@ contract Mux(
 
     // :: leader entry (1:N)
     entrypoint function choose_knight(byte[] gen__knight_prefix, byte[] gen__knight_suffix) {
-        // :: witness lens
-        int gen__knight_prefix_len = gen__knight_prefix.length;
-        int gen__knight_suffix_len = gen__knight_suffix.length;
-
         // :: routes: Knight
         byte[32] gen__knight_template = byte[32](gen__mux_routes.slice(32, 64));
 

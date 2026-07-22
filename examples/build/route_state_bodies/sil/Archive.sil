@@ -41,10 +41,6 @@ contract Archive(
         byte[] gen__pawn_suffix,
         byte[64] gen__mux_routes
     ) {
-        // :: witness lens
-        int gen__pawn_prefix_len = gen__pawn_prefix.length;
-        int gen__pawn_suffix_len = gen__pawn_suffix.length;
-
         // :: routes: route_family/BoardState/mux Pawn
         require(blake2b(gen__mux_routes) == gen__mux_routes_digest);
         byte[32] gen__pawn_template = byte[32](gen__mux_routes.slice(0, 32));

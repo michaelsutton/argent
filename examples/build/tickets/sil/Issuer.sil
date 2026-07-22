@@ -31,10 +31,6 @@ contract Issuer(
         byte[] gen__ticket_prefix,
         byte[] gen__ticket_suffix
     ) {
-        // :: witness lens
-        int gen__ticket_prefix_len = gen__ticket_prefix.length;
-        int gen__ticket_suffix_len = gen__ticket_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 2);
         // :: output issuer: Issuer

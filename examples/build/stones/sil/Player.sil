@@ -109,10 +109,6 @@ contract Player(
         byte[] gen__stones_game_prefix,
         byte[] gen__stones_game_suffix
     ) {
-        // :: witness lens
-        int gen__stones_game_prefix_len = gen__stones_game_prefix.length;
-        int gen__stones_game_suffix_len = gen__stones_game_suffix.length;
-
         // :: cov inputs
         byte[32] gen__cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(gen__cov_id) == 2);

@@ -36,10 +36,6 @@ contract Knight(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function back_to_mux(byte[] gen__mux_prefix, byte[] gen__mux_suffix) {
-        // :: witness lens
-        int gen__mux_prefix_len = gen__mux_prefix.length;
-        int gen__mux_suffix_len = gen__mux_suffix.length;
-
         // :: auth outputs
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0); // emits one Mux

@@ -39,10 +39,6 @@ contract Player(
         byte[] gen__mux_suffix,
         byte[64] gen__mux_routes
     ) {
-        // :: witness lens
-        int gen__mux_prefix_len = gen__mux_prefix.length;
-        int gen__mux_suffix_len = gen__mux_suffix.length;
-
         // :: routes: route_family/BoardState/mux
         require(blake2b(gen__mux_routes) == gen__mux_routes_digest);
 
