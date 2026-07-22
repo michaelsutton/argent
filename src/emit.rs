@@ -10746,6 +10746,17 @@ mod tests {
     }
 
     #[test]
+    fn fixed_actor_spawn_lowers_to_pinned_sil() {
+        let source = "tests/fixtures/runtime/context_static_actor_spawn/app.ag";
+        let (launcher_sil, launcher_artifact) = emit_selected_fixture(source, "StaticActorSpawn", "Launcher");
+        let (child_sil, _) = emit_selected_fixture(source, "StaticActorSpawn", "Child");
+
+        assert_eq!(launcher_sil, include_str!("../tests/fixtures/runtime/context_static_actor_spawn/Launcher.sil"));
+        assert_eq!(child_sil, include_str!("../tests/fixtures/runtime/context_static_actor_spawn/Child.sil"));
+        launcher_artifact.verify_template_plan().expect("pinned fixed-spawn template plan verifies");
+    }
+
+    #[test]
     fn fixed_actor_self_spawn_retains_its_template() {
         let artifact = inline_artifact(
             "fixed_actor_self_spawn",
