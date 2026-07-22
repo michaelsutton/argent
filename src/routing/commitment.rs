@@ -342,9 +342,10 @@ pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<Commitme
 /// 1. Validate disjoint family and cohort membership, then build the
 ///    deterministic forest. Forest construction also records direct paths to
 ///    actor leaves and family branches.
-/// 2. Equalize each cohort's outgoing dependencies, then compute every actor's
-///    transitive emit and direct consume needs. Equalization happens before
-///    propagation so upstream emitters inherit complete cohort requirements.
+/// 2. Make each cohort a strongly connected component in a cloned dependency
+///    graph, then compute every actor's transitive emit and direct consume
+///    needs. The synthetic edges participate in propagation, so upstream
+///    emitters inherit the complete cut requirements of their targets.
 /// 3. Translate actors outside cohorts independently. A needed standalone actor
 ///    becomes its leaf; any needed family member becomes its packed family
 ///    branch.
@@ -365,7 +366,12 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
     // Phase 2 resolves graph semantics before they are mapped onto the tree.
     let mut needs_graph = g.clone();
     for cohort in &constraints.cohorts {
-        needs_graph.equalize_outgoing(cohort);
+        // These edges exist only in the cloned dependency graph; they do not
+        // claim that cohort peers route to one another in the source program.
+        // TODO: Contract cohorts into dependency nodes, or introduce a
+        // dedicated dependency graph, instead of materializing quadratic
+        // synthetic cliques.
+        needs_graph.add_emit_clique(cohort);
     }
     let actor_needs = needs(&needs_graph);
     let mut cuts = BTreeMap::new();
@@ -710,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn cohort_dependencies_propagate_to_upstream_emitters_without_peer_edges() {
+    fn cohort_clique_propagates_members_and_dependencies_to_upstream_emitters() {
         let mut graph = RouteGraph::default();
         graph.add_emit("A", "B");
         graph.add_actor("C");
@@ -719,9 +725,10 @@ mod tests {
 
         let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
 
-        assert_eq!(plan.cuts["A"], cut([&[1], &[3]]));
+        assert_eq!(plan.cuts["A"], cut([&[1], &[2], &[3]]));
         assert_eq!(plan.cuts["B"], cut([&[1], &[2], &[3]]));
         assert_eq!(plan.cuts["C"], plan.cuts["B"]);
+        assert!(plan.cut_transition("A", "B").is_ok());
     }
 
     #[test]

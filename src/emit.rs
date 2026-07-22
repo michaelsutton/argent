@@ -67,6 +67,7 @@ struct Model<'a> {
     /// Delegate entries that establish each actor as a leader actor.
     leader_for: BTreeMap<String, Vec<EntryRefArtifact>>,
     route_leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
+    route_transitions: BTreeMap<(String, String), CompilerRouteTransition>,
     state_route_leaves: BTreeMap<String, Vec<RouteRootLeaf>>,
 }
 
@@ -131,6 +132,13 @@ enum RouteRootLeaf {
 struct CompilerRoutePlan {
     families: Vec<RouteFamily>,
     leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
+    transitions: BTreeMap<(String, String), CompilerRouteTransition>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CompilerRouteTransition {
+    families_to_open: Vec<String>,
+    families_to_pack: Vec<String>,
 }
 
 fn compute_leader_for(actors: &[&ActorDecl]) -> BTreeMap<String, Vec<EntryRefArtifact>> {
@@ -197,7 +205,7 @@ impl<'a> Model<'a> {
         let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
-        let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor } =
+        let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor, transitions: route_transitions } =
             infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums)?;
         let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
@@ -213,6 +221,7 @@ impl<'a> Model<'a> {
             actors,
             leader_for,
             route_leaves_by_actor,
+            route_transitions,
             state_route_leaves,
         };
         model.validate()?;
@@ -311,6 +320,20 @@ impl<'a> Model<'a> {
                 "route planner actor coverage differs from the selected app; expected {:?}, found {:?}",
                 template_actors, planned_actors
             )));
+        }
+
+        let family_ids = self.route_families.iter().map(|family| family.id.as_str()).collect::<BTreeSet<_>>();
+        for ((source, target), transition) in &self.route_transitions {
+            if !template_actors.contains(source) || !template_actors.contains(target) {
+                return Err(ArgentError::new(format!("route transition `{source}` -> `{target}` falls outside the selected app")));
+            }
+            for family_id in transition.families_to_open.iter().chain(&transition.families_to_pack) {
+                if !family_ids.contains(family_id.as_str()) {
+                    return Err(ArgentError::new(format!(
+                        "route transition `{source}` -> `{target}` references unknown family `{family_id}`"
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -1514,6 +1537,7 @@ fn infer_direct_routes<'a>(
     let mut graph = RouteGraph::default();
     let mut domains = BTreeMap::<String, Vec<String>>::new();
     let mut selector_requirements = Vec::new();
+    let mut transition_pairs = BTreeSet::new();
 
     for actor in actors {
         if template_actor_set.contains(&actor.name) {
@@ -1541,6 +1565,7 @@ fn infer_direct_routes<'a>(
                 }
                 if actor.name != target.name {
                     graph.add_emit(actor.name.clone(), target.name.clone());
+                    transition_pairs.insert((actor.name.clone(), target.name.clone()));
                 }
             }
         }
@@ -1548,6 +1573,13 @@ fn infer_direct_routes<'a>(
 
     let plan = route_plan(&graph, &domains, &selector_requirements).map_err(|err| ArgentError::new(err.to_string()))?;
     let leaves_by_actor = compiler_route_leaves(&plan)?;
+    let transitions = transition_pairs
+        .into_iter()
+        .map(|(source, target)| {
+            let transition = compiler_route_transition(&plan, &source, &target)?;
+            Ok(((source, target), transition))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let families = plan
         .families
         .into_iter()
@@ -1561,7 +1593,7 @@ fn infer_direct_routes<'a>(
         })
         .collect();
 
-    Ok(CompilerRoutePlan { families, leaves_by_actor })
+    Ok(CompilerRoutePlan { families, leaves_by_actor, transitions })
 }
 
 fn compiler_route_leaves(plan: &PlannerRoutePlan) -> Result<BTreeMap<String, Vec<RouteRootLeaf>>> {
@@ -1570,28 +1602,48 @@ fn compiler_route_leaves(plan: &PlannerRoutePlan) -> Result<BTreeMap<String, Vec
         let nodes = plan.commitments.cut_nodes(actor).expect("an actor with a planned cut must resolve its cut nodes");
         let mut leaves = Vec::new();
         for node in nodes {
-            match node {
-                CommitmentNode::Leaf { actor } => leaves.push(RouteRootLeaf::Actor(actor.clone())),
-                CommitmentNode::Branch { children } => {
-                    let mut table = Vec::new();
-                    for child in children {
-                        let CommitmentNode::Leaf { actor } = child else {
-                            return Err(ArgentError::new("nested commitment families cannot be lowered by the compiler"));
-                        };
-                        table.push(actor.clone());
-                    }
-                    let family = plan
-                        .families
-                        .iter()
-                        .find(|family| family.table == table)
-                        .ok_or_else(|| ArgentError::new(format!("commitment branch {:?} has no matching route family", table)))?;
-                    leaves.push(RouteRootLeaf::Family(route_template_family_receipt_id(&family.domain, &family.rep)));
-                }
-            }
+            leaves.push(compiler_route_leaf(plan, node)?);
         }
         leaves_by_actor.insert(actor.clone(), leaves);
     }
     Ok(leaves_by_actor)
+}
+
+fn compiler_route_transition(plan: &PlannerRoutePlan, source: &str, target: &str) -> Result<CompilerRouteTransition> {
+    let transition = plan.commitments.cut_transition(source, target).map_err(|err| ArgentError::new(err.to_string()))?;
+    let families_to_open =
+        transition.branches_to_open.into_iter().map(|branch| compiler_route_family_id(plan, branch)).collect::<Result<Vec<_>>>()?;
+    let families_to_pack =
+        transition.branches_to_pack.into_iter().map(|branch| compiler_route_family_id(plan, branch)).collect::<Result<Vec<_>>>()?;
+    Ok(CompilerRouteTransition { families_to_open, families_to_pack })
+}
+
+fn compiler_route_family_id(plan: &PlannerRoutePlan, branch: &CommitmentNode) -> Result<String> {
+    let RouteRootLeaf::Family(id) = compiler_route_leaf(plan, branch)? else {
+        return Err(ArgentError::new("commitment transition operation must reference a route family branch"));
+    };
+    Ok(id)
+}
+
+fn compiler_route_leaf(plan: &PlannerRoutePlan, node: &CommitmentNode) -> Result<RouteRootLeaf> {
+    match node {
+        CommitmentNode::Leaf { actor } => Ok(RouteRootLeaf::Actor(actor.clone())),
+        CommitmentNode::Branch { children } => {
+            let mut table = Vec::new();
+            for child in children {
+                let CommitmentNode::Leaf { actor } = child else {
+                    return Err(ArgentError::new("nested commitment families cannot be lowered by the compiler"));
+                };
+                table.push(actor.clone());
+            }
+            let family = plan
+                .families
+                .iter()
+                .find(|family| family.table == table)
+                .ok_or_else(|| ArgentError::new(format!("commitment branch {:?} has no matching route family", table)))?;
+            Ok(RouteRootLeaf::Family(route_template_family_receipt_id(&family.domain, &family.rep)))
+        }
+    }
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -8176,6 +8228,16 @@ mod tests {
             ]
         );
         assert!(leaves["Settle"].is_empty());
+
+        let family_id = "route_family/BoardState/mux".to_string();
+        assert_eq!(
+            compiler_route_transition(&plan, "Player", "Mux").expect("Player can open the Mux family"),
+            CompilerRouteTransition { families_to_open: vec![family_id.clone()], families_to_pack: Vec::new() }
+        );
+        assert_eq!(
+            compiler_route_transition(&plan, "Mux", "Player").expect("Mux can pack its family for Player"),
+            CompilerRouteTransition { families_to_open: Vec::new(), families_to_pack: vec![family_id] }
+        );
     }
 
     #[test]
@@ -8260,6 +8322,14 @@ mod tests {
                 panic!("Player carries a foreign family commitment")
             }
         }
+
+        assert_eq!(
+            model.route_transitions[&("Player".to_string(), "Mux".to_string())],
+            CompilerRouteTransition {
+                families_to_open: vec!["route_family/BoardState/mux".to_string()],
+                families_to_pack: Vec::new(),
+            }
+        );
     }
 
     #[test]
