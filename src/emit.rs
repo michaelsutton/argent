@@ -2763,7 +2763,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         } else {
             let name = generated_state_name(&route, &state_ty);
             let lowered = if let Some(actor) = concrete_actor {
-                self.lower_state_expr_for_actor(actor, state_expr, indent)?
+                self.lower_state_expr_for_actor(actor, None, state_expr, indent)?
             } else {
                 self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
             };
@@ -2819,7 +2819,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         } else {
             let name = generated_state_name(&route, &state_ty);
             let lowered = if let Some(actor) = concrete_actor {
-                self.lower_state_expr_for_actor(actor, state_expr, indent)?
+                self.lower_state_expr_for_actor(actor, None, state_expr, indent)?
             } else {
                 self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
             };
@@ -2885,11 +2885,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(hidden_observed_actor_template_name(spec))
     }
 
-    fn lower_state_expr_for_actor(&self, actor: &str, expr: &str, indent: usize) -> Result<String> {
+    fn lower_state_expr_for_actor(
+        &self,
+        actor: &str,
+        transition: Option<&CompilerRouteTransition>,
+        expr: &str,
+        indent: usize,
+    ) -> Result<String> {
         let state_name = &self.model.actor(actor)?.state;
         let state_ty = contract_state_type_for_actor(actor, self.actor, self.model)?;
-        let generated_fields = hidden_template_object_fields_for_actor(self.actor, actor, self.model);
-        self.lower_state_expr_for_layout(state_name, &state_ty, generated_fields, expr, indent)
+        let generated_fields = hidden_template_object_fields_for_actor(self.actor, actor, transition, self.model);
+        let force_materialization = transition.is_some_and(|transition| !transition.families_to_pack.is_empty());
+        self.lower_state_expr_for_layout(state_name, &state_ty, generated_fields, force_materialization, expr, indent)
     }
 
     fn lower_state_expr_for_dynamic_state(&self, state_name: &str, state_ty: &str, expr: &str, indent: usize) -> Result<String> {
@@ -2897,9 +2904,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             self.actor,
             state_name,
             route_field_kind_for_state_layout(state_name, self.model),
+            &[],
             self.model,
         );
-        self.lower_state_expr_for_layout(state_name, state_ty, generated_fields, expr, indent)
+        self.lower_state_expr_for_layout(state_name, state_ty, generated_fields, false, expr, indent)
     }
 
     fn lower_state_expr_for_layout(
@@ -2907,11 +2915,12 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         state_name: &str,
         state_ty: &str,
         generated_fields: Vec<(String, String)>,
+        force_materialization: bool,
         expr: &str,
         indent: usize,
     ) -> Result<String> {
         let expr = expr.trim();
-        if self.types.get(expr).is_some_and(|ty| ty == state_ty) {
+        if !force_materialization && self.types.get(expr).is_some_and(|ty| ty == state_ty) {
             return self.lower_expr(expr, Some(state_ty), indent);
         }
         if let Some((source_state, body)) = split_state_constructor(expr) {
@@ -2967,13 +2976,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             return Ok(());
         }
 
+        let transition = (route.actor != self.actor.name).then(|| {
+            self.model.route_transition(&self.actor.name, &route.actor).expect("validated non-self route has a planned cut transition")
+        });
         let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
-        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+        let packs_family = transition.is_some_and(|transition| !transition.families_to_pack.is_empty());
+        let state_arg = if !packs_family && self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_state_expr_for_actor(&route.actor, state_expr, indent)?;
+            let lowered = self.lower_state_expr_for_actor(&route.actor, transition, state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -3031,13 +3044,22 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .clone();
         let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
         let layout_actor = selector.variants.first().expect("validated actor selector has at least one variant");
+        let transition = self
+            .model
+            .route_transition(&self.actor.name, layout_actor)
+            .expect("validated selector route has a planned cut transition");
+        debug_assert!(
+            selector.variants.iter().skip(1).all(|actor| self.model.route_transition(&self.actor.name, actor) == Some(transition)),
+            "selector variants must use one cut transition"
+        );
         let state_ty = contract_state_type_for_actor(layout_actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
-        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+        let packs_family = !transition.families_to_pack.is_empty();
+        let state_arg = if !packs_family && self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_state_expr_for_actor(layout_actor, state_expr, indent)?;
+            let lowered = self.lower_state_expr_for_actor(layout_actor, Some(transition), state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -6157,7 +6179,15 @@ fn state_payload_type_name(state: &str, model: &Model<'_>) -> String {
             actors.any(|actor| route_field_kind_for_actor(&actor.name, model) != first_fields)
         })
         .unwrap_or(false);
-    if has_distinct_actor_layout { hidden_state_payload_type_name(state) } else { state.to_string() }
+    let has_transition_dependent_packing = model
+        .route_transitions
+        .iter()
+        .any(|((_, target), transition)| !transition.families_to_pack.is_empty() && model.actors_by_name[target].state == state);
+    if has_distinct_actor_layout || has_transition_dependent_packing {
+        hidden_state_payload_type_name(state)
+    } else {
+        state.to_string()
+    }
 }
 
 fn hidden_template_init_args_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Vec<String> {
@@ -6314,17 +6344,24 @@ fn hidden_template_object_fields_for_state(source_actor: &ActorDecl, target_stat
             source_actor,
             target_state,
             route_field_kind_for_state_layout(target_state, model),
+            &[],
             model,
         );
     }
-    hidden_template_object_fields(source_actor, target_state, route_field_kind_for_actor(&source_actor.name, model), model)
+    hidden_template_object_fields(source_actor, target_state, route_field_kind_for_actor(&source_actor.name, model), &[], model)
 }
 
-fn hidden_template_object_fields_for_actor(source_actor: &ActorDecl, target_actor: &str, model: &Model<'_>) -> Vec<(String, String)> {
+fn hidden_template_object_fields_for_actor(
+    source_actor: &ActorDecl,
+    target_actor: &str,
+    transition: Option<&CompilerRouteTransition>,
+    model: &Model<'_>,
+) -> Vec<(String, String)> {
     hidden_template_object_fields(
         source_actor,
         &model.actors_by_name[target_actor].state,
         route_field_kind_for_actor(target_actor, model),
+        transition.map_or(&[], |transition| transition.families_to_pack.as_slice()),
         model,
     )
 }
@@ -6333,6 +6370,7 @@ fn hidden_template_object_fields(
     source_actor: &ActorDecl,
     target_state: &str,
     target_fields: RouteFieldKind<'_>,
+    families_to_pack: &[String],
     model: &Model<'_>,
 ) -> Vec<(String, String)> {
     let mut fields =
@@ -6344,10 +6382,7 @@ fn hidden_template_object_fields(
                     .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
                     .collect::<Vec<_>>();
                 fields.extend(family_commitments.into_iter().map(|family| {
-                    (
-                        hidden_route_family_commitment_name(family),
-                        hidden_route_family_commitment_expr_for_actor(source_actor, family, model),
-                    )
+                    (hidden_route_family_commitment_name(family), hidden_route_family_commitment_expr(family, families_to_pack))
                 }));
                 fields
             }
@@ -6357,10 +6392,7 @@ fn hidden_template_object_fields(
                     .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
                     .collect::<Vec<_>>();
                 fields.extend(family_commitments.into_iter().map(|family| {
-                    (
-                        hidden_route_family_commitment_name(family),
-                        hidden_route_family_commitment_expr_for_actor(source_actor, family, model),
-                    )
+                    (hidden_route_family_commitment_name(family), hidden_route_family_commitment_expr(family, families_to_pack))
                 }));
                 for family in families {
                     let table_expr = hidden_route_family_table_name(family);
@@ -6379,8 +6411,8 @@ fn hidden_template_object_fields(
     fields
 }
 
-fn hidden_route_family_commitment_expr_for_actor(source_actor: &ActorDecl, family: &RouteFamily, model: &Model<'_>) -> String {
-    if model.route_family_for_actor(&source_actor.name).is_some_and(|source_family| source_family.id == family.id) {
+fn hidden_route_family_commitment_expr(family: &RouteFamily, families_to_pack: &[String]) -> String {
+    if families_to_pack.contains(&family.id) {
         format!("blake2b({})", hidden_route_family_table_name(family))
     } else {
         hidden_route_family_commitment_name(family)
@@ -8743,6 +8775,39 @@ mod tests {
 
         let read_only_mux = template_witness_specs_for_actor(player, &model, BTreeSet::from(["Mux".to_string()]), BTreeSet::new());
         assert!(read_only_mux.families.is_empty());
+    }
+
+    #[test]
+    fn family_commitments_pack_on_planned_cut_transitions() {
+        let source = toy_chess_source().replace(
+            "            actor Mux owns BoardState {\n",
+            r#"            actor Mux owns BoardState {
+                entry return_to_player() emits one Player {
+                    PlayerState next_player = {
+                        nonce: ply,
+                    };
+                    become Player(next_player);
+                }
+
+"#,
+        );
+        let path = PathBuf::from("family-pack-transition.ag");
+        let module = crate::parser::parse_module(path.clone(), source.clone()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+
+        let family_id = "route_family/BoardState/mux".to_string();
+        assert_eq!(
+            model.route_transition("Mux", "Player"),
+            Some(&CompilerRouteTransition { families_to_open: Vec::new(), families_to_pack: vec![family_id] })
+        );
+
+        let mux_sil = emit_actor(model.actor("Mux").expect("Mux exists"), &model).expect("Mux Sil emits");
+        assert!(mux_sil.contains("struct gen__player_state_payload {"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes_digest: blake2b(gen__mux_routes),"), "{mux_sil}");
+        assert!(!mux_sil.contains("gen__mux_routes_digest: gen__mux_routes_digest,"), "{mux_sil}");
+
+        inline_artifact("family-pack-transition", &source);
     }
 
     #[test]
