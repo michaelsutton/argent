@@ -409,6 +409,9 @@ impl Parser {
             self.expect_symbol('>')?;
             Ok(TypeRef::actor_type(state))
         } else if self.consume_symbol('[') {
+            if self.consume_symbol(']') {
+                return Ok(TypeRef::dynamic_array(name));
+            }
             let len = self.expect_number()?.parse::<usize>().map_err(|_| self.error("invalid array length"))?;
             self.expect_symbol(']')?;
             Ok(TypeRef::array(name, len))

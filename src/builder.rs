@@ -290,6 +290,57 @@ mod tests {
     }
 
     #[test]
+    fn context_executes_dynamic_byte_array_sigscript_arguments_at_varying_lengths() {
+        let artifact = inline_artifact(
+            "context-dynamic-byte-array-argument",
+            r#"
+            state BlobState {
+                int size;
+                byte[32] digest;
+            }
+
+            actor Blob owns BlobState {
+                entry store(data: byte[]) emits one Blob {
+                    BlobState next = {
+                        size: data.length,
+                        digest: blake2b(data),
+                    };
+
+                    become Blob(next);
+                }
+            }
+
+            app BlobApp {
+                actor Blob;
+            }
+            "#,
+        );
+        let builder = TxBuilder::new(&artifact).expect("builder accepts artifact");
+        let covenant_id = Hash::from_bytes([0x43; 32]);
+        let input_value = 1_000;
+
+        for (case, size) in [0usize, 1, 2, 16, 17, 75, 76, 255, 256].into_iter().enumerate() {
+            let initial = state! { size: 0, digest: vec![0; 32] };
+            let payload = vec![0; size];
+            let digest = blake2b32(&payload);
+            let input_utxo =
+                builder.covenant_utxo("Blob", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("Blob UTXO builds");
+            let context = TxContext::new()
+                .actor_input(
+                    "Blob",
+                    initial,
+                    EntryCall::new("store").args(args![payload]),
+                    TransactionOutpoint::new(TransactionId::from_bytes([0x50 + case as u8; 32]), 0),
+                    input_utxo,
+                    0,
+                )
+                .actor_output("Blob", state! { size: size as i64, digest: digest }, CovenantBinding::new(0, covenant_id), input_value);
+
+            builder.build(&context).unwrap_or_else(|err| panic!("dynamic byte[] argument of length {size} failed: {err}"));
+        }
+    }
+
+    #[test]
     fn context_builds_and_verifies_signed_single_output() {
         let artifact = inline_artifact(
             "context-counter",

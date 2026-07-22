@@ -378,7 +378,9 @@ impl<'a> Model<'a> {
     fn validate_state_expansions(&self) -> Result<()> {
         for state in self.states.values() {
             for field in &state.fields {
-                if field.virtual_slot && (field.ty.name != "byte" || field.ty.array != Some(32) || field.ty.actor_state.is_some()) {
+                if field.virtual_slot
+                    && (field.ty.name != "byte" || field.ty.array != Some(ArrayDim::Fixed(32)) || field.ty.actor_state.is_some())
+                {
                     return Err(ArgentError::new(format!(
                         "state `{}` field `{}` is virtual, but virtual slots must be byte[32]",
                         state.name, field.name
@@ -426,7 +428,11 @@ impl<'a> Model<'a> {
                         state.name, expansion.base, digest.field, expansion.base
                     ))
                 })?;
-                if !field.virtual_slot || field.ty.name != "byte" || field.ty.array != Some(32) || field.ty.actor_state.is_some() {
+                if !field.virtual_slot
+                    || field.ty.name != "byte"
+                    || field.ty.array != Some(ArrayDim::Fixed(32))
+                    || field.ty.actor_state.is_some()
+                {
                     return Err(ArgentError::new(format!(
                         "state `{}` binds `{}` slot `{}`, but expanded slots must be virtual",
                         state.name, expansion.base, digest.field
@@ -2274,7 +2280,7 @@ fn packed_field_expr(ty: &TypeRef, expr: &str) -> Result<String> {
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(format!("byte[8]({expr})")),
         ("bool", None) | ("byte", None) => Ok(format!("byte[1]({expr})")),
-        ("byte", Some(_)) | ("pubkey", None) | (word::COVENANT_ID, None) | ("sig", None) | ("datasig", None) => {
+        ("byte", Some(ArrayDim::Fixed(_))) | ("pubkey", None) | (word::COVENANT_ID, None) | ("sig", None) | ("datasig", None) => {
             Ok(format!("byte[]({expr})"))
         }
         ("bytes", None) | ("string", None) | (_, Some(_)) => {
@@ -2292,7 +2298,7 @@ fn unpack_packed_field_expr(ty: &TypeRef, slice_expr: &str) -> Result<String> {
         ("int", None) => Ok(format!("OpBin2Num({slice_expr})")),
         ("bool", None) => Ok(format!("OpBin2Num({slice_expr}) != 0")),
         ("byte", None) => Ok(format!("byte({slice_expr})")),
-        ("byte", Some(len)) => Ok(format!("byte[{len}]({slice_expr})")),
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(format!("byte[{len}]({slice_expr})")),
         ("pubkey", None) | (word::COVENANT_ID, None) => Ok(format!("byte[32]({slice_expr})")),
         ("sig", None) => Ok(format!("byte[65]({slice_expr})")),
         ("datasig", None) => Ok(format!("byte[64]({slice_expr})")),
@@ -2310,7 +2316,7 @@ fn packed_field_len(ty: &TypeRef) -> Result<usize> {
     match (ty.name.as_str(), ty.array) {
         ("int", None) => Ok(8),
         ("bool", None) | ("byte", None) => Ok(1),
-        ("byte", Some(len)) => Ok(len),
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(len),
         ("pubkey", None) | (word::COVENANT_ID, None) => Ok(32),
         ("sig", None) => Ok(65),
         ("datasig", None) => Ok(64),
@@ -5305,12 +5311,13 @@ fn placeholder_expr_for_type<'i>(ty: &TypeRef) -> Result<SilExpr<'i>> {
         return Ok(zero_byte_array_expr(32));
     }
     match (&ty.name[..], ty.array) {
-        ("byte", Some(len)) => Ok(zero_byte_array_expr(len)),
-        (_, Some(len)) => {
+        ("byte", Some(ArrayDim::Fixed(len))) => Ok(zero_byte_array_expr(len)),
+        (_, Some(ArrayDim::Fixed(len))) => {
             let item = TypeRef::new(ty.name.clone());
             let values = (0..len).map(|_| placeholder_expr_for_type(&item)).collect::<Result<Vec<_>>>()?;
             Ok(values.into())
         }
+        (_, Some(ArrayDim::Dynamic)) => Err(ArgentError::new("dynamic arrays are not supported in actor state")),
         ("int", None) => Ok(SilExpr::int(0)),
         ("bool", None) => Ok(SilExpr::bool(false)),
         ("byte", None) => Ok(SilExpr::byte(0)),
@@ -5957,13 +5964,19 @@ fn type_artifact(ty: &TypeRef, model: &Model<'_>) -> TypeArtifact {
         TypeArtifact::FixedBytes { len: 32 }
     } else if ty.name == word::COVENANT_ID {
         match ty.array {
-            Some(len) => TypeArtifact::FixedArray { item: Box::new(TypeArtifact::FixedBytes { len: 32 }), len },
+            Some(ArrayDim::Fixed(len)) => TypeArtifact::FixedArray { item: Box::new(TypeArtifact::FixedBytes { len: 32 }), len },
+            Some(ArrayDim::Dynamic) => TypeArtifact::dynamic_array(TypeArtifact::FixedBytes { len: 32 }),
             None => TypeArtifact::FixedBytes { len: 32 },
         }
     } else if model.is_actor_enum_type(ty) {
         TypeArtifact::Int
     } else {
-        TypeArtifact::from_parts(&ty.name, ty.array)
+        match ty.array {
+            Some(ArrayDim::Dynamic) if ty.name == "byte" => TypeArtifact::Bytes,
+            Some(ArrayDim::Dynamic) => TypeArtifact::dynamic_array(TypeArtifact::from_parts(&ty.name, None)),
+            Some(ArrayDim::Fixed(len)) => TypeArtifact::from_parts(&ty.name, Some(len)),
+            None => TypeArtifact::from_parts(&ty.name, None),
+        }
     }
 }
 
