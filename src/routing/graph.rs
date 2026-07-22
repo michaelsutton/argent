@@ -47,6 +47,11 @@ impl RouteGraph {
             self.emits.entry(source.clone()).or_default().extend(actor_subset.iter().filter(|target| *target != source).cloned());
         }
     }
+
+    /// Return the actor templates consumed directly by `source`.
+    pub(super) fn direct_consumes(&self, source: &str) -> Option<&BTreeSet<String>> {
+        self.consumes.get(source)
+    }
 }
 
 /// One weakly connected emit component inside a selected graph domain.

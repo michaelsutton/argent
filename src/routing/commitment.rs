@@ -348,10 +348,11 @@ pub fn commitment_forest(g: &RouteGraph, families: &Families) -> Result<Commitme
 ///    emitters inherit the complete cut requirements of their targets.
 /// 3. Translate actors outside cohorts independently. A needed standalone actor
 ///    becomes its leaf; any needed family member becomes its packed family
-///    branch.
+///    branch. Directly consumed family members are then exposed.
 /// 4. Construct one shared cut from each cohort's equal needs. Every cohort
-///    member appears directly in that cut. Exposing a family member opens its
-///    family branch, which necessarily exposes its siblings as well.
+///    member and every member's direct consumes appear directly in that cut.
+///    Exposing a family member opens its family branch, which necessarily
+///    exposes its siblings as well.
 ///
 /// Cuts are partial: roots unrelated to an actor's needs or cohort are omitted.
 /// Cohort members receive the same cut by construction, not by comparing
@@ -383,8 +384,11 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
 
         let Some(cohort_index) = cohort_by_actor.get(actor).copied() else {
             // Phase 3: actors outside cohorts preserve all families as packed
-            // branch commitments.
-            let cut = cut_for_needs(&actor_needs[actor], &family_by_actor, &locations);
+            // branch commitments, except for templates they consume directly.
+            let mut cut = cut_for_needs(&actor_needs[actor], &family_by_actor, &locations);
+            if let Some(consumes) = g.direct_consumes(actor) {
+                expose_actors(&mut cut, consumes, families, &family_by_actor, &locations);
+            }
             debug_assert!(forest.is_valid_cut(&cut));
             cuts.insert(actor.clone(), cut);
             continue;
@@ -397,7 +401,9 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
         debug_assert!(cohort.iter().all(|member| &actor_needs[member] == cohort_needs));
 
         let mut cut = cut_for_needs(cohort_needs, &family_by_actor, &locations);
-        expose_actors(&mut cut, cohort, families, &family_by_actor, &locations);
+        let mut exposed_actors = cohort.clone();
+        exposed_actors.extend(cohort.iter().flat_map(|member| g.direct_consumes(member).into_iter().flatten()).cloned());
+        expose_actors(&mut cut, &exposed_actors, families, &family_by_actor, &locations);
         debug_assert!(forest.is_valid_cut(&cut));
 
         for member in cohort {
@@ -756,6 +762,24 @@ mod tests {
         assert_eq!(plan.cuts["A"], cohort_cut);
         assert_eq!(plan.cuts["Anchor"], cohort_cut);
         assert_eq!(plan.cuts["Sibling"], Cut::new());
+    }
+
+    #[test]
+    fn direct_consumes_open_families_without_opening_them_for_upstream_emitters() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("Sibling");
+        graph.add_emit("Upstream", "Consumer");
+        graph.add_consume("Consumer", "Consumed");
+        let constraints = CommitmentConstraints { families: vec![actors(["Consumed", "Sibling"])], cohorts: Vec::new() };
+
+        let plan = commitment_plan(&graph, &constraints).expect("constraints are valid");
+
+        assert_eq!(plan.cuts["Consumer"], cut([&[0, 0], &[0, 1]]));
+        assert_eq!(plan.cuts["Upstream"], cut([&[0], &[1]]));
+        assert_eq!(
+            plan.cut_transition("Upstream", "Consumer"),
+            Ok(CutTransition { retained: Vec::new(), branches_to_open: vec![&plan.forest.roots[0]], branches_to_pack: Vec::new() })
+        );
     }
 
     #[test]

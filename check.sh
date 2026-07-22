@@ -38,6 +38,8 @@ if [ "$regen_examples" = true ]; then
     cargo run -- build examples/spawns.ag --out examples/build/spawns
     cargo run -- build examples/stones/app.ag --out examples/build/stones
     cargo run -- build examples/toy_chess/app.ag --out examples/build/toy_chess
+    cargo run -- build examples/route_payloads.ag --out examples/build/route_payloads
+    cargo run -- build examples/route_payload_choice.ag --out examples/build/route_payload_choice
     cargo run -- build examples/icc/kcc20_asset.ag --out examples/build/icc_kcc20_asset
     cargo run -- build examples/icc/minter.ag --out examples/build/icc_minter
     cargo run -- build examples/open_icc/agent.ag --out examples/build/open_icc_agent
