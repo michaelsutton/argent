@@ -258,6 +258,14 @@ impl<'a> Model<'a> {
         self.route_families.iter().find(|family| family.actors.iter().any(|member| member == actor))
     }
 
+    fn route_family(&self, family_id: &str) -> Option<&RouteFamily> {
+        self.route_families.iter().find(|family| family.id == family_id)
+    }
+
+    fn route_transition(&self, source: &str, target: &str) -> Option<&CompilerRouteTransition> {
+        self.route_transitions.get(&(source.to_string(), target.to_string()))
+    }
+
     fn route_families_for_state(&self, state: &str) -> Vec<&RouteFamily> {
         self.route_families.iter().filter(|family| family.state == state).collect()
     }
@@ -3880,14 +3888,16 @@ fn template_witness_specs_for_actor(
     read_actors: BTreeSet<String>,
     write_actors: BTreeSet<String>,
 ) -> EntryWitnessSpecs {
-    let mut specs = template_witness_specs(model, read_actors, write_actors);
+    let mut specs = template_witness_specs(model, read_actors, write_actors.clone());
     let mut family_specs = BTreeMap::<String, RouteFamilyWitnessSpec>::new();
     for spec in &mut specs {
         spec.source = template_source_for_actor(&actor.state, &spec.actor, model);
-        if let Some(family) = model.route_family_for_actor(&spec.actor)
-            && actor.state != family.state
-            && route_leaves_contain_family(model.route_leaves_for_state(&actor.state), &family.id)
-        {
+    }
+    for target in write_actors {
+        let transition =
+            model.route_transition(&actor.name, &target).expect("validated foreign-template route has a planned cut transition");
+        for family_id in &transition.families_to_open {
+            let family = model.route_family(family_id).expect("validated route transition references a known family");
             family_specs
                 .entry(family.id.clone())
                 .or_insert(RouteFamilyWitnessSpec { family_id: family.id.clone(), byte_len: family.table_byte_len() });
@@ -5837,10 +5847,6 @@ fn hidden_route_family_table_name(family: &RouteFamily) -> String {
 
 fn hidden_route_family_table_name_by_id(family_id: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{}_routes", route_family_suffix_by_id(family_id))
-}
-
-fn route_leaves_contain_family(leaves: &[RouteRootLeaf], family_id: &str) -> bool {
-    leaves.iter().any(|leaf| matches!(leaf, RouteRootLeaf::Family(id) if id == family_id))
 }
 
 fn route_table_leaf_for_runtime_leaf(leaf: &RuntimeRouteLeafArtifact) -> RouteTemplateLeafArtifact {
@@ -8352,6 +8358,28 @@ mod tests {
                 families_to_pack: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn family_table_witnesses_follow_cut_transitions() {
+        let path = PathBuf::from("transition-family-witnesses.ag");
+        let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("toy chess model validates");
+
+        let player = model.actor("Player").expect("Player exists");
+        let enter_mux = player.entries.iter().find(|entry| entry.name == "enter_mux").expect("enter_mux exists");
+        assert_eq!(
+            entry_witness_specs(player, enter_mux, &model).expect("enter_mux witnesses lower").families,
+            [RouteFamilyWitnessSpec { family_id: "route_family/BoardState/mux".to_string(), byte_len: 64 }]
+        );
+
+        let mux = model.actor("Mux").expect("Mux exists");
+        let choose_pawn = mux.entries.iter().find(|entry| entry.name == "choose_pawn").expect("choose_pawn exists");
+        assert!(entry_witness_specs(mux, choose_pawn, &model).expect("choose_pawn witnesses lower").families.is_empty());
+
+        let read_only_mux = template_witness_specs_for_actor(player, &model, BTreeSet::from(["Mux".to_string()]), BTreeSet::new());
+        assert!(read_only_mux.families.is_empty());
     }
 
     #[test]
