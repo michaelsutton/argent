@@ -8,7 +8,7 @@ use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
 use crate::language::word;
 use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
-use crate::routing::{RouteGraph, SelectorRequirement, route_plan};
+use crate::routing::{CommitmentNode, RouteGraph, RoutePlan as PlannerRoutePlan, SelectorRequirement, route_plan};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
@@ -126,6 +126,12 @@ enum RouteRootLeaf {
     Family(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompilerRoutePlan {
+    families: Vec<RouteFamily>,
+    leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
+}
+
 fn compute_leader_for(actors: &[&ActorDecl]) -> BTreeMap<String, Vec<EntryRefArtifact>> {
     let mut leader_for = BTreeMap::<String, Vec<EntryRefArtifact>>::new();
     for actor in actors {
@@ -190,7 +196,8 @@ impl<'a> Model<'a> {
         let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
-        let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let CompilerRoutePlan { families: route_families, leaves_by_actor: _leaves_by_actor } =
+            infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums)?;
         let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
@@ -1477,12 +1484,12 @@ fn compute_state_route_leaves(
     out
 }
 
-fn infer_direct_route_families<'a>(
+fn infer_direct_routes<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
-) -> Result<Vec<RouteFamily>> {
+) -> Result<CompilerRoutePlan> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut graph = RouteGraph::default();
     let mut domains = BTreeMap::<String, Vec<String>>::new();
@@ -1519,19 +1526,52 @@ fn infer_direct_route_families<'a>(
         }
     }
 
-    let mut families = Vec::new();
-    for plan in route_plan(&graph, &domains, &selector_requirements).map_err(|err| ArgentError::new(err.to_string()))?.families {
-        families.push(RouteFamily {
-            id: route_template_family_receipt_id(&plan.domain, &plan.rep),
-            state: plan.domain,
-            actors: plan.members,
-            entry_actors: plan.gates,
-            rep: plan.rep,
-            table_actors: plan.table,
-        });
-    }
+    let plan = route_plan(&graph, &domains, &selector_requirements).map_err(|err| ArgentError::new(err.to_string()))?;
+    let leaves_by_actor = compiler_route_leaves(&plan)?;
+    let families = plan
+        .families
+        .into_iter()
+        .map(|family| RouteFamily {
+            id: route_template_family_receipt_id(&family.domain, &family.rep),
+            state: family.domain,
+            actors: family.members,
+            entry_actors: family.gates,
+            rep: family.rep,
+            table_actors: family.table,
+        })
+        .collect();
 
-    Ok(families)
+    Ok(CompilerRoutePlan { families, leaves_by_actor })
+}
+
+fn compiler_route_leaves(plan: &PlannerRoutePlan) -> Result<BTreeMap<String, Vec<RouteRootLeaf>>> {
+    let mut leaves_by_actor = BTreeMap::new();
+    for actor in plan.commitments.cuts.keys() {
+        let nodes = plan.commitments.cut_nodes(actor).expect("an actor with a planned cut must resolve its cut nodes");
+        let mut leaves = Vec::new();
+        for node in nodes {
+            match node {
+                CommitmentNode::Leaf { actor } => leaves.push(RouteRootLeaf::Actor(actor.clone())),
+                CommitmentNode::Branch { children } => {
+                    let mut table = Vec::new();
+                    for child in children {
+                        let CommitmentNode::Leaf { actor } = child else {
+                            return Err(ArgentError::new("nested commitment families cannot be lowered by the compiler"));
+                        };
+                        table.push(actor.clone());
+                    }
+                    let family = plan
+                        .families
+                        .iter()
+                        .find(|family| family.table == table)
+                        .ok_or_else(|| ArgentError::new(format!("commitment branch {:?} has no matching route family", table)))?;
+                    leaves.push(RouteRootLeaf::Family(route_template_family_receipt_id(&family.domain, &family.rep)));
+                }
+            }
+        }
+        leaves_by_actor.insert(actor.clone(), leaves);
+    }
+    Ok(leaves_by_actor)
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -8068,6 +8108,44 @@ mod tests {
             ]
         );
         let _ = fs::remove_dir_all(out_dir);
+    }
+
+    #[test]
+    fn compiler_route_leaves_preserve_packed_and_opened_commitment_nodes() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("Knight");
+        graph.add_emit("Player", "Mux");
+        graph.add_emit("Mux", "Knight");
+        graph.add_emit("Mux", "Pawn");
+        graph.add_emit("Pawn", "Mux");
+        graph.add_emit("Mux", "Settle");
+        let domains = BTreeMap::from([
+            ("BoardState".to_string(), ["Knight", "Mux", "Pawn"].into_iter().map(str::to_string).collect()),
+            ("PlayerState".to_string(), vec!["Player".to_string()]),
+            ("SettleState".to_string(), vec!["Settle".to_string()]),
+        ]);
+
+        let plan = route_plan(&graph, &domains, &[]).expect("route plan is valid");
+        let leaves = compiler_route_leaves(&plan).expect("commitment nodes lower to compiler leaves");
+
+        assert_eq!(
+            leaves["Player"],
+            [
+                RouteRootLeaf::Family("route_family/BoardState/mux".to_string()),
+                RouteRootLeaf::Actor("Mux".to_string()),
+                RouteRootLeaf::Actor("Settle".to_string()),
+            ]
+        );
+        assert_eq!(
+            leaves["Mux"],
+            [
+                RouteRootLeaf::Actor("Knight".to_string()),
+                RouteRootLeaf::Actor("Pawn".to_string()),
+                RouteRootLeaf::Actor("Mux".to_string()),
+                RouteRootLeaf::Actor("Settle".to_string()),
+            ]
+        );
+        assert!(leaves["Settle"].is_empty());
     }
 
     #[test]
