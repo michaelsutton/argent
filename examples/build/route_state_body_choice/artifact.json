@@ -1,14 +1,14 @@
 {
   "schema_version": 1,
-  "id": "30504b162f9df1310e42358726b01df8ad918de4e7756b40f8c74624aeaae7e7",
+  "id": "0d888a9bb79d54687d8c96cea974a205b3868f21acca6f2e82c471278bb9a51e",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
   },
-  "app": "RoutePayloadChoice",
-  "root": "examples/route_payload_choice.ag",
+  "app": "RouteStateBodyChoice",
+  "root": "examples/route_state_body_choice.ag",
   "modules": [
-    "examples/route_payload_choice.ag"
+    "examples/route_state_body_choice.ag"
   ],
   "argent": {
     "templates": [

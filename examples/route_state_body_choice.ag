@@ -55,7 +55,7 @@ actor Spectator owns BoardState {
     }
 }
 
-app RoutePayloadChoice {
+app RouteStateBodyChoice {
     actor Lobby;
     actor Mux;
     actor Pawn;

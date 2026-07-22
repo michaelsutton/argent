@@ -1,15 +1,16 @@
 {
-  "app": "RoutePayloadChoice",
-  "root": "examples/route_payload_choice.ag",
+  "app": "RouteStateBodies",
+  "root": "examples/route_state_bodies.ag",
   "modules": [
-    "examples/route_payload_choice.ag"
+    "examples/route_state_bodies.ag"
   ],
   "templates": [
     { "actor": "Lobby", "symbol": "gen__lobby_template", "hash": null },
     { "actor": "Mux", "symbol": "gen__mux_template", "hash": null },
     { "actor": "Pawn", "symbol": "gen__pawn_template", "hash": null },
     { "actor": "Knight", "symbol": "gen__knight_template", "hash": null },
-    { "actor": "Spectator", "symbol": "gen__spectator_template", "hash": null }
+    { "actor": "Spectator", "symbol": "gen__spectator_template", "hash": null },
+    { "actor": "Archive", "symbol": "gen__archive_template", "hash": null }
   ],
   "actors": [
     {
@@ -18,11 +19,11 @@
       "sil": "sil/Lobby.sil",
       "entries": [
         {
-          "name": "open_or_watch",
+          "name": "open_board",
           "kind": "leader",
-          "emits": { "kind": "one", "actors": ["Mux", "Spectator"] },
+          "emits": { "kind": "one", "actors": ["Mux"] },
           "consumes": [],
-          "routes": [{ "output": null, "actor": "Spectator", "state": "next_board" }, { "output": null, "actor": "Mux", "state": "next_board" }]
+          "routes": [{ "output": null, "actor": "Mux", "state": "next_board" }]
         }
       ]
     },
@@ -37,6 +38,13 @@
           "emits": { "kind": "one", "actors": ["MoveActor"] },
           "consumes": [],
           "routes": [{ "output": null, "actor": "target", "state": "next_board" }]
+        },
+        {
+          "name": "archive",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Archive"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Archive", "state": "next_archive" }]
         }
       ]
     },
@@ -79,6 +87,20 @@
           "emits": { "kind": "none" },
           "consumes": [],
           "routes": []
+        }
+      ]
+    },
+    {
+      "name": "Archive",
+      "state": "ArchiveState",
+      "sil": "sil/Archive.sil",
+      "entries": [
+        {
+          "name": "reopen_as_pawn",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Pawn"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Pawn", "state": "next_board" }]
         }
       ]
     }

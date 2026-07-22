@@ -28,7 +28,7 @@ cohort heuristics are optimal.
   or below another selected node. Unneeded forest roots may be absent.
 - A **cut transition** says which selected nodes are retained and which family
   branches must be opened or packed when routing from one actor to another.
-- A **payload** is a generated, user-fields-only SIL struct used while adding
+- A **state body** is a generated, user-fields-only SIL struct used while adding
   the route fields for one concrete target actor. It is a compiler transport
   type, not a planner node or cut.
 
@@ -140,12 +140,12 @@ Only real non-self emit pairs receive compiler transitions:
 Route fields are actor-local. If all selected actors owning a declared state
 have the same fields, the ordinary named SIL state struct is their common
 layout. If their cuts differ, Argent can emit actor-qualified layouts and a
-user-fields-only payload. The payload is retained when a source value must
+user-fields-only state body. The state body is retained when a source value must
 remain neutral between multiple target layouts. A local used only by exactly
 one concrete route is materialized directly in that target's layout at its
 original declaration point. Packing still depends on the specific edge, but this
 straight-line case can compute the digest there without an intermediate
-payload.
+state body.
 
 There is still a conservative compiler-local state dependency calculation for
 unqualified and dynamic state values. It aggregates template needs by declared
@@ -181,13 +181,13 @@ invariants they must preserve live in
 Pinned generated examples provide compiler traces:
 
 - `examples/build/toy_chess` shows the common-layout case: `Player` opens the
-  Board family directly without a payload.
-- `examples/build/route_payloads/sil/Lobby.sil` and `Mux.sil` show straight-line
-  opening and packing materialized directly, without redundant payloads.
-- `examples/build/route_payload_choice/sil/Lobby.sil` shows the necessary
-  neutral payload case: one `BoardState` local routes either to an open Mux
+  Board family directly without a state body.
+- `examples/build/route_state_bodies/sil/Lobby.sil` and `Mux.sil` show straight-line
+  opening and packing materialized directly, without redundant state bodies.
+- `examples/build/route_state_body_choice/sil/Lobby.sil` shows the necessary
+  neutral state body case: one `BoardState` local routes either to an open Mux
   layout or directly to Spectator's empty cut.
-- `examples/build/route_payloads/sil/Archive.sil` shows a selected gate template
+- `examples/build/route_state_bodies/sil/Archive.sil` shows a selected gate template
   being sliced from an opened foreign table.
 
 `./check.sh --full` regenerates these outputs and compiles every generated SIL

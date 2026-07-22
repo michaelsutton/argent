@@ -60,7 +60,7 @@ actor Knight owns BoardState {
 
 // Keeping another BoardState actor outside the family makes BoardState's
 // generated route layout actor-specific. Lobby must therefore materialize an
-// ordinary BoardState payload into Mux's concrete generated state layout.
+// ordinary BoardState local directly into Mux's concrete generated layout.
 actor Spectator owns BoardState {
     entry inspect() emits none {
         require(ply >= 0);
@@ -78,7 +78,7 @@ actor Archive owns ArchiveState {
     }
 }
 
-app RoutePayloads {
+app RouteStateBodies {
     actor Lobby;
     actor Mux;
     actor Pawn;

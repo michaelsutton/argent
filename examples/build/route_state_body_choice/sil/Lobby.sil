@@ -17,7 +17,7 @@ contract Lobby(
         // :: user declared fields
         int ply;
     }
-    struct gen__board_state_payload {
+    struct Gen__BoardStateBody {
         // :: user declared fields
         int ply;
     }
@@ -54,7 +54,7 @@ contract Lobby(
         // :: emits one Mux | Spectator
         int gen__next_output_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
 
-        gen__board_state_payload next_board = {
+        Gen__BoardStateBody next_board = {
             // :: generated fields
 
             // :: user declared fields
