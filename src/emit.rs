@@ -1762,6 +1762,51 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
             out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
         }
         out.push_str("    }\n");
+
+        if state_payload_type_name(&state_name, model) != state_name {
+            out.push_str(&format!("    struct {} {{\n", hidden_state_payload_type_name(&state_name)));
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
+            out.push_str("    }\n");
+        }
+    }
+
+    let mut referenced_actors = BTreeSet::new();
+    for entry in &current_actor.entries {
+        referenced_actors.extend(entry.consumes.iter().map(|consume| consume.actor.clone()));
+        referenced_actors.extend(
+            entry
+                .observes
+                .iter()
+                .flat_map(|observe| observe.inputs.iter().chain(observe.outputs.iter()))
+                .map(|observed| observed.actor.clone()),
+        );
+        referenced_actors.extend(entry.spawns.iter().flat_map(|spawn| &spawn.outputs).map(|output| output.actor.clone()));
+        for route in &entry.routes {
+            referenced_actors.extend(model.route_targets(current_actor, entry, route)?);
+        }
+    }
+    for actor_name in referenced_actors {
+        let Some(actor) = model.actors_by_name.get(&actor_name) else {
+            continue;
+        };
+        if actor.state == current_actor.state {
+            continue;
+        }
+        if contract_state_type_for_actor(&actor.name, current_actor, model)? != hidden_actor_state_type_name(&actor.name) {
+            continue;
+        }
+        let state = model.storage_state(&actor.state)?;
+        out.push_str(&format!("    struct {} {{\n", hidden_actor_state_type_name(&actor.name)));
+        out.push_str("        // :: generated fields\n");
+        emit_hidden_template_fields_for_actor(out, &actor.name, model, 8);
+        out.push_str("\n        // :: user declared fields\n");
+        for field in &state.fields {
+            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        }
+        out.push_str("    }\n");
     }
     out.push('\n');
     Ok(())
@@ -2285,6 +2330,22 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         for consume in &entry.consumes {
             input_names.insert(consume.name.clone());
             types.insert(consume.name.clone(), contract_state_type_for_actor(&consume.actor, actor, model)?);
+            source_types.insert(consume.name.clone(), model.actor(&consume.actor)?.state.clone());
+        }
+        for observe in &entry.observes {
+            for input in &observe.inputs {
+                let source_ref = format!("{}.inputs.{}.state", observe.name, input.name);
+                let lowered_ref = hidden_observed_input_state_name(&observe.name, &input.name);
+                let state = if let Some(state) = observed_open_state_for_decl(actor, entry, observe, input, model)? {
+                    state.to_string()
+                } else {
+                    model.actor(&input.actor)?.state.clone()
+                };
+                let ty = contract_state_type_for_observed_actor(actor, entry, observe, input, model)?;
+                types.insert(source_ref.clone(), ty.clone());
+                types.insert(lowered_ref, ty);
+                source_types.insert(source_ref, state);
+            }
         }
 
         let mut output_names = BTreeSet::new();
@@ -2413,7 +2474,11 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 self.lower_actor_type_statement(out, indent, state, name, expr)?;
                 return Ok(());
             }
-            let ty = self.lower_local_type(source_ty);
+            let ty = if self.model.states.contains_key(source_ty) {
+                self.types.get(expr.trim()).cloned().unwrap_or_else(|| self.lower_local_type(source_ty))
+            } else {
+                self.lower_local_type(source_ty)
+            };
             let lowered = self.lower_typed_local_initializer(source_ty, &ty, expr, indent)?;
             self.types.insert(name.to_string(), ty.clone());
             self.source_types.insert(name.to_string(), source_ty.to_string());
@@ -2684,13 +2749,24 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     ) -> Result<()> {
         let state_name = source_actor_type_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
             .expect("spawn target actor_type checked during model validation");
-        let state_ty = if state_name == self.actor.state { "State".to_string() } else { state_name };
+        let concrete_actor = self.model.actors_by_name.contains_key(&output.actor).then_some(output.actor.as_str());
+        let state_ty = if let Some(actor) = concrete_actor {
+            contract_state_type_for_actor(actor, self.actor, self.model)?
+        } else if state_name == self.actor.state {
+            "State".to_string()
+        } else {
+            state_name.clone()
+        };
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = if let Some(actor) = concrete_actor {
+                self.lower_state_expr_for_actor(actor, state_expr, indent)?
+            } else {
+                self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
+            };
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2729,12 +2805,24 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     ) -> Result<()> {
         let observe = self.entry.observes.iter().find(|observe| observe.name == observe_name).expect("observe checked by caller");
         let state_ty = contract_state_type_for_observed_actor(self.actor, self.entry, observe, observed_output, self.model)?;
+        let concrete_actor = self.model.actors_by_name.contains_key(&observed_output.actor).then_some(observed_output.actor.as_str());
+        let state_name = if let Some(actor) = concrete_actor {
+            self.model.actor(actor)?.state.clone()
+        } else {
+            observed_open_state_for_decl(self.actor, self.entry, observe, observed_output, self.model)?
+                .expect("dynamic observed actor has a validated state")
+                .to_string()
+        };
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = if let Some(actor) = concrete_actor {
+                self.lower_state_expr_for_actor(actor, state_expr, indent)?
+            } else {
+                self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
+            };
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2797,6 +2885,67 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(hidden_observed_actor_template_name(spec))
     }
 
+    fn lower_state_expr_for_actor(&self, actor: &str, expr: &str, indent: usize) -> Result<String> {
+        let state_name = &self.model.actor(actor)?.state;
+        let state_ty = contract_state_type_for_actor(actor, self.actor, self.model)?;
+        let generated_fields = hidden_template_object_fields_for_actor(self.actor, actor, self.model);
+        self.lower_state_expr_for_layout(state_name, &state_ty, generated_fields, expr, indent)
+    }
+
+    fn lower_state_expr_for_dynamic_state(&self, state_name: &str, state_ty: &str, expr: &str, indent: usize) -> Result<String> {
+        let generated_fields = hidden_template_object_fields(
+            self.actor,
+            state_name,
+            route_field_kind_for_state_layout(state_name, self.model),
+            self.model,
+        );
+        self.lower_state_expr_for_layout(state_name, state_ty, generated_fields, expr, indent)
+    }
+
+    fn lower_state_expr_for_layout(
+        &self,
+        state_name: &str,
+        state_ty: &str,
+        generated_fields: Vec<(String, String)>,
+        expr: &str,
+        indent: usize,
+    ) -> Result<String> {
+        let expr = expr.trim();
+        if self.types.get(expr).is_some_and(|ty| ty == state_ty) {
+            return self.lower_expr(expr, Some(state_ty), indent);
+        }
+        if let Some((source_state, body)) = split_state_constructor(expr) {
+            if self.model.storage_state_name(source_state)? != self.model.storage_state_name(state_name)? {
+                return Err(ArgentError::new(format!("state `{source_state}` cannot initialize contract state `{state_name}`")));
+            }
+            return self.lower_state_object(source_state, body, generated_fields, indent);
+        }
+
+        let source_state = if expr == "self.state" {
+            Some(self.actor.state.as_str())
+        } else {
+            self.source_types.get(expr).map(String::as_str).filter(|source_ty| self.model.states.contains_key(*source_ty))
+        };
+        if let Some(source_state) = source_state {
+            if self.model.storage_state_name(source_state)? != self.model.storage_state_name(state_name)? {
+                return Err(ArgentError::new(format!("state `{source_state}` cannot initialize contract state `{state_name}`")));
+            }
+            let fields = self
+                .model
+                .storage_state(state_name)?
+                .fields
+                .iter()
+                .map(|field| {
+                    let expr = if expr == "self.state" { field.name.clone() } else { format!("{expr}.{}", field.name) };
+                    (field.name.clone(), expr)
+                })
+                .collect::<Vec<_>>();
+            return self.render_state_object(state_name, &fields, generated_fields, indent);
+        }
+
+        self.lower_expr(expr, Some(state_ty), indent)
+    }
+
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
         if self.selectors.contains_key(&route.actor) {
             return self.lower_selector_route(out, indent, route);
@@ -2824,7 +2973,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = self.lower_state_expr_for_actor(&route.actor, state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2881,13 +3030,14 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{}`", route.actor)))?
             .clone();
         let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
-        let state_ty = if selector.state == self.actor.state { "State".to_string() } else { selector.state.clone() };
+        let layout_actor = selector.variants.first().expect("validated actor selector has at least one variant");
+        let state_ty = contract_state_type_for_actor(layout_actor, self.actor, self.model)?;
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = self.lower_state_expr_for_actor(layout_actor, state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2980,6 +3130,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         {
             return self.lower_state_object_for_state(&state_name, body, indent);
         }
+        if self.model.states.contains_key(source_ty) && self.types.get(expr.trim()).is_none_or(|ty| ty != lowered_ty) {
+            let lowered_expr = self.lower_expr(expr, None, indent)?;
+            let fields = self
+                .model
+                .storage_state(source_ty)?
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), format!("{lowered_expr}.{}", field.name)))
+                .collect::<Vec<_>>();
+            let generated_fields = hidden_template_object_fields_for_state(self.actor, source_ty, self.model);
+            return self.render_state_object(source_ty, &fields, generated_fields, indent);
+        }
         self.lower_expr(expr, Some(lowered_ty), indent)
     }
 
@@ -3012,15 +3174,26 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_state_object_for_state(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
         self.model.state(state_name)?;
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
+        self.lower_state_object(state_name, body, generated_fields, indent)
+    }
+
+    fn lower_state_object(
+        &self,
+        state_name: &str,
+        body: &str,
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let raw_fields = parse_state_fields(body);
         if self.model.state(state_name)?.expansion.is_some() {
-            return self.render_expanded_state_object_for_state(state_name, &raw_fields, indent);
+            return self.render_expanded_state_object(state_name, &raw_fields, generated_fields, indent);
         }
         let fields = raw_fields
             .into_iter()
             .map(|(name, expr)| self.lower_expr(&expr, None, indent + 4).map(|lowered| (name, lowered)))
             .collect::<Result<Vec<_>>>()?;
-        self.render_state_object_for_state(state_name, &fields, indent)
+        self.render_state_object(state_name, &fields, generated_fields, indent)
     }
 
     fn lower_local_type(&self, source_ty: &str) -> String {
@@ -3034,7 +3207,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             (Ok(current_storage), Ok(source_storage)) => current_storage == source_storage,
             _ => false,
         };
-        if source_ty == self.actor.state || same_storage { "State".to_string() } else { source_ty.to_string() }
+        if source_ty == self.actor.state || same_storage {
+            "State".to_string()
+        } else if self.model.states.contains_key(source_ty) {
+            state_payload_type_name(source_ty, self.model)
+        } else {
+            source_ty.to_string()
+        }
     }
 
     fn source_state_for_local_type(&self, source_ty: &str) -> Option<String> {
@@ -3048,10 +3227,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn render_state_object_for_state(&self, state_name: &str, fields: &[(String, String)], indent: usize) -> Result<String> {
-        if self.model.state(state_name)?.expansion.is_some() {
-            return self.render_expanded_state_object_for_state(state_name, fields, indent);
-        }
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
+        self.render_state_object(state_name, fields, generated_fields, indent)
+    }
 
+    fn render_state_object(
+        &self,
+        state_name: &str,
+        fields: &[(String, String)],
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let field_indent = " ".repeat(indent + 4);
         let close_indent = " ".repeat(indent);
         let mut pending = fields.iter().cloned().collect::<BTreeMap<_, _>>();
@@ -3060,7 +3246,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -3098,7 +3283,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
     }
 
-    fn render_expanded_state_object_for_state(&self, state_name: &str, fields: &[(String, String)], indent: usize) -> Result<String> {
+    fn render_expanded_state_object(
+        &self,
+        state_name: &str,
+        fields: &[(String, String)],
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let state = self.model.state(state_name)?;
         let expansion = state.expansion.as_ref().ok_or_else(|| ArgentError::new(format!("state `{state_name}` is not expanded")))?;
         let storage_state = self.model.storage_state(state_name)?;
@@ -3110,7 +3301,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -5493,6 +5683,8 @@ fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) ->
             ))
     {
         "State".to_string()
+    } else if ty.array.is_none() && model.states.contains_key(&ty.name) {
+        state_payload_type_name(&ty.name, model)
     } else {
         lower_type_ref(ty, model)
     }
@@ -5808,6 +6000,14 @@ fn hidden_actor_suffix(actor: &str) -> String {
     to_snake(actor)
 }
 
+fn hidden_actor_state_type_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_state", hidden_actor_suffix(actor))
+}
+
+fn hidden_state_payload_type_name(state: &str) -> String {
+    format!("{RESERVED_GENERATED_PREFIX}{}_payload", to_snake(state))
+}
+
 fn hidden_template_init_name(actor: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}init_{}_template", hidden_actor_suffix(actor))
 }
@@ -5870,6 +6070,19 @@ fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<
     route_field_kind_from_leaves(model.route_leaves_for_state(state), families, model)
 }
 
+fn route_field_kind_for_state_layout<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
+    let mut actors = model.actors.iter().filter(|actor| actor.state == state);
+    let Some(first_actor) = actors.next() else {
+        return route_field_kind(state, model);
+    };
+    let shared_fields = route_field_kind_for_actor(&first_actor.name, model);
+    if actors.all(|actor| route_field_kind_for_actor(&actor.name, model) == shared_fields) {
+        shared_fields
+    } else {
+        route_field_kind(state, model)
+    }
+}
+
 fn route_field_kind_for_actor<'a>(actor: &str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
     let Some(leaves) = model.route_leaves_by_actor.get(actor) else {
         let state = &model.actors_by_name[actor].state;
@@ -5928,10 +6141,23 @@ fn route_field_kind_from_leaves<'a>(
     }
 }
 
+#[derive(PartialEq, Eq)]
 enum RouteFieldKind<'a> {
     None,
     Direct { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily> },
     FamilyTables { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily>, families: Vec<&'a RouteFamily> },
+}
+
+fn state_payload_type_name(state: &str, model: &Model<'_>) -> String {
+    let mut actors = model.actors.iter().filter(|actor| actor.state == state);
+    let has_distinct_actor_layout = actors
+        .next()
+        .map(|first_actor| {
+            let first_fields = route_field_kind_for_actor(&first_actor.name, model);
+            actors.any(|actor| route_field_kind_for_actor(&actor.name, model) != first_fields)
+        })
+        .unwrap_or(false);
+    if has_distinct_actor_layout { hidden_state_payload_type_name(state) } else { state.to_string() }
 }
 
 fn hidden_template_init_args_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Vec<String> {
@@ -6018,11 +6244,25 @@ fn emit_route_template_table(out: &mut String, actor: &ActorDecl, model: &Model<
 }
 
 fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>, indent: usize) {
-    let field_indent = " ".repeat(indent);
     let observed_templates = observed_template_specs_for_state(state, model);
-    match route_field_kind(state, model) {
+    emit_hidden_template_fields_for_kind(out, route_field_kind_for_state_layout(state, model), &observed_templates, indent);
+}
+
+fn emit_hidden_template_fields_for_actor(out: &mut String, actor: &str, model: &Model<'_>, indent: usize) {
+    let observed_templates = observed_template_specs_for_state(&model.actors_by_name[actor].state, model);
+    emit_hidden_template_fields_for_kind(out, route_field_kind_for_actor(actor, model), &observed_templates, indent);
+}
+
+fn emit_hidden_template_fields_for_kind(
+    out: &mut String,
+    fields: RouteFieldKind<'_>,
+    observed_templates: &[ObservedActorWitnessSpec],
+    indent: usize,
+) {
+    let field_indent = " ".repeat(indent);
+    match fields {
         RouteFieldKind::None => {
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
@@ -6033,7 +6273,7 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
             for family in family_commitments {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_route_family_commitment_name(family)));
             }
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
@@ -6054,7 +6294,7 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
                     hidden_route_family_table_name(family)
                 ));
             }
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
@@ -6062,11 +6302,39 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
 }
 
 fn hidden_template_object_fields_for_state(source_actor: &ActorDecl, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
-    let target_fields = if target_state == source_actor.state {
-        route_field_kind_for_actor(&source_actor.name, model)
-    } else {
-        route_field_kind(target_state, model)
-    };
+    let same_storage = matches!(
+        (model.storage_state_name(&source_actor.state), model.storage_state_name(target_state)),
+        (Ok(source_storage), Ok(target_storage)) if source_storage == target_storage
+    );
+    if !same_storage {
+        if state_payload_type_name(target_state, model) != target_state {
+            return Vec::new();
+        }
+        return hidden_template_object_fields(
+            source_actor,
+            target_state,
+            route_field_kind_for_state_layout(target_state, model),
+            model,
+        );
+    }
+    hidden_template_object_fields(source_actor, target_state, route_field_kind_for_actor(&source_actor.name, model), model)
+}
+
+fn hidden_template_object_fields_for_actor(source_actor: &ActorDecl, target_actor: &str, model: &Model<'_>) -> Vec<(String, String)> {
+    hidden_template_object_fields(
+        source_actor,
+        &model.actors_by_name[target_actor].state,
+        route_field_kind_for_actor(target_actor, model),
+        model,
+    )
+}
+
+fn hidden_template_object_fields(
+    source_actor: &ActorDecl,
+    target_state: &str,
+    target_fields: RouteFieldKind<'_>,
+    model: &Model<'_>,
+) -> Vec<(String, String)> {
     let mut fields =
         match target_fields {
             RouteFieldKind::None => Vec::new(),
@@ -6351,13 +6619,20 @@ fn hidden_output_idx_name(output: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{output}_output_idx")
 }
 
-fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String> {
-    Ok(model.actor(actor)?.state.clone())
-}
-
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let target_state = model.actor(actor)?.state.as_str();
-    if target_state == current_actor.state { Ok("State".to_string()) } else { state_struct_name_for_actor(actor, model) }
+    if target_state == current_actor.state {
+        Ok("State".to_string())
+    } else {
+        let actor_fields = route_field_kind_for_actor(actor, model);
+        if actor_fields == route_field_kind_for_state_layout(target_state, model) {
+            Ok(target_state.to_string())
+        } else if matches!(actor_fields, RouteFieldKind::None) && observed_template_specs_for_state(target_state, model).is_empty() {
+            Ok(state_payload_type_name(target_state, model))
+        } else {
+            Ok(hidden_actor_state_type_name(actor))
+        }
+    }
 }
 
 fn contract_state_type_for_observed_actor(
@@ -8322,6 +8597,94 @@ mod tests {
     }
 
     #[test]
+    fn foreign_routes_materialize_the_target_actors_cut() {
+        let source = r#"
+            state SourceState {
+                int value;
+            }
+
+            state SharedState {
+                int value;
+            }
+
+            state TailAState {
+                int value;
+            }
+
+            state TailBState {
+                int value;
+            }
+
+            actor Source owns SourceState {
+                entry send() emits one A {
+                    SharedState next = {
+                        value: value,
+                    };
+                    become A(next);
+                }
+            }
+
+            actor A owns SharedState {
+                entry leave() emits one TailA {
+                    TailAState next = {
+                        value: value,
+                    };
+                    become TailA(next);
+                }
+            }
+
+            actor B owns SharedState {
+                entry leave() emits one TailB {
+                    TailBState next = {
+                        value: value,
+                    };
+                    become TailB(next);
+                }
+            }
+
+            actor TailA owns TailAState {
+                entry hold() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            actor TailB owns TailBState {
+                entry hold() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            app ForeignActorCuts {
+                actor Source;
+                actor A;
+                actor B;
+                actor TailA;
+                actor TailB;
+            }
+        "#;
+
+        let path = PathBuf::from("foreign-actor-cuts.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let source_sil = emit_actor(model.actor("Source").expect("Source exists"), &model).expect("Source Sil emits");
+
+        let actor_layout = source_sil
+            .split("struct gen__a_state {")
+            .nth(1)
+            .and_then(|rest| rest.split("    }").next())
+            .expect("A receives an actor-qualified foreign state layout");
+        assert!(actor_layout.contains("byte[32] gen__tail_a_template;"), "{source_sil}");
+        assert!(!actor_layout.contains("gen__tail_b_template"), "{source_sil}");
+        assert!(source_sil.contains("struct gen__shared_state_payload {"), "{source_sil}");
+        assert!(source_sil.contains("gen__a_state gen__state_a_gen__a_state = {"), "{source_sil}");
+        assert!(source_sil.contains("gen__tail_a_template: gen__tail_a_template,"), "{source_sil}");
+        assert!(!source_sil.contains("gen__tail_b_template:"), "{source_sil}");
+
+        inline_artifact("foreign-actor-cuts", source);
+    }
+
+    #[test]
     fn actor_route_field_kind_distinguishes_local_tables_from_foreign_commitments() {
         let path = PathBuf::from("actor-route-field-kinds.ag");
         let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
@@ -8558,6 +8921,8 @@ mod tests {
         assert!(player_sil.contains("byte[] gen__mux_suffix,"), "{player_sil}");
         assert!(player_sil.contains("byte[64] gen__mux_routes"), "{player_sil}");
         assert!(player_sil.contains("require(blake2b(gen__mux_routes) == gen__mux_routes_digest);"), "{player_sil}");
+        assert!(player_sil.contains("BoardState next_board = {"), "{player_sil}");
+        assert!(!player_sil.contains("gen__board_state_payload"), "{player_sil}");
         assert!(!player_sil.contains("gen__pawn_template"), "{player_sil}");
         assert!(!player_sil.contains("gen__knight_template"), "{player_sil}");
 

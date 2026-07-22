@@ -10,8 +10,8 @@ contract Player(
     // :: state layouts
     struct LeagueState {
         // :: generated fields
-        byte[32] gen__player_template;
         byte[32] gen__mux_template;
+        byte[32] gen__player_template;
         byte[32] gen__mux_routes_digest;
 
         // :: user declared fields
