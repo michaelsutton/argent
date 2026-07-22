@@ -5,6 +5,21 @@ checks. It states the assumptions, claims, and short proofs that are easy to
 lose when reading the compiler or generated Sil in isolation. It is not a
 substitute for an audit of an application or its generated contracts.
 
+## Single-actor direct input state reads
+
+A single-actor application can consume another input of the same actor without
+a template witness. The compiler uses `readInputState` only when the selected
+application has one actor and that actor consumes its own type.
+
+The covenant input group is closed to the application contract. Therefore,
+each input in that group has the same generated contract template. The direct
+read can use the current contract layout safely.
+
+This exception must not apply to a multi-actor application. A matching source
+actor name or state layout is not enough. Another actor contract can be in the
+same covenant input group. In that case, the compiler must keep the template
+witness and use `readInputStateWithTemplate`.
+
 ## Leader and delegate input groups
 
 Delegate entries participate in a same-covenant transition without authorizing

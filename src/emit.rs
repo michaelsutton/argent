@@ -228,9 +228,10 @@ impl<'a> Model<'a> {
                 layout_template_actors.push(actor.clone());
             }
         }
-        let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
+        let state_template_deps =
+            compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &template_actors, &actor_enums)?;
         let direct_state_template_deps =
-            compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
+            compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &template_actors, &actor_enums)?;
         let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor, transitions: route_transitions } =
             infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums, route_planner)?;
         let leader_for = compute_leader_for(&actors);
@@ -310,6 +311,10 @@ impl<'a> Model<'a> {
 
     fn is_leader_actor(&self, actor: &str) -> bool {
         !self.leader_for(actor).is_empty()
+    }
+
+    fn consume_uses_current_template(&self, actor: &ActorDecl, consume: &ConsumeDecl) -> bool {
+        is_single_actor_self_consume(&self.template_actors, actor, consume)
     }
 
     fn template_selectors_for_entry(&self, actor: &ActorDecl, entry: &EntryDecl) -> Result<BTreeMap<String, TemplateSelector>> {
@@ -1443,10 +1448,11 @@ fn select_root_app<'a>(program: &'a Program, app_name: Option<&str>) -> Result<O
 fn compute_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
-    template_actors: &[String],
+    layout_template_actors: &[String],
+    selected_actors: &[String],
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<BTreeMap<String, Vec<String>>> {
-    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let template_actor_set = layout_template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut deps = BTreeMap::<String, BTreeSet<String>>::new();
     let mut routes = BTreeMap::<String, BTreeSet<String>>::new();
 
@@ -1456,7 +1462,7 @@ fn compute_state_template_deps<'a>(
 
         for entry in &actor.entries {
             for consume in &entry.consumes {
-                if template_actor_set.contains(&consume.actor) {
+                if template_actor_set.contains(&consume.actor) && !is_single_actor_self_consume(selected_actors, actor, consume) {
                     deps.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
                 }
             }
@@ -1511,7 +1517,7 @@ fn compute_state_template_deps<'a>(
     Ok(deps
         .into_iter()
         .map(|(state, deps)| {
-            let ordered = template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
+            let ordered = layout_template_actors.iter().filter(|actor| deps.contains(*actor)).cloned().collect::<Vec<_>>();
             (state, ordered)
         })
         .collect())
@@ -1520,16 +1526,17 @@ fn compute_state_template_deps<'a>(
 fn compute_direct_state_template_deps<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
-    template_actors: &[String],
+    layout_template_actors: &[String],
+    selected_actors: &[String],
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>> {
-    let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
+    let template_actor_set = layout_template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut direct = BTreeMap::<String, BTreeSet<String>>::new();
     for actor in actors {
         direct.entry(actor.state.clone()).or_default();
         for entry in &actor.entries {
             for consume in &entry.consumes {
-                if template_actor_set.contains(&consume.actor) {
+                if template_actor_set.contains(&consume.actor) && !is_single_actor_self_consume(selected_actors, actor, consume) {
                     direct.entry(actor.state.clone()).or_default().insert(consume.actor.clone());
                 }
             }
@@ -1617,7 +1624,7 @@ fn infer_direct_routes<'a>(
                 variants: selector.variants.clone(),
             }));
             for consume in &entry.consumes {
-                if template_actor_set.contains(&consume.actor) {
+                if template_actor_set.contains(&consume.actor) && !is_single_actor_self_consume(template_actors, actor, consume) {
                     graph.add_consume(actor.name.clone(), consume.actor.clone());
                 }
             }
@@ -1677,6 +1684,10 @@ fn infer_direct_routes<'a>(
         .collect();
 
     Ok(CompilerRoutePlan { families, leaves_by_actor, transitions })
+}
+
+fn is_single_actor_self_consume(template_actors: &[String], actor: &ActorDecl, consume: &ConsumeDecl) -> bool {
+    template_actors.len() == 1 && template_actors[0] == actor.name && consume.actor == actor.name
 }
 
 fn compiler_route_leaves(plan: &PlannerRoutePlan) -> Result<BTreeMap<String, Vec<RouteRootLeaf>>> {
@@ -1993,9 +2004,6 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
         for (idx, consume) in entry.consumes.iter().enumerate() {
             let cov_index = slot_offset + idx;
             let input_idx = hidden_input_idx_name(&consume.name);
-            let prefix_len = hidden_witness_prefix_len_name(&consume.actor);
-            let suffix_len = hidden_witness_suffix_len_name(&consume.actor);
-            let template = hidden_template_name(&consume.actor);
             let state_struct = contract_state_type_for_actor(&consume.actor, actor, model)?;
             let _state = model.actor_state(&consume.actor)?;
             push_generated_statement_with_comment(
@@ -2004,13 +2012,27 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
                 &format!("int {input_idx} = OpCovInputIdx({cov_id}, {cov_index})"),
                 &format!("input {} at cov[{}]", consume.actor, cov_index),
             );
-            push_generated_call(
-                out,
-                8,
-                &format!("{state_struct} {} = ", consume.name),
-                "readInputStateWithTemplate",
-                &[input_idx, prefix_len, suffix_len, template],
-            );
+            // SECURITY: readInputState omits template validation. This path is valid
+            // only for a self-consume in a single-actor covenant domain. The domain
+            // restricts every input with this covenant ID to one of its contracts.
+            // With one actor, every group input has this contract's template.
+            if model.consume_uses_current_template(actor, consume) {
+                out.push_str("        // :: direct input state (single-actor covenant has one template)\n");
+                push_generated_call(out, 8, &format!("{state_struct} {} = ", consume.name), "readInputState", &[input_idx]);
+            } else {
+                push_generated_call(
+                    out,
+                    8,
+                    &format!("{state_struct} {} = ", consume.name),
+                    "readInputStateWithTemplate",
+                    &[
+                        input_idx,
+                        hidden_witness_prefix_len_name(&consume.actor),
+                        hidden_witness_suffix_len_name(&consume.actor),
+                        hidden_template_name(&consume.actor),
+                    ],
+                );
+            }
         }
         out.push('\n');
     }
@@ -4187,7 +4209,12 @@ fn lower_entry_params(actor: &ActorDecl, entry: &EntryDecl, witness_specs: &Entr
 }
 
 fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<EntryWitnessSpecs> {
-    let read_actors = entry.consumes.iter().map(|consume| consume.actor.clone()).collect::<BTreeSet<_>>();
+    let read_actors = entry
+        .consumes
+        .iter()
+        .filter(|consume| !model.consume_uses_current_template(actor, consume))
+        .map(|consume| consume.actor.clone())
+        .collect::<BTreeSet<_>>();
     let selectors = model.template_selectors_for_entry(actor, entry).expect("entry selectors are valid after model validation");
     let selector_specs = selectors
         .values()
@@ -8475,7 +8502,69 @@ mod tests {
         let (sil, artifact) = emit_fixture("single_actor_self_consume", "Counter");
 
         assert_eq!(sil, include_str!("../tests/fixtures/emit/single_actor_self_consume/Counter.sil"));
+        assert!(sil.contains("State other = readInputState(gen__other_input_idx);"), "{sil}");
+        assert!(!sil.contains("readInputStateWithTemplate"), "{sil}");
 
+        let counter = artifact.argent.actors.iter().find(|actor| actor.name == "Counter").expect("Counter actor exists");
+        let merge = counter.entries.iter().find(|entry| entry.name == "merge").expect("merge entry exists");
+        assert!(merge.hidden_params.is_empty());
+        assert!(merge.route_plan.witness_recipe_ids.is_empty());
+        assert!(runtime_state_plan(&artifact, "Counter").is_none());
+    }
+
+    #[test]
+    fn selected_app_actor_count_controls_self_consume_template_authentication() {
+        let path = PathBuf::from("multi_actor_self_consume.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state CounterState {
+                int count;
+            }
+
+            state GuardState {}
+
+            actor Counter owns CounterState {
+                entry merge()
+                consumes {
+                    other: Counter;
+                }
+                emits one Counter {
+                    CounterState next = {
+                        count: count + other.count,
+                    };
+
+                    become Counter(next);
+                }
+            }
+
+            actor Guard owns GuardState {
+                entry hold() emits none {
+                    require(1 == 1);
+                }
+            }
+
+            app Single {
+                actor Counter;
+            }
+
+            app Multi {
+                actor Counter;
+                actor Guard;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let multi_model = Model::from_program_app(&program, "Multi").expect("multi-actor model validates");
+        let counter = multi_model.actor("Counter").expect("Counter actor exists");
+        let sil = emit_actor(counter, &multi_model).expect("Counter emits for the multi-actor app");
+        let actor_sil = actor_sil_for_model(&multi_model);
+        let artifact = emit_artifact(&program, &multi_model, &actor_sil).expect("multi-actor artifact emits");
+
+        assert!(sil.contains("State other = readInputStateWithTemplate("), "{sil}");
+        assert!(!sil.contains("// :: direct input state"), "{sil}");
         let counter = artifact.argent.actors.iter().find(|actor| actor.name == "Counter").expect("Counter actor exists");
         let merge = counter.entries.iter().find(|entry| entry.name == "merge").expect("merge entry exists");
         assert_eq!(
@@ -8483,14 +8572,20 @@ mod tests {
             vec!["gen__counter_prefix_len", "gen__counter_suffix_len"]
         );
         assert_eq!(
-            runtime_state_plan(&artifact, "Counter")
-                .expect("Counter carries its consumed template")
-                .field_roles
-                .iter()
-                .map(|field| field.name.as_str())
-                .collect::<Vec<_>>(),
-            vec!["gen__counter_template"]
+            merge.route_plan.witness_recipe_ids.iter().map(String::as_str).collect::<Vec<_>>(),
+            vec!["witness/counter/template_prefix_len", "witness/counter/template_suffix_len"]
         );
+        assert!(runtime_state_plan(&artifact, "Counter").is_some());
+
+        let single_model = Model::from_program_app(&program, "Single").expect("single-actor model validates");
+        let counter = single_model.actor("Counter").expect("Counter actor exists");
+        let sil = emit_actor(counter, &single_model).expect("Counter emits for the single-actor app");
+        let actor_sil = actor_sil_for_model(&single_model);
+        let artifact = emit_artifact(&program, &single_model, &actor_sil).expect("single-actor artifact emits");
+
+        assert!(sil.contains("State other = readInputState(gen__other_input_idx);"), "{sil}");
+        assert!(!sil.contains("readInputStateWithTemplate"), "{sil}");
+        assert!(runtime_state_plan(&artifact, "Counter").is_none());
     }
 
     #[test]

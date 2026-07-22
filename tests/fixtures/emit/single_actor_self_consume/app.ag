@@ -14,6 +14,10 @@ actor Counter owns CounterState {
 
         become Counter(next);
     }
+
+    entry hold() emits none {
+        require(count >= 0);
+    }
 }
 
 app Test {
