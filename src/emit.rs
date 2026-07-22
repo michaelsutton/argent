@@ -7,7 +7,8 @@ use crate::ast::*;
 use crate::codec::encode_hex;
 use crate::error::{ArgentError, Result};
 use crate::language::word;
-use crate::lexer::{RESERVED_GENERATED_PREFIX, Token, TokenKind, lex};
+use crate::lexer::{RESERVED_GENERATED_PREFIX, RESERVED_GENERATED_TYPE_PREFIX, Token, TokenKind, lex};
+use crate::routing::{CommitmentNode, RouteGraph, RoutePlan as PlannerRoutePlan, SelectorRequirement, route_plan};
 use silverscript_lang::ast::Expr as SilExpr;
 use silverscript_lang::compiler::{CompileOptions, CompiledContract, compile_contract};
 
@@ -65,6 +66,8 @@ struct Model<'a> {
     actors: Vec<&'a ActorDecl>,
     /// Delegate entries that establish each actor as a leader actor.
     leader_for: BTreeMap<String, Vec<EntryRefArtifact>>,
+    route_leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
+    route_transitions: BTreeMap<(String, String), CompilerRouteTransition>,
     state_route_leaves: BTreeMap<String, Vec<RouteRootLeaf>>,
 }
 
@@ -95,19 +98,19 @@ impl TemplateSelector {
 struct RouteFamily {
     id: String,
     state: String,
+    rep: String,
     actors: Vec<String>,
     entry_actors: Vec<String>,
-    direct_template_actors: Vec<String>,
     table_actors: Vec<String>,
 }
 
 impl RouteFamily {
-    fn anchor_actor(&self) -> &str {
-        self.direct_template_actors.first().map(String::as_str).expect("route families contain at least one direct template actor")
+    fn rep(&self) -> &str {
+        &self.rep
     }
 
     fn direct_template_actors(&self) -> &[String] {
-        &self.direct_template_actors
+        &self.entry_actors
     }
 
     fn table_actors(&self) -> &[String] {
@@ -123,6 +126,32 @@ impl RouteFamily {
 enum RouteRootLeaf {
     Actor(String),
     Family(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompilerRoutePlan {
+    families: Vec<RouteFamily>,
+    leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
+    transitions: BTreeMap<(String, String), CompilerRouteTransition>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CompilerRouteTransition {
+    families_to_open: Vec<String>,
+    families_to_pack: Vec<String>,
+}
+
+/// Compiler-facing injection point for route classification and commitment
+/// planning. Production uses `route_plan`; tests can supply crafted plans to
+/// exercise lowering independently of the default heuristic.
+type CompilerRoutePlanner = dyn Fn(&RouteGraph, &BTreeMap<String, Vec<String>>, &[SelectorRequirement]) -> Result<PlannerRoutePlan>;
+
+fn default_route_planner(
+    graph: &RouteGraph,
+    domains: &BTreeMap<String, Vec<String>>,
+    selectors: &[SelectorRequirement],
+) -> Result<PlannerRoutePlan> {
+    route_plan(graph, domains, selectors).map_err(|err| ArgentError::new(err.to_string()))
 }
 
 fn compute_leader_for(actors: &[&ActorDecl]) -> BTreeMap<String, Vec<EntryRefArtifact>> {
@@ -154,6 +183,19 @@ impl<'a> Model<'a> {
     }
 
     fn from_program_selected(program: &'a Program, app_name: Option<&str>) -> Result<Self> {
+        Self::from_program_selected_with_route_planner(program, app_name, &default_route_planner)
+    }
+
+    #[cfg(test)]
+    fn from_program_with_route_planner(program: &'a Program, route_planner: &CompilerRoutePlanner) -> Result<Self> {
+        Self::from_program_selected_with_route_planner(program, None, route_planner)
+    }
+
+    fn from_program_selected_with_route_planner(
+        program: &'a Program,
+        app_name: Option<&str>,
+        route_planner: &CompilerRoutePlanner,
+    ) -> Result<Self> {
         validate_unique_apps(program)?;
         let consts = collect_consts(program)?;
         let functions = collect_functions(program)?;
@@ -189,7 +231,8 @@ impl<'a> Model<'a> {
         let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
-        let route_families = infer_direct_route_families(&actors, &all_actors, &template_actors, &actor_enums)?;
+        let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor, transitions: route_transitions } =
+            infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums, route_planner)?;
         let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
@@ -203,6 +246,8 @@ impl<'a> Model<'a> {
             actor_enums,
             actors,
             leader_for,
+            route_leaves_by_actor,
+            route_transitions,
             state_route_leaves,
         };
         model.validate()?;
@@ -237,6 +282,14 @@ impl<'a> Model<'a> {
 
     fn route_family_for_actor(&self, actor: &str) -> Option<&RouteFamily> {
         self.route_families.iter().find(|family| family.actors.iter().any(|member| member == actor))
+    }
+
+    fn route_family(&self, family_id: &str) -> Option<&RouteFamily> {
+        self.route_families.iter().find(|family| family.id == family_id)
+    }
+
+    fn route_transition(&self, source: &str, target: &str) -> Option<&CompilerRouteTransition> {
+        self.route_transitions.get(&(source.to_string(), target.to_string()))
     }
 
     fn route_families_for_state(&self, state: &str) -> Vec<&RouteFamily> {
@@ -276,6 +329,7 @@ impl<'a> Model<'a> {
         self.validate_reserved_identifiers()?;
         self.validate_state_expansions()?;
         self.validate_generated_actor_suffixes()?;
+        self.validate_route_plan_coverage()?;
 
         let template_actor_set = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
         for actor in &self.actors {
@@ -284,6 +338,32 @@ impl<'a> Model<'a> {
             }
         }
         self.validate_observed_template_state_fields()?;
+        Ok(())
+    }
+
+    fn validate_route_plan_coverage(&self) -> Result<()> {
+        let template_actors = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
+        let planned_actors = self.route_leaves_by_actor.keys().cloned().collect::<BTreeSet<_>>();
+        if planned_actors != template_actors {
+            return Err(ArgentError::new(format!(
+                "route planner actor coverage differs from the selected app; expected {:?}, found {:?}",
+                template_actors, planned_actors
+            )));
+        }
+
+        let family_ids = self.route_families.iter().map(|family| family.id.as_str()).collect::<BTreeSet<_>>();
+        for ((source, target), transition) in &self.route_transitions {
+            if !template_actors.contains(source) || !template_actors.contains(target) {
+                return Err(ArgentError::new(format!("route transition `{source}` -> `{target}` falls outside the selected app")));
+            }
+            for family_id in transition.families_to_open.iter().chain(&transition.families_to_pack) {
+                if !family_ids.contains(family_id.as_str()) {
+                    return Err(ArgentError::new(format!(
+                        "route transition `{source}` -> `{target}` references unknown family `{family_id}`"
+                    )));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -1476,21 +1556,36 @@ fn compute_state_route_leaves(
     out
 }
 
-fn infer_direct_route_families<'a>(
+fn infer_direct_routes<'a>(
     actors: &[&'a ActorDecl],
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
-) -> Result<Vec<RouteFamily>> {
+    route_planner: &CompilerRoutePlanner,
+) -> Result<CompilerRoutePlan> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
-    let mut edges_by_state = BTreeMap::<String, BTreeMap<String, BTreeSet<String>>>::new();
-    let mut directed_routes = Vec::<(String, String)>::new();
-    let mut selectors_by_actor = BTreeMap::<String, Vec<TemplateSelector>>::new();
+    let mut graph = RouteGraph::default();
+    let mut domains = BTreeMap::<String, Vec<String>>::new();
+    let mut selector_requirements = Vec::new();
+    let mut transition_pairs = BTreeSet::new();
 
     for actor in actors {
+        if template_actor_set.contains(&actor.name) {
+            graph.add_actor(actor.name.clone());
+            domains.entry(actor.state.clone()).or_default().push(actor.name.clone());
+        }
         for entry in &actor.entries {
             let selectors = template_selectors_for_entry(actor, entry, actor_enums)?;
-            selectors_by_actor.entry(actor.name.clone()).or_default().extend(selectors.values().cloned());
+            selector_requirements.extend(selectors.values().map(|selector| SelectorRequirement {
+                domain: selector.state.clone(),
+                source: actor.name.clone(),
+                variants: selector.variants.clone(),
+            }));
+            for consume in &entry.consumes {
+                if template_actor_set.contains(&consume.actor) {
+                    graph.add_consume(actor.name.clone(), consume.actor.clone());
+                }
+            }
             for route in expand_entry_template_routes(actor, entry, actor_enums)? {
                 let target = actors_by_name.get(&route.actor).copied().ok_or_else(|| {
                     ArgentError::new(format!("entry `{}::{}` routes to unknown actor `{}`", actor.name, entry.name, route.actor))
@@ -1499,121 +1594,90 @@ fn infer_direct_route_families<'a>(
                     continue;
                 }
                 if actor.name != target.name {
-                    directed_routes.push((actor.name.clone(), target.name.clone()));
+                    graph.add_emit(actor.name.clone(), target.name.clone());
+                    transition_pairs.insert((actor.name.clone(), target.name.clone()));
                 }
-                if actor.name == target.name || actor.state != target.state {
-                    continue;
-                }
-                edges_by_state
-                    .entry(actor.state.clone())
-                    .or_default()
-                    .entry(actor.name.clone())
-                    .or_default()
-                    .insert(target.name.clone());
-                edges_by_state
-                    .entry(actor.state.clone())
-                    .or_default()
-                    .entry(target.name.clone())
-                    .or_default()
-                    .insert(actor.name.clone());
             }
         }
     }
 
-    let mut families = Vec::new();
-    for (state, edges) in edges_by_state {
-        let mut visited = BTreeSet::new();
-        for actor in edges.keys() {
-            if visited.contains(actor) {
-                continue;
-            }
-            let mut stack = vec![actor.clone()];
-            let mut component = BTreeSet::new();
-            while let Some(next) = stack.pop() {
-                if !visited.insert(next.clone()) {
-                    continue;
-                }
-                component.insert(next.clone());
-                if let Some(neighbors) = edges.get(&next) {
-                    stack.extend(neighbors.iter().filter(|neighbor| !visited.contains(*neighbor)).cloned());
-                }
-            }
-            // A two-actor component needs two template hashes either way;
-            // direct fields avoid the extra table hash and slice operations.
-            if component.len() < 3 {
-                continue;
-            }
-            let actors = template_actors.iter().filter(|actor| component.contains(*actor)).cloned().collect::<Vec<_>>();
-            let entry_actors = template_actors
-                .iter()
-                .filter(|actor| {
-                    component.contains(*actor)
-                        && directed_routes.iter().any(|(source, target)| target == *actor && !component.contains(source))
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let anchor_actor = entry_actors.first().or_else(|| actors.first()).expect("component has at least two actors");
-            let direct_template_actors = if entry_actors.is_empty() { vec![anchor_actor.clone()] } else { entry_actors.clone() };
-            let direct_template_actor_set = direct_template_actors.iter().cloned().collect::<BTreeSet<_>>();
-            let default_table_actors =
-                actors.iter().filter(|actor| !direct_template_actor_set.contains(*actor)).cloned().collect::<Vec<_>>();
-            let table_actors =
-                route_family_table_actors_from_selector_order(&state, &actors, &default_table_actors, &selectors_by_actor)?;
-            // Multiple direct entry actors can leave only one table entry even
-            // in a larger component. Such a table has no storage benefit.
-            if table_actors.len() < 2 {
-                continue;
-            }
-            families.push(RouteFamily {
-                id: route_template_family_receipt_id(&state, anchor_actor),
-                state: state.clone(),
-                actors,
+    let plan = route_planner(&graph, &domains, &selector_requirements)?;
+    let leaves_by_actor = compiler_route_leaves(&plan)?;
+    let transitions = transition_pairs
+        .into_iter()
+        .map(|(source, target)| {
+            let transition = compiler_route_transition(&plan, &source, &target)?;
+            Ok(((source, target), transition))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let families = plan
+        .families
+        .into_iter()
+        .map(|family| {
+            let table_actors = family.table.iter().cloned().collect::<BTreeSet<_>>();
+            let entry_actors = family.members.iter().filter(|actor| !table_actors.contains(*actor)).cloned().collect();
+            RouteFamily {
+                id: route_template_family_receipt_id(&family.domain, &family.rep),
+                state: family.domain,
+                actors: family.members,
                 entry_actors,
-                direct_template_actors,
-                table_actors,
-            });
-        }
-    }
+                rep: family.rep,
+                table_actors: family.table,
+            }
+        })
+        .collect();
 
-    Ok(families)
+    Ok(CompilerRoutePlan { families, leaves_by_actor, transitions })
 }
 
-fn route_family_table_actors_from_selector_order(
-    state: &str,
-    component_actors: &[String],
-    default_table_actors: &[String],
-    selectors_by_actor: &BTreeMap<String, Vec<TemplateSelector>>,
-) -> Result<Vec<String>> {
-    let table_actor_set = default_table_actors.iter().cloned().collect::<BTreeSet<_>>();
-    let mut selected_order = None::<(&str, Vec<String>)>;
+fn compiler_route_leaves(plan: &PlannerRoutePlan) -> Result<BTreeMap<String, Vec<RouteRootLeaf>>> {
+    let mut leaves_by_actor = BTreeMap::new();
+    for actor in plan.commitments.cuts.keys() {
+        let nodes = plan.commitments.cut_nodes(actor).expect("an actor with a planned cut must resolve its cut nodes");
+        let mut leaves = Vec::new();
+        for node in nodes {
+            leaves.push(compiler_route_leaf(plan, node)?);
+        }
+        leaves_by_actor.insert(actor.clone(), leaves);
+    }
+    Ok(leaves_by_actor)
+}
 
-    for actor in component_actors {
-        let Some(selectors) = selectors_by_actor.get(actor) else {
-            continue;
-        };
-        for selector in selectors.iter().filter(|selector| selector.state == state) {
-            let selector_actor_set = selector.variants.iter().cloned().collect::<BTreeSet<_>>();
-            if selector_actor_set != table_actor_set {
-                return Err(ArgentError::new(format!(
-                    "actor enum `{}` variants must exactly match the route table actors for state `{state}`; expected {:?}, found {:?}",
-                    selector.actor_enum, table_actor_set, selector_actor_set
-                )));
-            }
+fn compiler_route_transition(plan: &PlannerRoutePlan, source: &str, target: &str) -> Result<CompilerRouteTransition> {
+    let transition = plan.commitments.cut_transition(source, target).map_err(|err| ArgentError::new(err.to_string()))?;
+    let families_to_open =
+        transition.branches_to_open.into_iter().map(|branch| compiler_route_family_id(plan, branch)).collect::<Result<Vec<_>>>()?;
+    let families_to_pack =
+        transition.branches_to_pack.into_iter().map(|branch| compiler_route_family_id(plan, branch)).collect::<Result<Vec<_>>>()?;
+    Ok(CompilerRouteTransition { families_to_open, families_to_pack })
+}
 
-            if let Some((source_actor_enum, order)) = &selected_order {
-                if order != &selector.variants {
-                    return Err(ArgentError::new(format!(
-                        "actor enum `{}` uses a different selector order than actor enum `{source_actor_enum}` for state `{state}`",
-                        selector.actor_enum
-                    )));
-                }
-            } else {
-                selected_order = Some((&selector.actor_enum, selector.variants.clone()));
+fn compiler_route_family_id(plan: &PlannerRoutePlan, branch: &CommitmentNode) -> Result<String> {
+    let RouteRootLeaf::Family(id) = compiler_route_leaf(plan, branch)? else {
+        return Err(ArgentError::new("commitment transition operation must reference a route family branch"));
+    };
+    Ok(id)
+}
+
+fn compiler_route_leaf(plan: &PlannerRoutePlan, node: &CommitmentNode) -> Result<RouteRootLeaf> {
+    match node {
+        CommitmentNode::Leaf { actor } => Ok(RouteRootLeaf::Actor(actor.clone())),
+        CommitmentNode::Branch { children } => {
+            let mut table = Vec::new();
+            for child in children {
+                let CommitmentNode::Leaf { actor } = child else {
+                    return Err(ArgentError::new("nested commitment families cannot be lowered by the compiler"));
+                };
+                table.push(actor.clone());
             }
+            let family = plan
+                .families
+                .iter()
+                .find(|family| family.table == table)
+                .ok_or_else(|| ArgentError::new(format!("commitment branch {:?} has no matching route family", table)))?;
+            Ok(RouteRootLeaf::Family(route_template_family_receipt_id(&family.domain, &family.rep)))
         }
     }
-
-    Ok(selected_order.map_or_else(|| default_table_actors.to_vec(), |(_, order)| order))
 }
 
 fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: &mut BTreeMap<String, &'a Path>) -> Result<()> {
@@ -1629,13 +1693,26 @@ fn reject_duplicate_top_level<'a>(kind: &str, name: &str, path: &'a Path, seen: 
 
 fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let state = model.storage_state(&actor.state)?;
+    // Lower entries first so state-layout emission only declares the generated
+    // state-body types that remain after route-local materialization.
+    let emitted_entries = actor
+        .entries
+        .iter()
+        .map(|entry| {
+            let mut out = String::new();
+            let required_state_bodies = emit_entry(&mut out, actor, entry, model)?;
+            Ok((out, required_state_bodies))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let required_state_bodies =
+        emitted_entries.iter().flat_map(|(_, state_bodies)| state_bodies.iter().cloned()).collect::<BTreeSet<_>>();
     let mut out = String::new();
     out.push_str("pragma silverscript ^0.1.0;\n\n");
     out.push_str("// Generated by argentc. Do not edit by hand.\n\n");
 
     out.push_str(&format!("contract {}(\n", actor.name));
     let mut args = Vec::new();
-    args.extend(hidden_template_init_args_for_state(&actor.state, model).into_iter().map(|arg| format!("    {arg}")));
+    args.extend(hidden_template_init_args_for_actor(actor, model).into_iter().map(|arg| format!("    {arg}")));
     for field in &state.fields {
         args.push(format!("    {} init_{}", lower_type_ref(&field.ty, model), field.name));
     }
@@ -1643,11 +1720,11 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push_str("\n) {\n");
 
     emit_shared_constants(&mut out, model)?;
-    emit_state_layouts(&mut out, actor, model)?;
+    emit_state_layouts(&mut out, actor, model, &required_state_bodies)?;
     emit_shared_functions(&mut out, model);
 
     emit_section_header(&mut out, "Route templates");
-    emit_route_template_table(&mut out, &actor.state, model);
+    emit_route_template_table(&mut out, actor, model);
     out.push('\n');
 
     emit_section_header_raw(&mut out, &format!("state fields: {}", actor.name));
@@ -1657,8 +1734,8 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     out.push('\n');
 
     emit_section_header(&mut out, "Entrypoints");
-    for entry in &actor.entries {
-        emit_entry(&mut out, actor, entry, model)?;
+    for (entry, _) in emitted_entries {
+        out.push_str(&entry);
         out.push('\n');
     }
 
@@ -1690,7 +1767,12 @@ fn emit_shared_constants(out: &mut String, model: &Model<'_>) -> Result<()> {
     Ok(())
 }
 
-fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model<'_>) -> Result<()> {
+fn emit_state_layouts(
+    out: &mut String,
+    current_actor: &ActorDecl,
+    model: &Model<'_>,
+    required_state_bodies: &BTreeSet<String>,
+) -> Result<()> {
     emit_section_header(out, "State layouts");
     let mut emitted = BTreeSet::new();
     let mut state_names = model.actors.iter().map(|actor| actor.state.clone()).collect::<Vec<_>>();
@@ -1729,6 +1811,48 @@ fn emit_state_layouts(out: &mut String, current_actor: &ActorDecl, model: &Model
             out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
         }
         out.push_str("    }\n");
+
+        if required_state_bodies.contains(&state_name) {
+            out.push_str(&format!("    struct {} {{\n", hidden_state_body_type_name(&state_name)));
+            out.push_str("        // :: user declared fields\n");
+            for field in &state.fields {
+                out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+            }
+            out.push_str("    }\n");
+        }
+    }
+
+    let mut referenced_actors = BTreeSet::new();
+    for entry in &current_actor.entries {
+        referenced_actors.extend(entry.consumes.iter().map(|consume| consume.actor.clone()));
+        referenced_actors.extend(
+            entry
+                .observes
+                .iter()
+                .flat_map(|observe| observe.inputs.iter().chain(observe.outputs.iter()))
+                .map(|observed| observed.actor.clone()),
+        );
+        referenced_actors.extend(entry.spawns.iter().flat_map(|spawn| &spawn.outputs).map(|output| output.actor.clone()));
+        for route in &entry.routes {
+            referenced_actors.extend(model.route_targets(current_actor, entry, route)?);
+        }
+    }
+    for actor_name in referenced_actors {
+        let Some(actor) = model.actors_by_name.get(&actor_name) else {
+            continue;
+        };
+        if contract_state_type_for_actor(&actor.name, current_actor, model)? != hidden_actor_state_type_name(&actor.name) {
+            continue;
+        }
+        let state = model.storage_state(&actor.state)?;
+        out.push_str(&format!("    struct {} {{\n", hidden_actor_state_type_name(&actor.name)));
+        out.push_str("        // :: generated fields\n");
+        emit_hidden_template_fields_for_actor(out, &actor.name, model, 8);
+        out.push_str("\n        // :: user declared fields\n");
+        for field in &state.fields {
+            out.push_str(&format!("        {} {};\n", lower_type_ref(&field.ty, model), field.name));
+        }
+        out.push_str("    }\n");
     }
     out.push('\n');
     Ok(())
@@ -1752,7 +1876,8 @@ fn emit_shared_functions(out: &mut String, model: &Model<'_>) {
     }
 }
 
-fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<()> {
+fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<BTreeSet<String>> {
+    let lowered_body = lower_entry_body(actor, entry, model)?;
     let witness_specs = entry_witness_specs(actor, entry, model)?;
     let sil_params = lower_entry_params(actor, entry, &witness_specs, model);
     match entry.kind {
@@ -1887,9 +2012,9 @@ fn emit_entry(out: &mut String, actor: &ActorDecl, entry: &EntryDecl, model: &Mo
     }
     out.push('\n');
     emit_spawn_prelude(out, entry)?;
-    out.push_str(&lower_entry_body(actor, entry, model)?);
+    out.push_str(&lowered_body.sil);
     out.push_str("    }\n");
-    Ok(())
+    Ok(lowered_body.required_state_bodies)
 }
 
 fn emitted_auth_output_count(emits: &EmitSpec) -> usize {
@@ -2190,7 +2315,18 @@ fn emit_entry_template_locals(out: &mut String, _actor: &ActorDecl, witness_spec
     true
 }
 
-fn lower_entry_body(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<String> {
+struct LoweredEntryBody {
+    sil: String,
+    required_state_bodies: BTreeSet<String>,
+}
+
+fn record_required_state_body(required: &mut BTreeSet<String>, state: &str, lowered_type: &str) {
+    if lowered_type == hidden_state_body_type_name(state) {
+        required.insert(state.to_string());
+    }
+}
+
+fn lower_entry_body(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<LoweredEntryBody> {
     BodyLowerer::new(actor, entry, model)?.lower()
 }
 
@@ -2205,11 +2341,13 @@ struct BodyLowerer<'a, 'm> {
     source_types: BTreeMap<String, String>,
     selectors: BTreeMap<String, TemplateSelector>,
     materialized_selectors: BTreeSet<String>,
+    materialized_route_locals: BTreeMap<String, String>,
     input_names: BTreeSet<String>,
     output_names: BTreeSet<String>,
     observed_input_state_refs: Vec<(String, String)>,
     observed_output_fields: Vec<ObservedOutputFieldWitnessSpec>,
     validated_spawns: BTreeSet<String>,
+    required_state_bodies: BTreeSet<String>,
     conditional_depth: usize,
 }
 
@@ -2220,6 +2358,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
         let mut types = BTreeMap::new();
         let mut source_types = BTreeMap::new();
+        let mut required_state_bodies = BTreeSet::new();
         let expanded_digest_fields = state_expansion_digest_fields_for_state(&actor.state, model);
         for field in &model.storage_state(&actor.state)?.fields {
             if expanded_digest_fields.contains(field.name.as_str()) {
@@ -2234,7 +2373,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
         }
         for param in &entry.params {
-            types.insert(param.name.clone(), lower_entry_param_type(actor, &param.ty, model));
+            let ty = lower_entry_param_type(actor, &param.ty, model);
+            record_required_state_body(&mut required_state_bodies, &param.ty.name, &ty);
+            types.insert(param.name.clone(), ty);
             source_types.insert(param.name.clone(), source_type_ref(&param.ty));
         }
         for observe in &entry.observes {
@@ -2251,7 +2392,27 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let mut input_names = BTreeSet::new();
         for consume in &entry.consumes {
             input_names.insert(consume.name.clone());
-            types.insert(consume.name.clone(), contract_state_type_for_actor(&consume.actor, actor, model)?);
+            let state = model.actor(&consume.actor)?.state.clone();
+            let ty = contract_state_type_for_actor(&consume.actor, actor, model)?;
+            record_required_state_body(&mut required_state_bodies, &state, &ty);
+            types.insert(consume.name.clone(), ty);
+            source_types.insert(consume.name.clone(), state);
+        }
+        for observe in &entry.observes {
+            for input in &observe.inputs {
+                let source_ref = format!("{}.inputs.{}.state", observe.name, input.name);
+                let lowered_ref = hidden_observed_input_state_name(&observe.name, &input.name);
+                let state = if let Some(state) = observed_open_state_for_decl(actor, entry, observe, input, model)? {
+                    state.to_string()
+                } else {
+                    model.actor(&input.actor)?.state.clone()
+                };
+                let ty = contract_state_type_for_observed_actor(actor, entry, observe, input, model)?;
+                record_required_state_body(&mut required_state_bodies, &state, &ty);
+                types.insert(source_ref.clone(), ty.clone());
+                types.insert(lowered_ref, ty);
+                source_types.insert(source_ref, state);
+            }
         }
 
         let mut output_names = BTreeSet::new();
@@ -2292,16 +2453,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             source_types,
             selectors,
             materialized_selectors: BTreeSet::new(),
+            materialized_route_locals: BTreeMap::new(),
             input_names,
             output_names,
             observed_input_state_refs,
             observed_output_fields,
             validated_spawns: BTreeSet::new(),
+            required_state_bodies,
             conditional_depth: 0,
         })
     }
 
-    fn lower(mut self) -> Result<String> {
+    fn lower(mut self) -> Result<LoweredEntryBody> {
         let mut out = String::new();
         self.lower_statements(&mut out, 8, None)?;
         if out.trim().is_empty() {
@@ -2314,7 +2477,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 );
             }
         }
-        Ok(out)
+        Ok(LoweredEntryBody { sil: out, required_state_bodies: self.required_state_bodies })
     }
 
     fn lower_statements(&mut self, out: &mut String, indent: usize, end: Option<char>) -> Result<()> {
@@ -2380,8 +2543,30 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
                 self.lower_actor_type_statement(out, indent, state, name, expr)?;
                 return Ok(());
             }
-            let ty = self.lower_local_type(source_ty);
+            let ty = if self.model.states.contains_key(source_ty) {
+                self.types.get(expr.trim()).cloned().unwrap_or_else(|| self.lower_local_type(source_ty))
+            } else {
+                self.lower_local_type(source_ty)
+            };
+            if let Some(target_actor) = self.single_route_target_for_state_local(source_ty, name, expr, &ty)? {
+                let target_ty = contract_state_type_for_actor(&target_actor, self.actor, self.model)?;
+                let transition = (target_actor != self.actor.name).then(|| {
+                    self.model
+                        .route_transition(&self.actor.name, &target_actor)
+                        .expect("validated non-self route has a planned cut transition")
+                });
+                let state_expr = format!("{source_ty} {}", expr.trim());
+                let lowered = self.lower_state_expr_for_actor(&target_actor, transition, &state_expr, indent)?;
+                self.types.insert(name.to_string(), target_ty.clone());
+                self.source_types.insert(name.to_string(), source_ty.to_string());
+                self.materialized_route_locals.insert(name.to_string(), target_actor);
+
+                push_indent(out, indent);
+                out.push_str(&format!("{target_ty} {name} = {lowered};\n"));
+                return Ok(());
+            }
             let lowered = self.lower_typed_local_initializer(source_ty, &ty, expr, indent)?;
+            record_required_state_body(&mut self.required_state_bodies, source_ty, &ty);
             self.types.insert(name.to_string(), ty.clone());
             self.source_types.insert(name.to_string(), source_ty.to_string());
 
@@ -2401,6 +2586,42 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         out.push_str(&self.lower_expr(&statement, None, indent)?);
         out.push_str(";\n");
         Ok(())
+    }
+
+    fn single_route_target_for_state_local(
+        &self,
+        source_ty: &str,
+        name: &str,
+        expr: &str,
+        lowered_ty: &str,
+    ) -> Result<Option<String>> {
+        // A state-body object used only as one concrete route's state can
+        // receive that target layout at its declaration point. Counting exact
+        // identifier tokens keeps the optimization deliberately local: any
+        // read, rewrite, or second route preserves the route-neutral body.
+        if self.conditional_depth != 0
+            || lowered_ty != hidden_state_body_type_name(source_ty)
+            || split_state_object_literal(expr).is_none()
+            || self.tokens.iter().filter(|token| matches!(&token.kind, TokenKind::Ident(ident) if ident == name)).count() != 2
+        {
+            return Ok(None);
+        }
+
+        let mut routes = self.entry.routes.iter().filter(|route| route.state.trim() == name);
+        let Some(route) = routes.next() else {
+            return Ok(None);
+        };
+        if routes.next().is_some() {
+            return Ok(None);
+        }
+        let targets = self.model.route_targets(self.actor, self.entry, route)?;
+        let [target_actor] = targets.as_slice() else {
+            return Ok(None);
+        };
+        if contract_state_type_for_actor(target_actor, self.actor, self.model)? == lowered_ty {
+            return Ok(None);
+        }
+        Ok(Some(target_actor.clone()))
     }
 
     fn lower_actor_type_statement(&mut self, out: &mut String, indent: usize, state: &str, name: &str, expr: &str) -> Result<()> {
@@ -2455,9 +2676,9 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{selector_name}`")))?
             .clone();
         let family = self.selector_family(&selector)?;
-        if family.table_actors() != selector.variants.as_slice() {
+        if !family.table_actors().starts_with(&selector.variants) {
             return Err(ArgentError::new(format!(
-                "actor enum `{}` order must match route family `{}` table order for selector lowering",
+                "actor enum `{}` order must prefix route family `{}` table order for selector lowering",
                 selector.actor_enum, family.id
             )));
         }
@@ -2651,13 +2872,25 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     ) -> Result<()> {
         let state_name = source_actor_type_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
             .expect("spawn target actor_type checked during model validation");
-        let state_ty = if state_name == self.actor.state { "State".to_string() } else { state_name };
+        let concrete_actor = self.model.actors_by_name.contains_key(&output.actor).then_some(output.actor.as_str());
+        let state_ty = if let Some(actor) = concrete_actor {
+            contract_state_type_for_actor(actor, self.actor, self.model)?
+        } else if state_name == self.actor.state {
+            "State".to_string()
+        } else {
+            state_name.clone()
+        };
+        record_required_state_body(&mut self.required_state_bodies, &state_name, &state_ty);
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = if let Some(actor) = concrete_actor {
+                self.lower_state_expr_for_actor(actor, None, state_expr, indent)?
+            } else {
+                self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
+            };
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2696,12 +2929,25 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     ) -> Result<()> {
         let observe = self.entry.observes.iter().find(|observe| observe.name == observe_name).expect("observe checked by caller");
         let state_ty = contract_state_type_for_observed_actor(self.actor, self.entry, observe, observed_output, self.model)?;
+        let concrete_actor = self.model.actors_by_name.contains_key(&observed_output.actor).then_some(observed_output.actor.as_str());
+        let state_name = if let Some(actor) = concrete_actor {
+            self.model.actor(actor)?.state.clone()
+        } else {
+            observed_open_state_for_decl(self.actor, self.entry, observe, observed_output, self.model)?
+                .expect("dynamic observed actor has a validated state")
+                .to_string()
+        };
+        record_required_state_body(&mut self.required_state_bodies, &state_name, &state_ty);
         let state_expr = route.state.trim();
         let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = if let Some(actor) = concrete_actor {
+                self.lower_state_expr_for_actor(actor, None, state_expr, indent)?
+            } else {
+                self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
+            };
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2764,6 +3010,76 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         Ok(hidden_observed_actor_template_name(spec))
     }
 
+    fn lower_state_expr_for_actor(
+        &self,
+        actor: &str,
+        transition: Option<&CompilerRouteTransition>,
+        expr: &str,
+        indent: usize,
+    ) -> Result<String> {
+        let state_name = &self.model.actor(actor)?.state;
+        let state_ty = contract_state_type_for_actor(actor, self.actor, self.model)?;
+        let generated_fields = hidden_template_object_fields_for_actor(self.actor, actor, transition, self.model);
+        let force_materialization = transition.is_some_and(|transition| !transition.families_to_pack.is_empty());
+        self.lower_state_expr_for_layout(state_name, &state_ty, generated_fields, force_materialization, expr, indent)
+    }
+
+    fn lower_state_expr_for_dynamic_state(&self, state_name: &str, state_ty: &str, expr: &str, indent: usize) -> Result<String> {
+        let generated_fields = hidden_template_object_fields(
+            self.actor,
+            state_name,
+            route_field_kind_for_state_layout(state_name, self.model),
+            &[],
+            self.model,
+        );
+        self.lower_state_expr_for_layout(state_name, state_ty, generated_fields, false, expr, indent)
+    }
+
+    fn lower_state_expr_for_layout(
+        &self,
+        state_name: &str,
+        state_ty: &str,
+        generated_fields: Vec<(String, String)>,
+        force_materialization: bool,
+        expr: &str,
+        indent: usize,
+    ) -> Result<String> {
+        let expr = expr.trim();
+        if !force_materialization && self.types.get(expr).is_some_and(|ty| ty == state_ty) {
+            return self.lower_expr(expr, Some(state_ty), indent);
+        }
+        if let Some((source_state, body)) = split_state_constructor(expr) {
+            if self.model.storage_state_name(source_state)? != self.model.storage_state_name(state_name)? {
+                return Err(ArgentError::new(format!("state `{source_state}` cannot initialize contract state `{state_name}`")));
+            }
+            return self.lower_state_object(source_state, body, generated_fields, indent);
+        }
+
+        let source_state = if expr == "self.state" {
+            Some(self.actor.state.as_str())
+        } else {
+            self.source_types.get(expr).map(String::as_str).filter(|source_ty| self.model.states.contains_key(*source_ty))
+        };
+        if let Some(source_state) = source_state {
+            if self.model.storage_state_name(source_state)? != self.model.storage_state_name(state_name)? {
+                return Err(ArgentError::new(format!("state `{source_state}` cannot initialize contract state `{state_name}`")));
+            }
+            let fields = self
+                .model
+                .storage_state(state_name)?
+                .fields
+                .iter()
+                .map(|field| {
+                    let expr = if expr == "self.state" { field.name.clone() } else { format!("{expr}.{}", field.name) };
+                    (field.name.clone(), expr)
+                })
+                .collect::<Vec<_>>();
+            return self.render_state_object(state_name, &fields, generated_fields, indent);
+        }
+
+        self.lower_expr(expr, Some(state_ty), indent)
+    }
+
     fn lower_route(&mut self, out: &mut String, indent: usize, route: RouteCall) -> Result<()> {
         if self.selectors.contains_key(&route.actor) {
             return self.lower_selector_route(out, indent, route);
@@ -2785,13 +3101,20 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             return Ok(());
         }
 
+        let transition = (route.actor != self.actor.name).then(|| {
+            self.model.route_transition(&self.actor.name, &route.actor).expect("validated non-self route has a planned cut transition")
+        });
         let state_ty = contract_state_type_for_actor(&route.actor, self.actor, self.model)?;
+        let state_name = self.model.actor(&route.actor)?.state.clone();
+        record_required_state_body(&mut self.required_state_bodies, &state_name, &state_ty);
         let state_expr = route.state.trim();
-        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+        let packs_family = transition.is_some_and(|transition| !transition.families_to_pack.is_empty());
+        let already_materialized = self.materialized_route_locals.get(state_expr).is_some_and(|actor| actor == &route.actor);
+        let state_arg = if (!packs_family || already_materialized) && self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = self.lower_state_expr_for_actor(&route.actor, transition, state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2848,13 +3171,25 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             .ok_or_else(|| ArgentError::new(format!("unknown actor handle `{}`", route.actor)))?
             .clone();
         let output_idx = route.output.as_ref().map_or_else(hidden_next_output_idx_name, |output| hidden_output_idx_name(output));
-        let state_ty = if selector.state == self.actor.state { "State".to_string() } else { selector.state.clone() };
+        let layout_actor = selector.variants.first().expect("validated actor selector has at least one variant");
+        let transition = self
+            .model
+            .route_transition(&self.actor.name, layout_actor)
+            .expect("validated selector route has a planned cut transition");
+        debug_assert!(
+            selector.variants.iter().skip(1).all(|actor| self.model.route_transition(&self.actor.name, actor) == Some(transition)),
+            "selector variants must use one cut transition"
+        );
+        let state_ty = contract_state_type_for_actor(layout_actor, self.actor, self.model)?;
+        let state_name = self.model.actor(layout_actor)?.state.clone();
+        record_required_state_body(&mut self.required_state_bodies, &state_name, &state_ty);
         let state_expr = route.state.trim();
-        let state_arg = if self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
+        let packs_family = !transition.families_to_pack.is_empty();
+        let state_arg = if !packs_family && self.types.get(state_expr).is_some_and(|ty| ty == &state_ty) {
             self.lower_expr(state_expr, Some(&state_ty), indent)?
         } else {
             let name = generated_state_name(&route, &state_ty);
-            let lowered = self.lower_expr(state_expr, Some(&state_ty), indent)?;
+            let lowered = self.lower_state_expr_for_actor(layout_actor, Some(transition), state_expr, indent)?;
             push_indent(out, indent);
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
@@ -2947,6 +3282,18 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         {
             return self.lower_state_object_for_state(&state_name, body, indent);
         }
+        if self.model.states.contains_key(source_ty) && self.types.get(expr.trim()).is_none_or(|ty| ty != lowered_ty) {
+            let lowered_expr = self.lower_expr(expr, None, indent)?;
+            let fields = self
+                .model
+                .storage_state(source_ty)?
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), format!("{lowered_expr}.{}", field.name)))
+                .collect::<Vec<_>>();
+            let generated_fields = hidden_template_object_fields_for_state(self.actor, source_ty, self.model);
+            return self.render_state_object(source_ty, &fields, generated_fields, indent);
+        }
         self.lower_expr(expr, Some(lowered_ty), indent)
     }
 
@@ -2979,15 +3326,26 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
 
     fn lower_state_object_for_state(&self, state_name: &str, body: &str, indent: usize) -> Result<String> {
         self.model.state(state_name)?;
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
+        self.lower_state_object(state_name, body, generated_fields, indent)
+    }
+
+    fn lower_state_object(
+        &self,
+        state_name: &str,
+        body: &str,
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let raw_fields = parse_state_fields(body);
         if self.model.state(state_name)?.expansion.is_some() {
-            return self.render_expanded_state_object_for_state(state_name, &raw_fields, indent);
+            return self.render_expanded_state_object(state_name, &raw_fields, generated_fields, indent);
         }
         let fields = raw_fields
             .into_iter()
             .map(|(name, expr)| self.lower_expr(&expr, None, indent + 4).map(|lowered| (name, lowered)))
             .collect::<Result<Vec<_>>>()?;
-        self.render_state_object_for_state(state_name, &fields, indent)
+        self.render_state_object(state_name, &fields, generated_fields, indent)
     }
 
     fn lower_local_type(&self, source_ty: &str) -> String {
@@ -3001,7 +3359,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             (Ok(current_storage), Ok(source_storage)) => current_storage == source_storage,
             _ => false,
         };
-        if source_ty == self.actor.state || same_storage { "State".to_string() } else { source_ty.to_string() }
+        if source_ty == self.actor.state || same_storage {
+            "State".to_string()
+        } else if self.model.states.contains_key(source_ty) {
+            state_body_type_name(source_ty, self.model)
+        } else {
+            source_ty.to_string()
+        }
     }
 
     fn source_state_for_local_type(&self, source_ty: &str) -> Option<String> {
@@ -3015,10 +3379,17 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     }
 
     fn render_state_object_for_state(&self, state_name: &str, fields: &[(String, String)], indent: usize) -> Result<String> {
-        if self.model.state(state_name)?.expansion.is_some() {
-            return self.render_expanded_state_object_for_state(state_name, fields, indent);
-        }
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
+        self.render_state_object(state_name, fields, generated_fields, indent)
+    }
 
+    fn render_state_object(
+        &self,
+        state_name: &str,
+        fields: &[(String, String)],
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let field_indent = " ".repeat(indent + 4);
         let close_indent = " ".repeat(indent);
         let mut pending = fields.iter().cloned().collect::<BTreeMap<_, _>>();
@@ -3027,7 +3398,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(&self.actor.state, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -3065,7 +3435,13 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
     }
 
-    fn render_expanded_state_object_for_state(&self, state_name: &str, fields: &[(String, String)], indent: usize) -> Result<String> {
+    fn render_expanded_state_object(
+        &self,
+        state_name: &str,
+        fields: &[(String, String)],
+        generated_fields: Vec<(String, String)>,
+        indent: usize,
+    ) -> Result<String> {
         let state = self.model.state(state_name)?;
         let expansion = state.expansion.as_ref().ok_or_else(|| ArgentError::new(format!("state `{state_name}` is not expanded")))?;
         let storage_state = self.model.storage_state(state_name)?;
@@ -3077,7 +3453,6 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(&self.actor.state, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -3855,18 +4230,30 @@ fn template_witness_specs_for_actor(
     read_actors: BTreeSet<String>,
     write_actors: BTreeSet<String>,
 ) -> EntryWitnessSpecs {
-    let mut specs = template_witness_specs(model, read_actors, write_actors);
+    let mut specs = template_witness_specs(model, read_actors, write_actors.clone());
     let mut family_specs = BTreeMap::<String, RouteFamilyWitnessSpec>::new();
-    for spec in &mut specs {
-        spec.source = template_source_for_actor(&actor.state, &spec.actor, model);
-        if let Some(family) = model.route_family_for_actor(&spec.actor)
-            && actor.state != family.state
-            && route_leaves_contain_family(model.route_leaves_for_state(&actor.state), &family.id)
-        {
+    for target in &write_actors {
+        let transition =
+            model.route_transition(&actor.name, target).expect("validated foreign-template route has a planned cut transition");
+        for family_id in &transition.families_to_open {
+            let family = model.route_family(family_id).expect("validated route transition references a known family");
             family_specs
                 .entry(family.id.clone())
                 .or_insert(RouteFamilyWitnessSpec { family_id: family.id.clone(), byte_len: family.table_byte_len() });
         }
+    }
+    for spec in &mut specs {
+        spec.source = model
+            .route_family_for_actor(&spec.actor)
+            .filter(|family| family_specs.contains_key(&family.id))
+            .and_then(|family| {
+                family
+                    .table_actors()
+                    .iter()
+                    .position(|candidate| candidate == &spec.actor)
+                    .map(|index| TemplateWitnessSource::FamilyTable { family_id: family.id.clone(), offset: index * 32 })
+            })
+            .unwrap_or_else(|| template_source_for_actor(&actor.state, &spec.actor, model));
     }
     EntryWitnessSpecs {
         templates: specs,
@@ -4458,7 +4845,7 @@ fn interface_set_artifact(model: &Model<'_>) -> Result<InterfaceSetArtifact> {
 
 fn actor_interface_artifact(actor_name: &str, model: &Model<'_>) -> Result<ActorInterfaceArtifact> {
     let actor = model.actor(actor_name)?;
-    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let runtime_fields = runtime_state_fields_for_actor(actor, model)?;
     let fingerprint_hex = actor_interface_fingerprint_hex(&actor.name, &actor.state, &runtime_fields)
         .map_err(|err| ArgentError::new(format!("failed to compute actor interface fingerprint for `{}`: {err}", actor.name)))?;
     Ok(ActorInterfaceArtifact {
@@ -4574,7 +4961,7 @@ fn actor_type_handle_artifact(
         })
         .transpose()?
         .unwrap_or_default();
-    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let runtime_fields = runtime_state_fields_for_actor(actor, model)?;
     let context_state = RuntimeStateArtifact {
         source: expansion.base.clone(),
         fields: runtime_fields.iter().take(context_fields.len()).cloned().collect(),
@@ -4641,7 +5028,7 @@ fn route_template_families_artifact(model: &Model<'_>) -> Vec<RouteTemplateFamil
         .map(|family| RouteTemplateFamilyArtifact {
             id: family.id.clone(),
             state: family.state.clone(),
-            anchor_actor: family.anchor_actor().to_string(),
+            representative_actor: family.rep().to_string(),
             entry_actors: family.entry_actors.clone(),
             table_id: route_template_table_receipt_id(&family.state, &hidden_route_family_table_name(family)),
             actors: family.actors.clone(),
@@ -4767,10 +5154,7 @@ fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTree
     Ok(SilContractArtifact {
         name: actor.name.clone(),
         source_path: format!("sil/{}.sil", actor.name),
-        runtime_state: RuntimeStateArtifact {
-            source: actor.state.clone(),
-            fields: runtime_state_fields_for_source(&actor.state, model)?,
-        },
+        runtime_state: RuntimeStateArtifact { source: actor.state.clone(), fields: runtime_state_fields_for_actor(actor, model)? },
         entries,
         compiled: compile_contract_artifact(sil, actor, model)?,
     })
@@ -4785,7 +5169,7 @@ fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<
 
 fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
     let state = model.storage_state(&actor.state)?;
-    let hidden_args = hidden_template_init_args_for_state(&actor.state, model);
+    let hidden_args = hidden_template_init_args_for_actor(actor, model);
     let mut args = Vec::with_capacity(hidden_args.len() + state.fields.len());
 
     // These placeholders are valid because Argent-generated constructor
@@ -4793,13 +5177,15 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
     // state fields. If a constructor argument affects code shape outside the
     // compiled state span, the template hash changes and the contract must be
     // recompiled for that value.
-    match route_field_kind(&actor.state, model) {
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             args.extend(actor_templates.into_iter().map(|_| zero_byte_array_expr(32)));
             args.extend(family_commitments.into_iter().map(|_| zero_byte_array_expr(32)));
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            args.extend(actor_templates.into_iter().map(|_| zero_byte_array_expr(32)));
+            args.extend(family_commitments.into_iter().map(|_| zero_byte_array_expr(32)));
             for family in families {
                 args.extend(family.direct_template_actors().iter().map(|_| zero_byte_array_expr(32)));
                 args.push(zero_byte_array_expr(family.table_byte_len()));
@@ -4874,13 +5260,13 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
     })
 }
 
-fn runtime_state_field_defs_for_source(
-    source_state: &str,
+fn runtime_state_field_defs_for_actor(
+    actor: &ActorDecl,
     model: &Model<'_>,
 ) -> Result<Vec<(String, TypeArtifact, Option<RuntimeFieldRoleArtifact>)>> {
-    let state = model.storage_state(source_state)?;
+    let state = model.storage_state(&actor.state)?;
     let mut fields = Vec::new();
-    match route_field_kind(source_state, model) {
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
@@ -4898,7 +5284,21 @@ fn runtime_state_field_defs_for_source(
                 ));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                fields.push((
+                    hidden_template_name(actor),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::Template { contract: actor.to_string() }),
+                ));
+            }
+            for family in family_commitments {
+                fields.push((
+                    hidden_route_family_commitment_name(family),
+                    TypeArtifact::from_parts("byte", Some(32)),
+                    Some(RuntimeFieldRoleArtifact::TemplateDigest { id: family.id.clone() }),
+                ));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     fields.push((
@@ -4915,7 +5315,7 @@ fn runtime_state_field_defs_for_source(
             }
         }
     }
-    for spec in observed_template_specs_for_state(source_state, model) {
+    for spec in observed_template_specs_for_state(&actor.state, model) {
         fields.push((
             hidden_observed_actor_template_name(&spec),
             TypeArtifact::from_parts("byte", Some(32)),
@@ -4933,15 +5333,15 @@ fn runtime_state_field_defs_for_source(
     Ok(fields)
 }
 
-fn runtime_state_fields_for_source(source_state: &str, model: &Model<'_>) -> Result<Vec<RuntimeFieldArtifact>> {
-    Ok(runtime_state_field_defs_for_source(source_state, model)?
+fn runtime_state_fields_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<RuntimeFieldArtifact>> {
+    Ok(runtime_state_field_defs_for_actor(actor, model)?
         .into_iter()
         .map(|(name, ty, _role)| RuntimeFieldArtifact { name, ty })
         .collect())
 }
 
 fn runtime_state_plan_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<Option<RuntimeStatePlanArtifact>> {
-    let field_roles = runtime_state_field_defs_for_source(&actor.state, model)?
+    let field_roles = runtime_state_field_defs_for_actor(actor, model)?
         .into_iter()
         .filter_map(|(name, _ty, role)| role.map(|role| RuntimeFieldRolePlanArtifact { name, role }))
         .collect::<Vec<_>>();
@@ -5445,6 +5845,8 @@ fn lower_entry_param_type(actor: &ActorDecl, ty: &TypeRef, model: &Model<'_>) ->
             ))
     {
         "State".to_string()
+    } else if ty.array.is_none() && model.states.contains_key(&ty.name) {
+        state_body_type_name(&ty.name, model)
     } else {
         lower_type_ref(ty, model)
     }
@@ -5744,11 +6146,22 @@ fn to_snake(input: &str) -> String {
     out
 }
 
+fn to_upper_camel(input: &str) -> String {
+    input
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            chars.next().map_or_else(String::new, |first| first.to_ascii_uppercase().to_string() + chars.as_str())
+        })
+        .collect()
+}
+
 fn reject_reserved_identifier(context: &str, name: &str) -> Result<()> {
-    if name.starts_with(RESERVED_GENERATED_PREFIX) {
-        return Err(ArgentError::new(format!(
-            "{context} identifier `{name}` uses reserved generated namespace `{RESERVED_GENERATED_PREFIX}`"
-        )));
+    let generated_prefix =
+        [RESERVED_GENERATED_PREFIX, RESERVED_GENERATED_TYPE_PREFIX].into_iter().find(|prefix| name.starts_with(prefix));
+    if let Some(generated_prefix) = generated_prefix {
+        return Err(ArgentError::new(format!("{context} identifier `{name}` uses reserved generated namespace `{generated_prefix}`")));
     }
     if name == "State" {
         return Err(ArgentError::new(format!("{context} identifier `State` is reserved for generated Silverscript state")));
@@ -5758,6 +6171,14 @@ fn reject_reserved_identifier(context: &str, name: &str) -> Result<()> {
 
 fn hidden_actor_suffix(actor: &str) -> String {
     to_snake(actor)
+}
+
+fn hidden_actor_state_type_name(actor: &str) -> String {
+    format!("{RESERVED_GENERATED_TYPE_PREFIX}{}State", to_upper_camel(actor))
+}
+
+fn hidden_state_body_type_name(state: &str) -> String {
+    format!("{RESERVED_GENERATED_TYPE_PREFIX}{}Body", to_upper_camel(state))
 }
 
 fn hidden_template_init_name(actor: &str) -> String {
@@ -5801,10 +6222,6 @@ fn hidden_route_family_table_name_by_id(family_id: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{}_routes", route_family_suffix_by_id(family_id))
 }
 
-fn route_leaves_contain_family(leaves: &[RouteRootLeaf], family_id: &str) -> bool {
-    leaves.iter().any(|leaf| matches!(leaf, RouteRootLeaf::Family(id) if id == family_id))
-}
-
 fn route_table_leaf_for_runtime_leaf(leaf: &RuntimeRouteLeafArtifact) -> RouteTemplateLeafArtifact {
     match leaf {
         RuntimeRouteLeafArtifact::Contract { contract } => {
@@ -5823,20 +6240,66 @@ fn route_family_proof_id_from_id(family_id: &str) -> String {
 
 fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
     let families = model.route_families_for_state(state);
+    route_field_kind_from_leaves(model.route_leaves_for_state(state), families, model)
+}
+
+fn route_field_kind_for_state_layout<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
+    let mut actors = model.actors.iter().filter(|actor| actor.state == state);
+    let Some(first_actor) = actors.next() else {
+        return route_field_kind(state, model);
+    };
+    let shared_fields = route_field_kind_for_actor(&first_actor.name, model);
+    if actors.all(|actor| route_field_kind_for_actor(&actor.name, model) == shared_fields) {
+        shared_fields
+    } else {
+        route_field_kind(state, model)
+    }
+}
+
+fn route_field_kind_for_actor<'a>(actor: &str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
+    let Some(leaves) = model.route_leaves_by_actor.get(actor) else {
+        let state = &model.actors_by_name[actor].state;
+        return route_field_kind(state, model);
+    };
+    let families = model.route_family_for_actor(actor).into_iter().collect::<Vec<_>>();
+    route_field_kind_from_leaves(leaves, families, model)
+}
+
+fn route_field_kind_from_leaves<'a>(
+    leaves: &'a [RouteRootLeaf],
+    families: Vec<&'a RouteFamily>,
+    model: &'a Model<'_>,
+) -> RouteFieldKind<'a> {
     if !families.is_empty() {
-        return RouteFieldKind::FamilyTables { families };
+        let family_actors = families.iter().flat_map(|family| family.actors.iter().map(String::as_str)).collect::<BTreeSet<_>>();
+        let family_ids = families.iter().map(|family| family.id.as_str()).collect::<BTreeSet<_>>();
+        let actor_templates = leaves
+            .iter()
+            .filter_map(|leaf| match leaf {
+                RouteRootLeaf::Actor(actor) if !family_actors.contains(actor.as_str()) => Some(actor.as_str()),
+                RouteRootLeaf::Actor(_) | RouteRootLeaf::Family(_) => None,
+            })
+            .collect::<Vec<_>>();
+        let family_commitments = leaves
+            .iter()
+            .filter_map(|leaf| match leaf {
+                RouteRootLeaf::Family(family_id) if !family_ids.contains(family_id.as_str()) => {
+                    model.route_families.iter().find(|family| family.id == *family_id)
+                }
+                RouteRootLeaf::Actor(_) | RouteRootLeaf::Family(_) => None,
+            })
+            .collect::<Vec<_>>();
+        return RouteFieldKind::FamilyTables { actor_templates, family_commitments, families };
     }
 
-    let actor_templates = model
-        .route_leaves_for_state(state)
+    let actor_templates = leaves
         .iter()
         .filter_map(|leaf| match leaf {
             RouteRootLeaf::Actor(actor) => Some(actor.as_str()),
             RouteRootLeaf::Family(_) => None,
         })
         .collect::<Vec<_>>();
-    let family_commitments = model
-        .route_leaves_for_state(state)
+    let family_commitments = leaves
         .iter()
         .filter_map(|leaf| match leaf {
             RouteRootLeaf::Actor(_) => None,
@@ -5851,14 +6314,31 @@ fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<
     }
 }
 
+#[derive(PartialEq, Eq)]
 enum RouteFieldKind<'a> {
     None,
     Direct { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily> },
-    FamilyTables { families: Vec<&'a RouteFamily> },
+    FamilyTables { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily>, families: Vec<&'a RouteFamily> },
 }
 
-fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
-    let mut args = match route_field_kind(state, model) {
+fn state_body_type_name(state: &str, model: &Model<'_>) -> String {
+    let mut actors = model.actors.iter().filter(|actor| actor.state == state);
+    let has_distinct_actor_layout = actors
+        .next()
+        .map(|first_actor| {
+            let first_fields = route_field_kind_for_actor(&first_actor.name, model);
+            actors.any(|actor| route_field_kind_for_actor(&actor.name, model) != first_fields)
+        })
+        .unwrap_or(false);
+    let has_transition_dependent_packing = model
+        .route_transitions
+        .iter()
+        .any(|((_, target), transition)| !transition.families_to_pack.is_empty() && model.actors_by_name[target].state == state);
+    if has_distinct_actor_layout || has_transition_dependent_packing { hidden_state_body_type_name(state) } else { state.to_string() }
+}
+
+fn hidden_template_init_args_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Vec<String> {
+    let mut args = match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => Vec::new(),
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             let mut args =
@@ -5868,8 +6348,12 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
             );
             args
         }
-        RouteFieldKind::FamilyTables { families } => {
-            let mut args = Vec::new();
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            let mut args =
+                actor_templates.into_iter().map(|actor| format!("byte[32] {}", hidden_template_init_name(actor))).collect::<Vec<_>>();
+            args.extend(
+                family_commitments.into_iter().map(|family| format!("byte[32] {}", hidden_route_family_commitment_init_name(family))),
+            );
             for family in families {
                 args.extend(
                     family.direct_template_actors().iter().map(|actor| format!("byte[32] {}", hidden_template_init_name(actor))),
@@ -5880,16 +6364,16 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
         }
     };
     args.extend(
-        observed_template_specs_for_state(state, model)
+        observed_template_specs_for_state(&actor.state, model)
             .iter()
             .map(|spec| format!("byte[32] {}", hidden_observed_actor_template_init_name(spec))),
     );
     args
 }
 
-fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
-    let observed_templates = observed_template_specs_for_state(state, model);
-    match route_field_kind(state, model) {
+fn emit_route_template_table(out: &mut String, actor: &ActorDecl, model: &Model<'_>) {
+    let observed_templates = observed_template_specs_for_state(&actor.state, model);
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
@@ -5903,7 +6387,17 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
                 ));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
+            }
+            for family in family_commitments {
+                out.push_str(&format!(
+                    "    byte[32] {} = {};\n",
+                    hidden_route_family_commitment_name(family),
+                    hidden_route_family_commitment_init_name(family)
+                ));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     out.push_str(&format!("    byte[32] {} = {};\n", hidden_template_name(actor), hidden_template_init_name(actor)));
@@ -5927,11 +6421,25 @@ fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
 }
 
 fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>, indent: usize) {
-    let field_indent = " ".repeat(indent);
     let observed_templates = observed_template_specs_for_state(state, model);
-    match route_field_kind(state, model) {
+    emit_hidden_template_fields_for_kind(out, route_field_kind_for_state_layout(state, model), &observed_templates, indent);
+}
+
+fn emit_hidden_template_fields_for_actor(out: &mut String, actor: &str, model: &Model<'_>, indent: usize) {
+    let observed_templates = observed_template_specs_for_state(&model.actors_by_name[actor].state, model);
+    emit_hidden_template_fields_for_kind(out, route_field_kind_for_actor(actor, model), &observed_templates, indent);
+}
+
+fn emit_hidden_template_fields_for_kind(
+    out: &mut String,
+    fields: RouteFieldKind<'_>,
+    observed_templates: &[ObservedActorWitnessSpec],
+    indent: usize,
+) {
+    let field_indent = " ".repeat(indent);
+    match fields {
         RouteFieldKind::None => {
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
@@ -5942,11 +6450,17 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
             for family in family_commitments {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_route_family_commitment_name(family)));
             }
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
-        RouteFieldKind::FamilyTables { families } => {
+        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+            for actor in actor_templates {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
+            }
+            for family in family_commitments {
+                out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_route_family_commitment_name(family)));
+            }
             for family in families {
                 for actor in family.direct_template_actors() {
                     out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_template_name(actor)));
@@ -5957,48 +6471,115 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
                     hidden_route_family_table_name(family)
                 ));
             }
-            for spec in &observed_templates {
+            for spec in observed_templates {
                 out.push_str(&format!("{field_indent}byte[32] {};\n", hidden_observed_actor_template_name(spec)));
             }
         }
     }
 }
 
-fn hidden_template_object_fields_for_state(source_state: &str, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
-    let mut fields = match route_field_kind(target_state, model) {
-        RouteFieldKind::None => Vec::new(),
-        RouteFieldKind::Direct { actor_templates, family_commitments } => {
-            let mut fields = actor_templates
-                .into_iter()
-                .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
-                .collect::<Vec<_>>();
-            fields.extend(
-                family_commitments
+fn hidden_template_object_fields_for_state(source_actor: &ActorDecl, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
+    let same_storage = matches!(
+        (model.storage_state_name(&source_actor.state), model.storage_state_name(target_state)),
+        (Ok(source_storage), Ok(target_storage)) if source_storage == target_storage
+    );
+    if !same_storage {
+        if state_body_type_name(target_state, model) != target_state {
+            return Vec::new();
+        }
+        return hidden_template_object_fields(
+            source_actor,
+            target_state,
+            route_field_kind_for_state_layout(target_state, model),
+            &[],
+            model,
+        );
+    }
+    hidden_template_object_fields(source_actor, target_state, route_field_kind_for_actor(&source_actor.name, model), &[], model)
+}
+
+fn hidden_template_object_fields_for_actor(
+    source_actor: &ActorDecl,
+    target_actor: &str,
+    transition: Option<&CompilerRouteTransition>,
+    model: &Model<'_>,
+) -> Vec<(String, String)> {
+    hidden_template_object_fields(
+        source_actor,
+        &model.actors_by_name[target_actor].state,
+        route_field_kind_for_actor(target_actor, model),
+        transition.map_or(&[], |transition| transition.families_to_pack.as_slice()),
+        model,
+    )
+}
+
+fn hidden_template_object_fields(
+    source_actor: &ActorDecl,
+    target_state: &str,
+    target_fields: RouteFieldKind<'_>,
+    families_to_pack: &[String],
+    model: &Model<'_>,
+) -> Vec<(String, String)> {
+    let mut fields =
+        match target_fields {
+            RouteFieldKind::None => Vec::new(),
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                let mut fields = actor_templates
                     .into_iter()
-                    .map(|family| (hidden_route_family_commitment_name(family), hidden_route_family_commitment_name(family))),
-            );
-            fields
-        }
-        RouteFieldKind::FamilyTables { families } => {
-            let mut fields = Vec::new();
-            for family in families {
-                let table_expr = hidden_route_family_table_name(family);
-                fields.extend(
-                    family
-                        .direct_template_actors()
-                        .iter()
-                        .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model))),
-                );
-                fields.push((hidden_route_family_table_name(family), table_expr));
+                    .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
+                    .collect::<Vec<_>>();
+                fields.extend(family_commitments.into_iter().map(|family| {
+                    (
+                        hidden_route_family_commitment_name(family),
+                        hidden_route_family_commitment_expr(source_actor, family, families_to_pack, model),
+                    )
+                }));
+                fields
             }
-            fields
-        }
-    };
+            RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+                let mut fields = actor_templates
+                    .into_iter()
+                    .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
+                    .collect::<Vec<_>>();
+                fields.extend(family_commitments.into_iter().map(|family| {
+                    (
+                        hidden_route_family_commitment_name(family),
+                        hidden_route_family_commitment_expr(source_actor, family, families_to_pack, model),
+                    )
+                }));
+                for family in families {
+                    let table_expr = hidden_route_family_table_name(family);
+                    fields.extend(family.direct_template_actors().iter().map(|actor| {
+                        (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model))
+                    }));
+                    fields.push((hidden_route_family_table_name(family), table_expr));
+                }
+                fields
+            }
+        };
     fields.extend(observed_template_specs_for_state(target_state, model).into_iter().map(|spec| {
         let field = hidden_observed_actor_template_name(&spec);
         (field.clone(), field)
     }));
     fields
+}
+
+fn hidden_route_family_commitment_expr(
+    source_actor: &ActorDecl,
+    family: &RouteFamily,
+    families_to_pack: &[String],
+    model: &Model<'_>,
+) -> String {
+    if !families_to_pack.contains(&family.id) {
+        return hidden_route_family_commitment_name(family);
+    }
+
+    if model.route_family_for_actor(&source_actor.name).is_some_and(|source_family| source_family.id == family.id) {
+        return format!("blake2b({})", hidden_route_family_table_name(family));
+    }
+
+    let preimage = family.table_actors().iter().map(|actor| hidden_template_name(actor)).collect::<Vec<_>>().join(" + ");
+    format!("blake2b({preimage})")
 }
 
 fn hidden_template_expr_for_actor(source_state: &str, actor: &str, model: &Model<'_>) -> String {
@@ -6017,8 +6598,8 @@ fn template_witness_recipe_id(actor: &str, purpose: HiddenParamPurposeArtifact) 
     format!("witness/{}/{}", hidden_actor_suffix(actor), hidden_param_purpose_id(purpose))
 }
 
-fn route_template_family_receipt_id(state: &str, anchor_actor: &str) -> String {
-    format!("route_family/{state}/{}", hidden_actor_suffix(anchor_actor))
+fn route_template_family_receipt_id(state: &str, rep_actor: &str) -> String {
+    format!("route_family/{state}/{}", hidden_actor_suffix(rep_actor))
 }
 
 fn route_family_witness_recipe_id(family_id: &str, purpose: HiddenParamPurposeArtifact) -> String {
@@ -6233,13 +6814,24 @@ fn hidden_output_idx_name(output: &str) -> String {
     format!("{RESERVED_GENERATED_PREFIX}{output}_output_idx")
 }
 
-fn state_struct_name_for_actor(actor: &str, model: &Model<'_>) -> Result<String> {
-    Ok(model.actor(actor)?.state.clone())
-}
-
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let target_state = model.actor(actor)?.state.as_str();
-    if target_state == current_actor.state { Ok("State".to_string()) } else { state_struct_name_for_actor(actor, model) }
+    if target_state == current_actor.state {
+        return Ok(if route_field_kind_for_actor(actor, model) == route_field_kind_for_actor(&current_actor.name, model) {
+            "State".to_string()
+        } else {
+            hidden_actor_state_type_name(actor)
+        });
+    }
+
+    let actor_fields = route_field_kind_for_actor(actor, model);
+    if actor_fields == route_field_kind_for_state_layout(target_state, model) {
+        Ok(target_state.to_string())
+    } else if matches!(actor_fields, RouteFieldKind::None) && observed_template_specs_for_state(target_state, model).is_empty() {
+        Ok(state_body_type_name(target_state, model))
+    } else {
+        Ok(hidden_actor_state_type_name(actor))
+    }
 }
 
 fn contract_state_type_for_observed_actor(
@@ -8079,13 +8671,671 @@ mod tests {
     }
 
     #[test]
+    fn compiler_route_leaves_preserve_packed_and_opened_commitment_nodes() {
+        let mut graph = RouteGraph::default();
+        graph.add_actor("Knight");
+        graph.add_emit("Player", "Mux");
+        graph.add_emit("Mux", "Knight");
+        graph.add_emit("Mux", "Pawn");
+        graph.add_emit("Pawn", "Mux");
+        graph.add_emit("Mux", "Settle");
+        let domains = BTreeMap::from([
+            ("BoardState".to_string(), ["Knight", "Mux", "Pawn"].into_iter().map(str::to_string).collect()),
+            ("PlayerState".to_string(), vec!["Player".to_string()]),
+            ("SettleState".to_string(), vec!["Settle".to_string()]),
+        ]);
+
+        let plan = route_plan(&graph, &domains, &[]).expect("route plan is valid");
+        let leaves = compiler_route_leaves(&plan).expect("commitment nodes lower to compiler leaves");
+
+        assert_eq!(
+            leaves["Player"],
+            [
+                RouteRootLeaf::Family("route_family/BoardState/mux".to_string()),
+                RouteRootLeaf::Actor("Mux".to_string()),
+                RouteRootLeaf::Actor("Settle".to_string()),
+            ]
+        );
+        assert_eq!(
+            leaves["Mux"],
+            [
+                RouteRootLeaf::Actor("Knight".to_string()),
+                RouteRootLeaf::Actor("Pawn".to_string()),
+                RouteRootLeaf::Actor("Mux".to_string()),
+                RouteRootLeaf::Actor("Settle".to_string()),
+            ]
+        );
+        assert!(leaves["Settle"].is_empty());
+
+        let family_id = "route_family/BoardState/mux".to_string();
+        assert_eq!(
+            compiler_route_transition(&plan, "Player", "Mux").expect("Player can open the Mux family"),
+            CompilerRouteTransition { families_to_open: vec![family_id.clone()], families_to_pack: Vec::new() }
+        );
+        assert_eq!(
+            compiler_route_transition(&plan, "Mux", "Player").expect("Mux can pack its family for Player"),
+            CompilerRouteTransition { families_to_open: Vec::new(), families_to_pack: vec![family_id] }
+        );
+    }
+
+    #[test]
+    fn compiler_lowers_injected_deep_forest_cuts() {
+        use crate::routing::{CommitmentForest, CommitmentPlan, Cut, FamilyPlan, NodePath, RoutePlan};
+
+        fn leaf(actor: &str) -> CommitmentNode {
+            CommitmentNode::Leaf { actor: actor.to_string() }
+        }
+
+        fn cut(paths: &[&[usize]]) -> Cut {
+            paths.iter().map(|path| NodePath::new(path.to_vec())).collect()
+        }
+
+        let source = r#"
+            state SourceState {
+                int value;
+            }
+
+            state SharedState {
+                int value;
+            }
+
+            state TailState {
+                int value;
+            }
+
+            actor Source owns SourceState {
+                entry start() emits one HubA {
+                    SharedState next = { value: value + 1 };
+                    become HubA(next);
+                }
+            }
+
+            actor HubA owns SharedState {
+                entry advance() emits one A1 {
+                    SharedState next = { value: value + 1 };
+                    become A1(next);
+                }
+            }
+
+            actor A1 owns SharedState {
+                entry advance() emits one A2 {
+                    SharedState next = { value: value + 1 };
+                    become A2(next);
+                }
+            }
+
+            actor A2 owns SharedState {
+                entry cross() emits one HubB {
+                    SharedState next = { value: value + 1 };
+                    become HubB(next);
+                }
+            }
+
+            actor HubB owns SharedState {
+                entry advance() emits one B1 {
+                    SharedState next = { value: value + 1 };
+                    become B1(next);
+                }
+
+                entry rewind() emits one A1 {
+                    SharedState next = { value: value + 1 };
+                    become A1(next);
+                }
+            }
+
+            actor B1 owns SharedState {
+                entry advance() emits one B2 {
+                    SharedState next = { value: value + 1 };
+                    become B2(next);
+                }
+            }
+
+            actor B2 owns SharedState {
+                entry finish() emits one Tail {
+                    TailState next = { value: value + 1 };
+                    become Tail(next);
+                }
+            }
+
+            actor Tail owns TailState {
+                entry finish() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            app DeepForest {
+                actor Source;
+                actor HubA;
+                actor A1;
+                actor A2;
+                actor HubB;
+                actor B1;
+                actor B2;
+                actor Tail;
+            }
+        "#;
+        let path = PathBuf::from("deep-forest.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("deep-forest app parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        // The useful family branches live four levels below the forest root.
+        // Wrapper branches are deliberately absent from every partial cut;
+        // cuts mix packed families, opened family leaves, and a retained leaf.
+        let forest = CommitmentForest {
+            roots: vec![CommitmentNode::Branch {
+                children: vec![
+                    leaf("Source"),
+                    CommitmentNode::Branch {
+                        children: vec![CommitmentNode::Branch {
+                            children: vec![
+                                CommitmentNode::Branch { children: vec![leaf("HubA"), leaf("A1"), leaf("A2")] },
+                                leaf("Tail"),
+                                CommitmentNode::Branch { children: vec![leaf("HubB"), leaf("B1"), leaf("B2")] },
+                            ],
+                        }],
+                    },
+                ],
+            }],
+        };
+        let packed = cut(&[&[0, 1, 0, 0], &[0, 1, 0, 1], &[0, 1, 0, 2]]);
+        let family_a_open = cut(&[&[0, 1, 0, 0, 0], &[0, 1, 0, 0, 1], &[0, 1, 0, 0, 2], &[0, 1, 0, 1], &[0, 1, 0, 2]]);
+        let family_b_open = cut(&[&[0, 1, 0, 0], &[0, 1, 0, 1], &[0, 1, 0, 2, 0], &[0, 1, 0, 2, 1], &[0, 1, 0, 2, 2]]);
+        let commitments = CommitmentPlan {
+            forest,
+            cuts: BTreeMap::from([
+                ("Source".to_string(), packed),
+                ("HubA".to_string(), family_a_open.clone()),
+                ("A1".to_string(), family_a_open.clone()),
+                ("A2".to_string(), family_a_open),
+                ("HubB".to_string(), family_b_open.clone()),
+                ("B1".to_string(), family_b_open.clone()),
+                ("B2".to_string(), family_b_open),
+                ("Tail".to_string(), Cut::new()),
+            ]),
+        };
+        let crafted_plan = RoutePlan {
+            families: vec![
+                FamilyPlan {
+                    domain: "SharedState".to_string(),
+                    rep: "HubA".to_string(),
+                    members: ["HubA", "A1", "A2"].into_iter().map(str::to_string).collect(),
+                    gates: vec!["HubA".to_string()],
+                    table: ["HubA", "A1", "A2"].into_iter().map(str::to_string).collect(),
+                },
+                FamilyPlan {
+                    domain: "SharedState".to_string(),
+                    rep: "HubB".to_string(),
+                    members: ["HubB", "B1", "B2"].into_iter().map(str::to_string).collect(),
+                    gates: vec!["HubB".to_string()],
+                    table: ["HubB", "B1", "B2"].into_iter().map(str::to_string).collect(),
+                },
+            ],
+            commitments,
+        };
+        assert!(crafted_plan.commitments.cuts.values().all(|cut| crafted_plan.commitments.forest.is_valid_cut(cut)));
+        let cross = crafted_plan.commitments.cut_transition("A2", "HubB").expect("cross-family cut is derivable");
+        assert_eq!(cross.branches_to_open.len(), 1);
+        assert_eq!(cross.branches_to_pack.len(), 1);
+
+        let injected_planner =
+            move |_graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>, selectors: &[SelectorRequirement]| {
+                assert_eq!(domains["SharedState"], ["HubA", "A1", "A2", "HubB", "B1", "B2"]);
+                assert!(selectors.is_empty());
+                Ok(crafted_plan.clone())
+            };
+        let model = Model::from_program_with_route_planner(&program, &injected_planner).expect("injected route plan validates");
+
+        let family_a_id = "route_family/SharedState/hub_a".to_string();
+        let family_b_id = "route_family/SharedState/hub_b".to_string();
+        assert_eq!(
+            model.route_transitions[&("A2".to_string(), "HubB".to_string())],
+            CompilerRouteTransition { families_to_open: vec![family_b_id], families_to_pack: vec![family_a_id] }
+        );
+
+        let actor_sil = actor_sil_for_model(&model);
+        let a2_sil = &actor_sil["A2"];
+        assert!(a2_sil.contains("byte[96] gen__hub_b_routes"), "{a2_sil}");
+        assert!(a2_sil.contains("gen__hub_a_routes_digest: blake2b(gen__hub_a_routes),"), "{a2_sil}");
+        let hub_b_sil = &actor_sil["HubB"];
+        assert!(hub_b_sil.contains("byte[96] gen__hub_a_routes"), "{hub_b_sil}");
+        assert!(hub_b_sil.contains("gen__hub_b_routes_digest: blake2b(gen__hub_b_routes),"), "{hub_b_sil}");
+
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("deep-forest artifact emits");
+        artifact.verify_template_plan().expect("deep-forest template plan verifies");
+        assert_eq!(artifact.argent.template_plan.route_families.len(), 2);
+    }
+
+    #[test]
+    fn model_retains_distinct_actor_cuts_for_one_declared_state() {
+        let path = PathBuf::from("actor-route-cuts.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state SharedState {
+                int value;
+            }
+
+            state TailState {
+                int value;
+            }
+
+            actor A owns SharedState {
+                entry leave() emits one Tail {
+                    TailState next_tail = {
+                        value: value,
+                    };
+                    become Tail(next_tail);
+                }
+            }
+
+            actor B owns SharedState {}
+            actor Tail owns TailState {}
+
+            app ActorRouteCuts {
+                actor A;
+                actor B;
+                actor Tail;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let model = Model::from_program(&program).expect("model retains the planned actor cuts");
+
+        assert_eq!(model.route_leaves_by_actor["A"], [RouteRootLeaf::Actor("Tail".to_string())]);
+        assert!(model.route_leaves_by_actor["B"].is_empty());
+        assert_eq!(model.state_route_leaves["SharedState"], [RouteRootLeaf::Actor("Tail".to_string())]);
+
+        match route_field_kind_for_actor("A", &model) {
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                assert_eq!(actor_templates, ["Tail"]);
+                assert!(family_commitments.is_empty());
+            }
+            RouteFieldKind::None | RouteFieldKind::FamilyTables { .. } => panic!("A has one direct actor template"),
+        }
+        assert!(matches!(route_field_kind_for_actor("B", &model), RouteFieldKind::None));
+
+        let actor_a = model.actor("A").expect("A exists");
+        let actor_b = model.actor("B").expect("B exists");
+        let a_sil = emit_actor(actor_a, &model).expect("A Sil emits");
+        let b_sil = emit_actor(actor_b, &model).expect("B Sil emits");
+        assert!(a_sil.contains("byte[32] gen__init_tail_template"), "{a_sil}");
+        assert!(a_sil.contains("byte[32] gen__tail_template = gen__init_tail_template;"), "{a_sil}");
+        assert!(!b_sil.contains("gen__tail_template"), "{b_sil}");
+        assert_eq!(
+            runtime_state_fields_for_actor(actor_a, &model)
+                .expect("A runtime fields lower")
+                .into_iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            ["gen__tail_template", "value"]
+        );
+        assert_eq!(
+            runtime_state_fields_for_actor(actor_b, &model)
+                .expect("B runtime fields lower")
+                .into_iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            ["value"]
+        );
+    }
+
+    #[test]
+    fn foreign_routes_materialize_the_target_actors_cut() {
+        let source = r#"
+            state SourceState {
+                int value;
+            }
+
+            state SharedState {
+                int value;
+            }
+
+            state TailAState {
+                int value;
+            }
+
+            state TailBState {
+                int value;
+            }
+
+            actor Source owns SourceState {
+                entry send() emits one A {
+                    SharedState next = {
+                        value: value,
+                    };
+                    become A(next);
+                }
+            }
+
+            actor A owns SharedState {
+                entry leave() emits one TailA {
+                    TailAState next = {
+                        value: value,
+                    };
+                    become TailA(next);
+                }
+            }
+
+            actor B owns SharedState {
+                entry leave() emits one TailB {
+                    TailBState next = {
+                        value: value,
+                    };
+                    become TailB(next);
+                }
+            }
+
+            actor TailA owns TailAState {
+                entry hold() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            actor TailB owns TailBState {
+                entry hold() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            app ForeignActorCuts {
+                actor Source;
+                actor A;
+                actor B;
+                actor TailA;
+                actor TailB;
+            }
+        "#;
+
+        let path = PathBuf::from("foreign-actor-cuts.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let source_sil = emit_actor(model.actor("Source").expect("Source exists"), &model).expect("Source Sil emits");
+
+        let actor_layout = source_sil
+            .split("struct Gen__AState {")
+            .nth(1)
+            .and_then(|rest| rest.split("    }").next())
+            .expect("A receives an actor-qualified foreign state layout");
+        assert!(actor_layout.contains("byte[32] gen__tail_a_template;"), "{source_sil}");
+        assert!(!actor_layout.contains("gen__tail_b_template"), "{source_sil}");
+        assert!(!source_sil.contains("struct Gen__SharedStateBody {"), "{source_sil}");
+        assert!(source_sil.contains("Gen__AState next = {"), "{source_sil}");
+        assert!(!source_sil.contains("gen__state_a_gen__a_state"), "{source_sil}");
+        assert!(source_sil.contains("gen__tail_a_template: gen__tail_a_template,"), "{source_sil}");
+        assert!(!source_sil.contains("gen__tail_b_template:"), "{source_sil}");
+
+        inline_artifact("foreign-actor-cuts", source);
+    }
+
+    #[test]
+    fn actor_route_field_kind_distinguishes_local_tables_from_foreign_commitments() {
+        let path = PathBuf::from("actor-route-field-kinds.ag");
+        let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let model = Model::from_program(&program).expect("toy chess model validates");
+
+        match route_field_kind_for_actor("Mux", &model) {
+            RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+                assert!(actor_templates.is_empty());
+                assert!(family_commitments.is_empty());
+                assert_eq!(families.iter().map(|family| family.id.as_str()).collect::<Vec<_>>(), ["route_family/BoardState/mux"]);
+            }
+            RouteFieldKind::None | RouteFieldKind::Direct { .. } => panic!("Mux owns its local route table"),
+        }
+
+        match route_field_kind_for_actor("Player", &model) {
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                assert_eq!(actor_templates, ["Mux"]);
+                assert_eq!(
+                    family_commitments.iter().map(|family| family.id.as_str()).collect::<Vec<_>>(),
+                    ["route_family/BoardState/mux"]
+                );
+            }
+            RouteFieldKind::None | RouteFieldKind::FamilyTables { .. } => {
+                panic!("Player carries a foreign family commitment")
+            }
+        }
+
+        assert_eq!(
+            model.route_transitions[&("Player".to_string(), "Mux".to_string())],
+            CompilerRouteTransition {
+                families_to_open: vec!["route_family/BoardState/mux".to_string()],
+                families_to_pack: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn family_table_witnesses_follow_cut_transitions() {
+        let path = PathBuf::from("transition-family-witnesses.ag");
+        let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("toy chess model validates");
+
+        let player = model.actor("Player").expect("Player exists");
+        let enter_mux = player.entries.iter().find(|entry| entry.name == "enter_mux").expect("enter_mux exists");
+        assert_eq!(
+            entry_witness_specs(player, enter_mux, &model).expect("enter_mux witnesses lower").families,
+            [RouteFamilyWitnessSpec { family_id: "route_family/BoardState/mux".to_string(), byte_len: 64 }]
+        );
+
+        let mux = model.actor("Mux").expect("Mux exists");
+        let choose_pawn = mux.entries.iter().find(|entry| entry.name == "choose_pawn").expect("choose_pawn exists");
+        assert!(entry_witness_specs(mux, choose_pawn, &model).expect("choose_pawn witnesses lower").families.is_empty());
+
+        let read_only_mux = template_witness_specs_for_actor(player, &model, BTreeSet::from(["Mux".to_string()]), BTreeSet::new());
+        assert!(read_only_mux.families.is_empty());
+    }
+
+    #[test]
+    fn selected_gates_open_from_the_family_table_and_direct_consumes_stay_concrete() {
+        let source = r#"
+            state SourceState {
+                int nonce;
+            }
+
+            state BoardState {
+                int ply;
+            }
+
+            state ConsumerState {
+                int nonce;
+            }
+
+            state ArchiveState {
+                int nonce;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Source owns SourceState {
+                entry enter_pawn() emits one Pawn {
+                    BoardState next = {
+                        ply: nonce,
+                    };
+                    become Pawn(next);
+                }
+            }
+
+            actor Mux owns BoardState {
+                entry choose(target: MoveActor) emits one MoveActor {
+                    BoardState next = {
+                        ply: ply + 1,
+                    };
+                    become target(next);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry inspect() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry inspect() emits none {
+                    require(ply >= 0);
+                }
+            }
+
+            actor Consumer owns ConsumerState {
+                entry verify() consumes {
+                    pawn: Pawn;
+                } emits one Archive {
+                    require(pawn.ply >= 0);
+
+                    ArchiveState next = {
+                        nonce: nonce + 1,
+                    };
+                    become Archive(next);
+                }
+            }
+
+            actor Archive owns ArchiveState {
+                entry reopen() emits one Pawn {
+                    BoardState next = {
+                        ply: nonce,
+                    };
+                    become Pawn(next);
+                }
+            }
+
+            app SelectedGate {
+                actor Source;
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+                actor Consumer;
+                actor Archive;
+            }
+        "#;
+        let path = PathBuf::from("selected-family-gate.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+
+        let family = model.route_family_for_actor("Pawn").expect("Pawn belongs to the selected family");
+        assert!(family.direct_template_actors().is_empty());
+        assert_eq!(family.table_actors(), ["Pawn", "Knight", "Mux"]);
+        assert_eq!(family.rep(), "Pawn");
+
+        let source_actor = model.actor("Source").expect("Source exists");
+        let enter_pawn = source_actor.entries.first().expect("enter_pawn exists");
+        let specs = entry_witness_specs(source_actor, enter_pawn, &model).expect("entry witnesses lower");
+        let pawn = specs.templates.iter().find(|spec| spec.actor == "Pawn").expect("Pawn template witness exists");
+        assert_eq!(pawn.source, TemplateWitnessSource::FamilyTable { family_id: family.id.clone(), offset: 0 });
+
+        let actor_sil = actor_sil_for_model(&model);
+        let source_sil = &actor_sil["Source"];
+        assert!(source_sil.contains("byte[32] gen__pawn_template = byte[32](gen__pawn_routes.slice(0, 32));"), "{source_sil}");
+        let consumer_sil = &actor_sil["Consumer"];
+        assert!(consumer_sil.contains("byte[32] gen__pawn_template = gen__init_pawn_template;"), "{consumer_sil}");
+        assert!(consumer_sil.contains("byte[32] gen__knight_template = gen__init_knight_template;"), "{consumer_sil}");
+        assert!(consumer_sil.contains("byte[32] gen__mux_template = gen__init_mux_template;"), "{consumer_sil}");
+        assert!(
+            consumer_sil.contains("gen__pawn_routes_digest: blake2b(gen__pawn_template + gen__knight_template + gen__mux_template),"),
+            "{consumer_sil}"
+        );
+
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
+        artifact.verify_template_plan().expect("representative actors may be stored inside their family table");
+    }
+
+    #[test]
+    fn family_commitments_pack_on_planned_cut_transitions() {
+        let source = toy_chess_source().replace(
+            "            actor Mux owns BoardState {\n",
+            r#"            actor Mux owns BoardState {
+                entry return_to_player() emits one Player {
+                    PlayerState next_player = {
+                        nonce: ply,
+                    };
+                    become Player(next_player);
+                }
+
+"#,
+        );
+        let path = PathBuf::from("family-pack-transition.ag");
+        let module = crate::parser::parse_module(path.clone(), source.clone()).expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+
+        let family_id = "route_family/BoardState/mux".to_string();
+        assert_eq!(
+            model.route_transition("Mux", "Player"),
+            Some(&CompilerRouteTransition { families_to_open: Vec::new(), families_to_pack: vec![family_id] })
+        );
+
+        let mux_sil = emit_actor(model.actor("Mux").expect("Mux exists"), &model).expect("Mux Sil emits");
+        assert!(!mux_sil.contains("struct Gen__PlayerStateBody {"), "{mux_sil}");
+        assert!(mux_sil.contains("PlayerState next_player = {"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes_digest: blake2b(gen__mux_routes),"), "{mux_sil}");
+        assert!(!mux_sil.contains("gen__mux_routes_digest: gen__mux_routes_digest,"), "{mux_sil}");
+
+        inline_artifact("family-pack-transition", &source);
+    }
+
+    #[test]
+    fn single_route_locals_materialize_early_while_branch_choices_keep_state_bodies() {
+        let straight_path = PathBuf::from("examples/route_state_bodies.ag");
+        let straight_source = fs::read_to_string(&straight_path).expect("route state body example exists");
+        let straight_module = crate::parser::parse_module(straight_path.clone(), straight_source.clone()).expect("example parses");
+        let straight_program = Program { root: straight_path, modules: vec![straight_module] };
+        let straight_model = Model::from_program(&straight_program).expect("example model validates");
+        let straight_sil = actor_sil_for_model(&straight_model);
+
+        assert!(!straight_sil["Lobby"].contains("Gen__BoardStateBody"), "{}", straight_sil["Lobby"]);
+        assert!(straight_sil["Lobby"].contains("BoardState next_board = {"), "{}", straight_sil["Lobby"]);
+        assert!(!straight_sil["Mux"].contains("Gen__ArchiveStateBody"), "{}", straight_sil["Mux"]);
+        assert!(straight_sil["Mux"].contains("ArchiveState next_archive = {"), "{}", straight_sil["Mux"]);
+        assert!(!straight_sil["Archive"].contains("Gen__BoardStateBody"), "{}", straight_sil["Archive"]);
+
+        let type_name_in_string = straight_source.replacen(
+            "        BoardState next_board = {",
+            "        require(blake2b(bytes(\"Gen__BoardStateBody\")) == blake2b(bytes(\"Gen__BoardStateBody\")));\n\n        BoardState next_board = {",
+            1,
+        );
+        let string_path = PathBuf::from("state-body-type-name-in-string.ag");
+        let string_module = crate::parser::parse_module(string_path.clone(), type_name_in_string).expect("example variant parses");
+        let string_program = Program { root: string_path, modules: vec![string_module] };
+        let string_model = Model::from_program(&string_program).expect("example variant validates");
+        let string_sil = emit_actor(string_model.actor("Lobby").expect("Lobby exists"), &string_model).expect("Lobby Sil emits");
+        assert!(string_sil.contains("bytes(\"Gen__BoardStateBody\")"), "{string_sil}");
+        assert!(!string_sil.contains("struct Gen__BoardStateBody {"), "{string_sil}");
+
+        let choice_path = PathBuf::from("examples/route_state_body_choice.ag");
+        let choice_source = fs::read_to_string(&choice_path).expect("route state body choice example exists");
+        let choice_module = crate::parser::parse_module(choice_path.clone(), choice_source).expect("example parses");
+        let choice_program = Program { root: choice_path, modules: vec![choice_module] };
+        let choice_model = Model::from_program(&choice_program).expect("example model validates");
+        let choice_sil = emit_actor(choice_model.actor("Lobby").expect("Lobby exists"), &choice_model).expect("Lobby Sil emits");
+
+        assert!(choice_sil.contains("struct Gen__BoardStateBody {"), "{choice_sil}");
+        assert!(choice_sil.contains("Gen__BoardStateBody next_board = {"), "{choice_sil}");
+        assert!(
+            choice_sil
+                .contains("validateOutputStateWithTemplate(\n                gen__next_output_idx,\n                next_board,"),
+            "{choice_sil}"
+        );
+        assert!(choice_sil.contains("ply: next_board.ply,"), "{choice_sil}");
+    }
+
+    #[test]
     fn direct_route_families_are_inferred_without_hints() {
         let artifact = inline_artifact("toy-chess-family", &toy_chess_source());
         let families = artifact.argent.template_plan.route_families.iter().map(|family| {
             (
                 family.id.as_str(),
                 family.state.as_str(),
-                family.anchor_actor.as_str(),
+                family.representative_actor.as_str(),
                 family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>(),
                 family.table_id.as_str(),
                 family.actors.iter().map(String::as_str).collect::<Vec<_>>(),
@@ -8254,6 +9504,8 @@ mod tests {
         assert!(player_sil.contains("byte[] gen__mux_suffix,"), "{player_sil}");
         assert!(player_sil.contains("byte[64] gen__mux_routes"), "{player_sil}");
         assert!(player_sil.contains("require(blake2b(gen__mux_routes) == gen__mux_routes_digest);"), "{player_sil}");
+        assert!(player_sil.contains("BoardState next_board = {"), "{player_sil}");
+        assert!(!player_sil.contains("Gen__BoardStateBody"), "{player_sil}");
         assert!(!player_sil.contains("gen__pawn_template"), "{player_sil}");
         assert!(!player_sil.contains("gen__knight_template"), "{player_sil}");
 
@@ -8290,6 +9542,90 @@ mod tests {
         assert!(pawn_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__pawn_template"), "{pawn_sil}");
         assert!(!pawn_sil.contains("gen__knight_template"), "{pawn_sil}");
+    }
+
+    #[test]
+    fn route_family_state_keeps_downstream_templates() {
+        let path = PathBuf::from("route-family-with-downstream-actor.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state BoardState {
+                int ply;
+            }
+
+            state ReceiptState {
+                int final_ply;
+            }
+
+            actor enum MoveActor {
+                Pawn;
+                Knight;
+            }
+
+            actor Mux owns BoardState {
+                entry choose(target: MoveActor) emits one MoveActor {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become target(next_board);
+                }
+
+                entry finish() emits one Receipt {
+                    ReceiptState receipt = {
+                        final_ply: ply,
+                    };
+                    become Receipt(receipt);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry back_to_mux() emits one Mux {
+                    BoardState next_board = {
+                        ply: ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            actor Receipt owns ReceiptState {
+                entry resume() emits one Mux {
+                    BoardState next_board = {
+                        ply: final_ply + 1,
+                    };
+                    become Mux(next_board);
+                }
+            }
+
+            app RoutedLifecycle {
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+                actor Receipt;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+        let model = Model::from_program(&program).expect("model validates");
+        let actor_sil = actor_sil_for_model(&model);
+
+        let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
+        assert!(mux_sil.contains("byte[32] gen__receipt_template = gen__init_receipt_template;"), "{mux_sil}");
+        assert!(mux_sil.contains("byte[64] gen__mux_routes = gen__init_mux_routes;"), "{mux_sil}");
+        assert!(mux_sil.contains("gen__mux_routes_digest: blake2b(gen__mux_routes),"), "{mux_sil}");
+
+        emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
     }
 
     #[test]
@@ -8332,7 +9668,7 @@ mod tests {
     }
 
     #[test]
-    fn fixed_actor_enum_selector_still_builds_full_selector_table() {
+    fn gate_less_family_appends_rep_after_selector_variants() {
         let path = PathBuf::from("fixed-selector-table.ag");
         let module = crate::parser::parse_module(
             path.clone(),
@@ -8383,6 +9719,10 @@ mod tests {
         let actor_sil = actor_sil_for_model(&model);
         let artifact = emit_artifact(&program, &model, &actor_sil).expect("artifact emits");
 
+        let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
+        assert!(family.entry_actors.is_empty());
+        assert_eq!(family.representative_actor, "Mux");
+
         let board_table = artifact
             .argent
             .template_plan
@@ -8395,6 +9735,7 @@ mod tests {
             vec![
                 RouteTemplateLeafArtifact::Template { actor: "Pawn".to_string(), template_id: "template/pawn".to_string() },
                 RouteTemplateLeafArtifact::Template { actor: "Knight".to_string(), template_id: "template/knight".to_string() },
+                RouteTemplateLeafArtifact::Template { actor: "Mux".to_string(), template_id: "template/mux".to_string() },
             ]
         );
 
@@ -8412,6 +9753,7 @@ mod tests {
 
         let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
         assert!(mux_sil.contains("int gen__target_selector = 1 /*KNIGHT*/;"), "{mux_sil}");
+        assert!(mux_sil.contains("require(gen__target_selector < 2);"), "{mux_sil}");
         assert!(mux_sil.contains("byte[32] gen__target_template = byte[32]("), "{mux_sil}");
         assert!(mux_sil.contains("gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)"), "{mux_sil}");
         artifact.verify_template_plan().expect("template plan receipt verifies");
@@ -8467,29 +9809,24 @@ mod tests {
         let program = Program { root: path, modules: vec![module] };
 
         let err = Model::from_program(&program).expect_err("conflicting actor enum orders must be rejected");
-        assert!(err.to_string().contains("different selector order"), "unexpected error: {err}");
+        assert!(err.to_string().contains("conflicts with requirement"), "unexpected error: {err}");
     }
 
     #[test]
-    fn actor_enum_selectors_must_cover_the_inferred_route_family() {
+    fn actor_enum_variants_form_a_prefix_of_the_inferred_route_family() {
         let source = r#"
             state BoardState {
                 int selector;
                 int ply;
             }
 
-            actor enum FirstMove {
+            actor enum MoveActor {
                 Pawn;
                 Knight;
             }
 
-            actor enum SecondMove {
-                Pawn;
-                Bishop;
-            }
-
             actor Mux owns BoardState {
-                entry choose_first(target: FirstMove) emits one FirstMove {
+                entry choose(target: MoveActor) emits one MoveActor {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
@@ -8497,12 +9834,12 @@ mod tests {
                     become target(next_board);
                 }
 
-                entry choose_second(target: SecondMove) emits one SecondMove {
+                entry visit_bishop() emits one Bishop {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
                     };
-                    become target(next_board);
+                    become Bishop(next_board);
                 }
             }
 
@@ -8510,19 +9847,21 @@ mod tests {
             actor Knight owns BoardState {}
             actor Bishop owns BoardState {}
 
-            app IncompleteSelectorSet {
+            app SelectorPrefix {
                 actor Mux;
                 actor Pawn;
                 actor Knight;
                 actor Bishop;
             }
         "#;
-        let path = PathBuf::from("incomplete-selector-set.ag");
+        let path = PathBuf::from("selector-prefix.ag");
         let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("source parses");
         let program = Program { root: path, modules: vec![module] };
 
-        let err = Model::from_program(&program).expect_err("incomplete route-family selector sets must be rejected");
-        assert!(err.to_string().contains("variants must exactly match the route table actors"), "unexpected error: {err}");
+        let model = Model::from_program(&program).expect("selector variants may prefix other family actors");
+
+        assert_eq!(model.route_families.len(), 1);
+        assert_eq!(model.route_families[0].table_actors, ["Pawn", "Knight", "Mux", "Bishop"]);
     }
 
     #[test]
@@ -8699,7 +10038,7 @@ mod tests {
             .map(|family| {
                 (
                     family.id.as_str(),
-                    family.anchor_actor.as_str(),
+                    family.representative_actor.as_str(),
                     family.actors.iter().map(String::as_str).collect::<Vec<_>>(),
                     family.table_id.as_str(),
                 )
@@ -8725,6 +10064,7 @@ mod tests {
                 (
                     "route_table/BoardState/gen__a_routes",
                     vec![
+                        RouteTemplateLeafArtifact::Template { actor: "A".to_string(), template_id: "template/a".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "B".to_string(), template_id: "template/b".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "C".to_string(), template_id: "template/c".to_string() },
                     ],
@@ -8732,6 +10072,7 @@ mod tests {
                 (
                     "route_table/BoardState/gen__d_routes",
                     vec![
+                        RouteTemplateLeafArtifact::Template { actor: "D".to_string(), template_id: "template/d".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "E".to_string(), template_id: "template/e".to_string() },
                         RouteTemplateLeafArtifact::Template { actor: "F".to_string(), template_id: "template/f".to_string() },
                     ],
@@ -8746,12 +10087,22 @@ mod tests {
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
-            vec![
-                ("gen__a_template", RuntimeFieldRoleArtifact::Template { contract: "A".to_string() }),
-                ("gen__a_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["B".to_string(), "C".to_string()] }),
-                ("gen__d_template", RuntimeFieldRoleArtifact::Template { contract: "D".to_string() }),
-                ("gen__d_routes", RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["E".to_string(), "F".to_string()] }),
-            ]
+            vec![(
+                "gen__a_routes",
+                RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["A".to_string(), "B".to_string(), "C".to_string()] }
+            ),]
+        );
+        assert_eq!(
+            runtime_state_plan(&artifact, "D")
+                .expect("D runtime role overlay exists")
+                .field_roles
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "gen__d_routes",
+                RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string(), "E".to_string(), "F".to_string()] }
+            ),]
         );
         artifact.verify_template_plan().expect("multi-family route state receipt verifies");
     }
@@ -8834,13 +10185,17 @@ mod tests {
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
-            vec![("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() })]
+            vec![
+                ("gen__hub_a_template", RuntimeFieldRoleArtifact::Template { contract: "HubA".to_string() }),
+                ("gen__hub_b_template", RuntimeFieldRoleArtifact::Template { contract: "HubB".to_string() }),
+                ("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() }),
+            ]
         );
         artifact.verify_template_plan().expect("direct route plan verifies");
     }
 
     #[test]
-    fn route_family_with_multiple_external_entries_uses_first_entry_as_anchor() {
+    fn route_family_with_multiple_external_entries_uses_first_entry_as_representative() {
         let artifact = inline_artifact(
             "multi-entry-route-family",
             r#"
@@ -8925,7 +10280,7 @@ mod tests {
 
         let family = artifact.argent.template_plan.route_families.first().expect("route family is inferred");
         assert_eq!(family.id, "route_family/BoardState/hub_b");
-        assert_eq!(family.anchor_actor, "HubB");
+        assert_eq!(family.representative_actor, "HubB");
         assert_eq!(family.entry_actors, vec!["HubB", "HubA"]);
         assert_eq!(family.actors, vec!["HubB", "HubA", "LeafA", "LeafB"]);
         assert_eq!(family.table_id, "route_table/BoardState/gen__hub_b_routes");

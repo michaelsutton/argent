@@ -111,40 +111,38 @@ Open questions:
 
 ## Route commitments
 
-The first implemented model uses deterministic route table/proof receipts plus
-one-level route-family packing. Upper states can store a family digest, while
-actors inside that family store the expanded fixed route table.
+The route planner builds a deterministic commitment forest. Each actor gets a
+cut that contains concrete actor templates and packed family digests. A route
+transition keeps common nodes, opens packed families, and packs families that
+the target does not need open.
 
-Current chess-like pattern:
+The implementation separates three parts:
 
 ```text
-upper hidden state: gen__mux_template, gen__mux_routes_digest
-family hidden state: gen__mux_template, gen__mux_routes
-entry witness: route-family table, or template prefix/suffix for selected target
-generated checks: blake2b(table) == digest, or slice selected template from table
-generated validation: validateOutputStateWithTemplate(...) or validateOutputState(...)
+graph classification -> commitment forest and cuts -> SIL lowering
 ```
 
-The artifact records the receipts behind this shape: route tables, canonical
-route proofs, route-family metadata, and witness recipes. `argent-runtime` fills
-hidden witnesses from those receipts for tests and client tooling.
+Graph classification defines the current family and cohort policy. Commitment
+planning has no Argent AST or SIL data. SIL lowering uses each cut transition to
+generate fields, table witnesses, hashes, and output checks.
 
-Larger apps may still need deeper Merkle cuts later, but that should replace the
-receipt-planning algorithm behind the same artifact concepts instead of changing
-the Argent source model.
+The planner data model supports nested commitment branches. Compiler lowering
+currently supports one-level family tables. The artifact records route tables,
+family metadata, cut-based receipts, and witness recipes. `argent-runtime` uses
+these receipts to fill hidden witnesses.
+
+[Route Planning](route-planner.md) defines the terms, policy, algorithms, and
+compiler boundary. [Routing Optimization Opportunities](../src/routing/optimization.md)
+records known cases where the current policy produces correct but inefficient
+cuts.
 
 Open questions:
 
-- What is the canonical route leaf format?
-- Does a leaf commit only to a template hash, or also to actor name, state layout,
-  entry name, output handle, and route kind?
-- Is there one app-wide route root, one root per actor, or both?
-- Should direct self-routes use the same Merkle mechanism or a cheaper path?
-- When is a flat packed table preferable to a Merkle tree?
-- How are multi-template route groups represented, such as chess
-  `blake2b(settle_template || player_template)`?
-- Should the compiler auto-select flat vs Merkle based on app size, or should the
-  source choose?
+- When should the planner create nested helper branches?
+- Should source code or compiler configuration provide forest hints?
+- When should the planner use a flat table instead of nested branches?
+- How should the planner improve cohort selection without weakening cut
+  equality or dependency propagation?
 
 ## Same-template shortcuts
 

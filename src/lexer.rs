@@ -1,6 +1,7 @@
 use crate::error::{ArgentError, Result};
 
 pub const RESERVED_GENERATED_PREFIX: &str = "gen__";
+pub const RESERVED_GENERATED_TYPE_PREFIX: &str = "Gen__";
 
 #[derive(Debug, Clone)]
 pub struct Token {
@@ -123,9 +124,11 @@ impl Lexer<'_> {
             self.pos += 1;
         }
         let ident = self.source[start..self.pos].to_string();
-        if ident.starts_with(RESERVED_GENERATED_PREFIX) {
+        let generated_prefix =
+            [RESERVED_GENERATED_PREFIX, RESERVED_GENERATED_TYPE_PREFIX].into_iter().find(|prefix| ident.starts_with(prefix));
+        if let Some(generated_prefix) = generated_prefix {
             return Err(ArgentError::new(format!(
-                "identifier `{ident}` uses reserved generated namespace `{RESERVED_GENERATED_PREFIX}` at offset {start}"
+                "identifier `{ident}` uses reserved generated namespace `{generated_prefix}` at offset {start}"
             )));
         }
         self.push(TokenKind::Ident(ident), start, self.pos);
@@ -143,7 +146,9 @@ mod tests {
 
     #[test]
     fn rejects_reserved_generated_namespace_identifier() {
-        let err = lex("state gen__state {}").expect_err("reserved generated namespace must be rejected");
-        assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+        for source in ["state gen__state {}", "state Gen__State {}"] {
+            let err = lex(source).expect_err("reserved generated namespace must be rejected");
+            assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+        }
     }
 }

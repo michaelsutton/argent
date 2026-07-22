@@ -1,0 +1,86 @@
+{
+  "app": "RouteStateBodyChoice",
+  "root": "examples/route_state_body_choice.ag",
+  "modules": [
+    "examples/route_state_body_choice.ag"
+  ],
+  "templates": [
+    { "actor": "Lobby", "symbol": "gen__lobby_template", "hash": null },
+    { "actor": "Mux", "symbol": "gen__mux_template", "hash": null },
+    { "actor": "Pawn", "symbol": "gen__pawn_template", "hash": null },
+    { "actor": "Knight", "symbol": "gen__knight_template", "hash": null },
+    { "actor": "Spectator", "symbol": "gen__spectator_template", "hash": null }
+  ],
+  "actors": [
+    {
+      "name": "Lobby",
+      "state": "LobbyState",
+      "sil": "sil/Lobby.sil",
+      "entries": [
+        {
+          "name": "open_or_watch",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["Mux", "Spectator"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "Spectator", "state": "next_board" }, { "output": null, "actor": "Mux", "state": "next_board" }]
+        }
+      ]
+    },
+    {
+      "name": "Mux",
+      "state": "BoardState",
+      "sil": "sil/Mux.sil",
+      "entries": [
+        {
+          "name": "choose",
+          "kind": "leader",
+          "emits": { "kind": "one", "actors": ["MoveActor"] },
+          "consumes": [],
+          "routes": [{ "output": null, "actor": "target", "state": "next_board" }]
+        }
+      ]
+    },
+    {
+      "name": "Pawn",
+      "state": "BoardState",
+      "sil": "sil/Pawn.sil",
+      "entries": [
+        {
+          "name": "inspect",
+          "kind": "leader",
+          "emits": { "kind": "none" },
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    },
+    {
+      "name": "Knight",
+      "state": "BoardState",
+      "sil": "sil/Knight.sil",
+      "entries": [
+        {
+          "name": "inspect",
+          "kind": "leader",
+          "emits": { "kind": "none" },
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    },
+    {
+      "name": "Spectator",
+      "state": "BoardState",
+      "sil": "sil/Spectator.sil",
+      "entries": [
+        {
+          "name": "inspect",
+          "kind": "leader",
+          "emits": { "kind": "none" },
+          "consumes": [],
+          "routes": []
+        }
+      ]
+    }
+  ]
+}

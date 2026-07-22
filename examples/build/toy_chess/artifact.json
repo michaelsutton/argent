@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "66cd982fe97898ca15ed96c39a835120d15c2cef2e519aba86f62c797d4460ec",
+  "id": "3ddacab29f6dd75557a94a715875a77b9aa42a2c4de61d2303bf93a00598c22e",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -45,7 +45,7 @@
           "actor": "League",
           "contract": "League",
           "symbol": "gen__league_template",
-          "canonical_template_hash": "4fc55645889bcff3bf4818955c06f64fb1a642578b7b314a15712ecc77ba8a95"
+          "canonical_template_hash": "271d2bf6e8af9a72cc453e9769920d23d61fb9d891c423fbf98c53971872e9c0"
         },
         {
           "id": "template/player",
@@ -82,17 +82,17 @@
           "source": "LeagueState",
           "field_roles": [
             {
-              "name": "gen__player_template",
-              "role": {
-                "kind": "template",
-                "contract": "Player"
-              }
-            },
-            {
               "name": "gen__mux_template",
               "role": {
                 "kind": "template",
                 "contract": "Mux"
+              }
+            },
+            {
+              "name": "gen__player_template",
+              "role": {
+                "kind": "template",
+                "contract": "Player"
               }
             },
             {
@@ -259,7 +259,7 @@
         {
           "id": "route_family/BoardState/mux",
           "state": "BoardState",
-          "anchor_actor": "Mux",
+          "representative_actor": "Mux",
           "entry_actors": [
             "Mux"
           ],
@@ -409,7 +409,7 @@
           "id": "interface/actor/League",
           "actor": "League",
           "state": "LeagueState",
-          "fingerprint_hex": "4bfe363a756d049221626b23263b38b2b14b01585627d8cf1b5b036e05afbd58"
+          "fingerprint_hex": "aab5a60079e97a3309c4c78a6fdae366d7507289cfce013ff5bda6bfd3c52bc7"
         },
         {
           "id": "interface/actor/Player",
@@ -1478,14 +1478,14 @@
           "source": "LeagueState",
           "fields": [
             {
-              "name": "gen__player_template",
+              "name": "gen__mux_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
               }
             },
             {
-              "name": "gen__mux_template",
+              "name": "gen__player_template",
               "type": {
                 "kind": "fixed_bytes",
                 "len": 32
@@ -1527,11 +1527,11 @@
           }
         ],
         "compiled": {
-          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c695579827c75519658cd56797e5579827c75519658cd56797e7e54797caa8769527901207c7e527901207c7e5279519358cd01087c7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+          "script_hex": "200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000080000000000000000b9cb519c695579827c75519658cd56797e5579827c75519658cd56797e7e53797caa8769537901207c7e527901207c7e5279519358cd01087c7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
           "template": {
             "prefix_hex": "",
-            "suffix_hex": "b9cb519c695579827c75519658cd56797e5579827c75519658cd56797e7e54797caa8769527901207c7e527901207c7e5279519358cd01087c7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
-            "hash_hex": "4fc55645889bcff3bf4818955c06f64fb1a642578b7b314a15712ecc77ba8a95"
+            "suffix_hex": "b9cb519c695579827c75519658cd56797e5579827c75519658cd56797e7e53797caa8769537901207c7e527901207c7e5279519358cd01087c7e7e7e56797c7e55797eaa02000001aa7e01207e7c7e01877eb900ccc3876975757575757551",
+            "hash_hex": "271d2bf6e8af9a72cc453e9769920d23d61fb9d891c423fbf98c53971872e9c0"
           },
           "state_span": {
             "offset": 0,

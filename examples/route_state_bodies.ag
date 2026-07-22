@@ -1,0 +1,88 @@
+state LobbyState {
+    int nonce;
+}
+
+state BoardState {
+    int ply;
+}
+
+state ArchiveState {
+    int final_ply;
+}
+
+actor enum MoveActor {
+    Pawn;
+    Knight;
+}
+
+// Lobby carries the packed Board family and opens it when entering Mux.
+actor Lobby owns LobbyState {
+    entry open_board() emits one Mux {
+        BoardState next_board = {
+            ply: nonce,
+        };
+
+        become Mux(next_board);
+    }
+}
+
+actor Mux owns BoardState {
+    entry choose(target: MoveActor) emits one MoveActor {
+        BoardState next_board = {
+            ply: ply + 1,
+        };
+
+        become target(next_board);
+    }
+
+    // Archive needs one packed Board-family commitment, so this transition
+    // packs the open table carried by Mux.
+    entry archive() emits one Archive {
+        ArchiveState next_archive = {
+            final_ply: ply,
+        };
+
+        become Archive(next_archive);
+    }
+}
+
+actor Pawn owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+actor Knight owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+// Keeping another BoardState actor outside the family makes BoardState's
+// generated route layout actor-specific. Lobby must therefore materialize an
+// ordinary BoardState local directly into Mux's concrete generated layout.
+actor Spectator owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+// This downstream route gives Archive a packed Board-family dependency.
+actor Archive owns ArchiveState {
+    entry reopen_as_pawn() emits one Pawn {
+        BoardState next_board = {
+            ply: final_ply + 1,
+        };
+
+        become Pawn(next_board);
+    }
+}
+
+app RouteStateBodies {
+    actor Lobby;
+    actor Mux;
+    actor Pawn;
+    actor Knight;
+    actor Spectator;
+    actor Archive;
+}

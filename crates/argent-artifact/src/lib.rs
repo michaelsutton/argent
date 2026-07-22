@@ -246,7 +246,12 @@ pub enum RouteTemplateLeafArtifact {
 pub struct RouteTemplateFamilyArtifact {
     pub id: String,
     pub state: String,
-    pub anchor_actor: String,
+    /// Stable family identity; the representative may be stored in the table.
+    pub representative_actor: String,
+    /// Component actors stored directly rather than in `table_id`.
+    ///
+    /// This historical name does not necessarily equal the graph's inbound
+    /// gates because a selector can place a gate in the table.
     pub entry_actors: Vec<String>,
     pub table_id: String,
     pub actors: Vec<String>,
@@ -573,8 +578,8 @@ pub enum TemplatePlanError {
     DuplicateRouteFamilyActor { id: String, actor: String },
     #[error("route template family `{id}` references unknown actor `{actor}`")]
     MissingRouteFamilyActor { id: String, actor: String },
-    #[error("route template family `{id}` anchor actor `{anchor}` should be `{expected}`")]
-    RouteFamilyAnchorMismatch { id: String, anchor: String, expected: String },
+    #[error("route template family `{id}` representative actor `{representative}` is not in the family")]
+    RouteFamilyRepresentativeOutsideFamily { id: String, representative: String },
     #[error("route template family `{id}` repeats entry actor `{actor}`")]
     DuplicateRouteFamilyEntryActor { id: String, actor: String },
     #[error("route template family `{id}` entry actor `{actor}` is not in the family")]
@@ -695,7 +700,7 @@ impl TemplatePlanArtifact {
 
         let actor_states =
             artifact.argent.actors.iter().map(|actor| (actor.name.as_str(), actor.state.as_str())).collect::<BTreeMap<_, _>>();
-        // TODO: Extract route-family membership and anchor verification into dedicated helpers.
+        // TODO: Extract route-family membership verification into dedicated helpers.
         let mut route_family_ids = BTreeSet::new();
         let mut route_families_by_id = BTreeMap::new();
         for family in &self.route_families {
@@ -711,6 +716,12 @@ impl TemplatePlanArtifact {
                     return Err(TemplatePlanError::DuplicateRouteFamilyActor { id: family.id.clone(), actor: actor.clone() });
                 }
             }
+            if !family_actors.contains(family.representative_actor.as_str()) {
+                return Err(TemplatePlanError::RouteFamilyRepresentativeOutsideFamily {
+                    id: family.id.clone(),
+                    representative: family.representative_actor.clone(),
+                });
+            }
             let mut entry_actors = BTreeSet::new();
             for actor in &family.entry_actors {
                 if !entry_actors.insert(actor.as_str()) {
@@ -719,15 +730,6 @@ impl TemplatePlanArtifact {
                 if !family_actors.contains(actor.as_str()) {
                     return Err(TemplatePlanError::MissingRouteFamilyEntryActor { id: family.id.clone(), actor: actor.clone() });
                 }
-            }
-            let expected_anchor =
-                family.entry_actors.first().or_else(|| family.actors.first()).expect("family has at least two actors");
-            if family.anchor_actor != *expected_anchor {
-                return Err(TemplatePlanError::RouteFamilyAnchorMismatch {
-                    id: family.id.clone(),
-                    anchor: family.anchor_actor.clone(),
-                    expected: expected_anchor.clone(),
-                });
             }
             for actor in &family.actors {
                 let Some(found_state) = actor_states.get(actor.as_str()) else {
@@ -981,12 +983,7 @@ impl TemplatePlanArtifact {
                     RouteTemplateLeafArtifact::RouteFamily { .. } => None,
                 })
                 .collect::<Vec<_>>();
-            let direct_template_actors = if family.entry_actors.is_empty() {
-                vec![family.anchor_actor.as_str()]
-            } else {
-                family.entry_actors.iter().map(String::as_str).collect::<Vec<_>>()
-            };
-            let direct_template_actor_set = direct_template_actors.into_iter().collect::<BTreeSet<_>>();
+            let direct_template_actor_set = family.entry_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
             let expected_table_actors =
                 family.actors.iter().filter(|actor| !direct_template_actor_set.contains(actor.as_str())).cloned().collect::<Vec<_>>();
             let expected_table_actor_set = expected_table_actors.iter().map(String::as_str).collect::<BTreeSet<_>>();
@@ -1816,7 +1813,7 @@ mod tests {
         let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
-            anchor_actor: "Mux".to_string(),
+            representative_actor: "Mux".to_string(),
             entry_actors: vec!["Mux".to_string()],
             table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Mux".to_string()],
@@ -1830,11 +1827,32 @@ mod tests {
     }
 
     #[test]
+    fn rejects_route_family_representative_outside_the_family() {
+        let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
+            id: "route_family/BoardState/unknown".to_string(),
+            state: "BoardState".to_string(),
+            representative_actor: "Unknown".to_string(),
+            entry_actors: Vec::new(),
+            table_id: "route_table/BoardState/gen__unknown_routes".to_string(),
+            actors: vec!["Mux".to_string(), "Player".to_string()],
+        }]);
+
+        let err = artifact.verify_template_plan().expect_err("foreign representative must be rejected");
+        assert_eq!(
+            err,
+            TemplatePlanError::RouteFamilyRepresentativeOutsideFamily {
+                id: "route_family/BoardState/unknown".to_string(),
+                representative: "Unknown".to_string(),
+            }
+        );
+    }
+
+    #[test]
     fn rejects_route_family_state_mismatch() {
         let artifact = artifact_with_route_families(vec![RouteTemplateFamilyArtifact {
             id: "route_family/BoardState/mux".to_string(),
             state: "BoardState".to_string(),
-            anchor_actor: "Mux".to_string(),
+            representative_actor: "Mux".to_string(),
             entry_actors: vec!["Mux".to_string()],
             table_id: "route_table/BoardState/gen__mux_routes".to_string(),
             actors: vec!["Mux".to_string(), "Player".to_string()],
@@ -1960,7 +1978,7 @@ mod tests {
                         RouteTemplateFamilyArtifact {
                             id: "route_family/BoardState/mux".to_string(),
                             state: "BoardState".to_string(),
-                            anchor_actor: "Mux".to_string(),
+                            representative_actor: "Mux".to_string(),
                             entry_actors: vec!["Mux".to_string()],
                             table_id: route_template_table_receipt_id("BoardState", "gen__mux_routes"),
                             actors: vec!["Mux".to_string(), "Pawn".to_string()],
@@ -1968,7 +1986,7 @@ mod tests {
                         RouteTemplateFamilyArtifact {
                             id: inner_family_id.clone(),
                             state: "BoardState".to_string(),
-                            anchor_actor: "Knight".to_string(),
+                            representative_actor: "Knight".to_string(),
                             entry_actors: vec!["Knight".to_string()],
                             table_id: route_template_table_receipt_id("BoardState", "gen__knight_routes"),
                             actors: vec!["Knight".to_string(), "Bishop".to_string()],

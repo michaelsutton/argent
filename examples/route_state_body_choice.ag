@@ -1,0 +1,64 @@
+state LobbyState {
+    int nonce;
+}
+
+state BoardState {
+    int ply;
+}
+
+actor enum MoveActor {
+    Pawn;
+    Knight;
+}
+
+actor Lobby owns LobbyState {
+    // `next_board` has no single generated layout until this branch chooses
+    // between the open Mux cut and Spectator's empty cut.
+    entry open_or_watch(watch: bool) emits one Mux | Spectator {
+        BoardState next_board = {
+            ply: nonce,
+        };
+
+        if (watch) {
+            become Spectator(next_board);
+        } else {
+            become Mux(next_board);
+        }
+    }
+}
+
+actor Mux owns BoardState {
+    entry choose(target: MoveActor) emits one MoveActor {
+        BoardState next_board = {
+            ply: ply + 1,
+        };
+
+        become target(next_board);
+    }
+}
+
+actor Pawn owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+actor Knight owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+actor Spectator owns BoardState {
+    entry inspect() emits none {
+        require(ply >= 0);
+    }
+}
+
+app RouteStateBodyChoice {
+    actor Lobby;
+    actor Mux;
+    actor Pawn;
+    actor Knight;
+    actor Spectator;
+}
