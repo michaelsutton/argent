@@ -8471,6 +8471,29 @@ mod tests {
     }
 
     #[test]
+    fn single_actor_self_consume_is_pinned() {
+        let (sil, artifact) = emit_fixture("single_actor_self_consume", "Counter");
+
+        assert_eq!(sil, include_str!("../tests/fixtures/emit/single_actor_self_consume/Counter.sil"));
+
+        let counter = artifact.argent.actors.iter().find(|actor| actor.name == "Counter").expect("Counter actor exists");
+        let merge = counter.entries.iter().find(|entry| entry.name == "merge").expect("merge entry exists");
+        assert_eq!(
+            merge.hidden_params.iter().map(|param| param.name.as_str()).collect::<Vec<_>>(),
+            vec!["gen__counter_prefix_len", "gen__counter_suffix_len"]
+        );
+        assert_eq!(
+            runtime_state_plan(&artifact, "Counter")
+                .expect("Counter carries its consumed template")
+                .field_roles
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gen__counter_template"]
+        );
+    }
+
+    #[test]
     fn open_observed_actor_binding_lowers_to_runtime_template_handle() {
         let (sil, artifact) = emit_fixture("open_observed_actor_binding", "Cell");
 

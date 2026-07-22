@@ -1,0 +1,21 @@
+state CounterState {
+    int count;
+}
+
+actor Counter owns CounterState {
+    entry merge()
+    consumes {
+        other: Counter;
+    }
+    emits one Counter {
+        CounterState next = {
+            count: count + other.count,
+        };
+
+        become Counter(next);
+    }
+}
+
+app Test {
+    actor Counter;
+}
