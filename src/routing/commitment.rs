@@ -97,6 +97,74 @@ impl CommitmentForest {
         }
         Some(node)
     }
+
+    fn transition<'a>(&'a self, source: &Cut, target: &Cut) -> Option<CutTransition<'a>> {
+        debug_assert!(self.is_valid_cut(source), "source cut must be valid for its commitment forest");
+        debug_assert!(self.is_valid_cut(target), "target cut must be valid for its commitment forest");
+
+        let mut retained = Vec::new();
+        let mut branches_to_open = BTreeSet::new();
+        let mut branches_to_pack = BTreeSet::new();
+        for target_path in target {
+            if source.contains(target_path) {
+                retained.push(self.node(target_path)?);
+                continue;
+            }
+
+            if let Some(source_ancestor) =
+                source.iter().find(|source_path| target_path.path_indices.starts_with(&source_path.path_indices))
+            {
+                for depth in source_ancestor.path_indices.len()..target_path.path_indices.len() {
+                    let branch_path = NodePath::new(target_path.path_indices[..depth].to_vec());
+                    if !matches!(self.node(&branch_path), Some(CommitmentNode::Branch { .. })) {
+                        return None;
+                    }
+                    branches_to_open.insert(branch_path);
+                }
+                continue;
+            }
+
+            if self.collect_pack_paths(target_path, source, &mut branches_to_pack) {
+                continue;
+            }
+
+            return None;
+        }
+
+        let mut branches_to_open = branches_to_open.into_iter().collect::<Vec<_>>();
+        branches_to_open.sort_by(|left, right| left.path_indices.len().cmp(&right.path_indices.len()).then_with(|| left.cmp(right)));
+        let mut branches_to_pack = branches_to_pack.into_iter().collect::<Vec<_>>();
+        branches_to_pack.sort_by(|left, right| right.path_indices.len().cmp(&left.path_indices.len()).then_with(|| left.cmp(right)));
+
+        Some(CutTransition {
+            retained,
+            branches_to_open: branches_to_open
+                .into_iter()
+                .map(|path| self.node(&path).expect("validated open path belongs to the forest"))
+                .collect(),
+            branches_to_pack: branches_to_pack
+                .into_iter()
+                .map(|path| self.node(&path).expect("validated pack path belongs to the forest"))
+                .collect(),
+        })
+    }
+
+    fn collect_pack_paths(&self, path: &NodePath, source: &Cut, branches_to_pack: &mut BTreeSet<NodePath>) -> bool {
+        if source.contains(path) {
+            return true;
+        }
+        let Some(CommitmentNode::Branch { children }) = self.node(path) else {
+            return false;
+        };
+        if children.is_empty() {
+            return false;
+        }
+        if !(0..children.len()).all(|child| self.collect_pack_paths(&path.child(child), source, branches_to_pack)) {
+            return false;
+        }
+        branches_to_pack.insert(path.clone());
+        true
+    }
 }
 
 /// The structural location of one node in a commitment forest.
@@ -176,6 +244,31 @@ pub struct CommitmentPlan {
     pub cuts: BTreeMap<String, Cut>,
 }
 
+/// The operations needed to derive one actor's cut from another actor's cut.
+///
+/// Retained nodes are selected unchanged in both cuts. Branches to open require
+/// their committed children to be supplied, while branches to pack can be
+/// reconstructed from their complete selected descendants. Open operations are
+/// ordered parent-first and pack operations child-first. All nodes borrow the
+/// commitment forest that defines them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CutTransition<'a> {
+    pub retained: Vec<&'a CommitmentNode>,
+    pub branches_to_open: Vec<&'a CommitmentNode>,
+    pub branches_to_pack: Vec<&'a CommitmentNode>,
+}
+
+/// A requested actor-to-actor cut transition that is absent or not derivable.
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum CutTransitionError {
+    #[error("cut transition references unknown source actor `{actor}`")]
+    UnknownSourceActor { actor: String },
+    #[error("cut transition references unknown target actor `{actor}`")]
+    UnknownTargetActor { actor: String },
+    #[error("cut for target actor `{target_actor}` cannot be derived from source actor `{source_actor}`")]
+    IncompatibleCuts { source_actor: String, target_actor: String },
+}
+
 impl CommitmentPlan {
     /// Resolve an actor's cut to its selected forest nodes in canonical path
     /// order.
@@ -185,6 +278,19 @@ impl CommitmentPlan {
         let cut = self.cuts.get(actor)?;
         debug_assert!(self.forest.is_valid_cut(cut), "planned actor cut must be valid for its commitment forest");
         Some(cut.iter().map(|path| self.forest.node(path).expect("planned cut path must belong to its commitment forest")).collect())
+    }
+
+    /// Plan the structural operations needed to derive `target_actor`'s cut
+    /// from `source_actor`'s cut.
+    pub fn cut_transition(&self, source_actor: &str, target_actor: &str) -> Result<CutTransition<'_>, CutTransitionError> {
+        let source =
+            self.cuts.get(source_actor).ok_or_else(|| CutTransitionError::UnknownSourceActor { actor: source_actor.to_string() })?;
+        let target =
+            self.cuts.get(target_actor).ok_or_else(|| CutTransitionError::UnknownTargetActor { actor: target_actor.to_string() })?;
+        self.forest.transition(source, target).ok_or_else(|| CutTransitionError::IncompatibleCuts {
+            source_actor: source_actor.to_string(),
+            target_actor: target_actor.to_string(),
+        })
     }
 }
 
@@ -534,6 +640,73 @@ mod tests {
         assert_eq!(plan.cut_nodes("B"), plan.cut_nodes("A"));
         assert_eq!(plan.cut_nodes("Idle"), Some(Vec::new()));
         assert_eq!(plan.cut_nodes("Unknown"), None);
+    }
+
+    #[test]
+    fn cut_transitions_retain_open_pack_and_reject_missing_coverage() {
+        let forest = CommitmentForest { roots: vec![CommitmentNode::Branch { children: vec![leaf("A"), leaf("B")] }, leaf("X")] };
+        let plan = CommitmentPlan {
+            forest,
+            cuts: BTreeMap::from([
+                ("Packed".to_string(), cut([&[0], &[1]])),
+                ("Opened".to_string(), cut([&[0, 0], &[0, 1], &[1]])),
+                ("Incomplete".to_string(), cut([&[0, 0]])),
+                ("Empty".to_string(), Cut::new()),
+            ]),
+        };
+        let branch = &plan.forest.roots[0];
+        let x = &plan.forest.roots[1];
+
+        assert_eq!(
+            plan.cut_transition("Packed", "Opened"),
+            Ok(CutTransition { retained: vec![x], branches_to_open: vec![branch], branches_to_pack: Vec::new() })
+        );
+        assert_eq!(
+            plan.cut_transition("Opened", "Packed"),
+            Ok(CutTransition { retained: vec![x], branches_to_open: Vec::new(), branches_to_pack: vec![branch] })
+        );
+        assert_eq!(plan.cut_transition("Packed", "Empty"), Ok(CutTransition::default()));
+        assert_eq!(
+            plan.cut_transition("Incomplete", "Packed"),
+            Err(CutTransitionError::IncompatibleCuts { source_actor: "Incomplete".to_string(), target_actor: "Packed".to_string() })
+        );
+        assert_eq!(
+            plan.cut_transition("Unknown", "Packed"),
+            Err(CutTransitionError::UnknownSourceActor { actor: "Unknown".to_string() })
+        );
+        assert_eq!(
+            plan.cut_transition("Packed", "Unknown"),
+            Err(CutTransitionError::UnknownTargetActor { actor: "Unknown".to_string() })
+        );
+    }
+
+    #[test]
+    fn nested_cut_transitions_open_parent_first_and_pack_child_first() {
+        let plan = CommitmentPlan {
+            forest: CommitmentForest {
+                roots: vec![CommitmentNode::Branch {
+                    children: vec![leaf("A"), CommitmentNode::Branch { children: vec![leaf("B"), leaf("C")] }],
+                }],
+            },
+            cuts: BTreeMap::from([
+                ("Packed".to_string(), cut([&[0]])),
+                ("Opened".to_string(), cut([&[0, 0], &[0, 1, 0], &[0, 1, 1]])),
+            ]),
+        };
+        let root = &plan.forest.roots[0];
+        let CommitmentNode::Branch { children } = root else {
+            panic!("root is a branch");
+        };
+        let nested = &children[1];
+
+        assert_eq!(
+            plan.cut_transition("Packed", "Opened"),
+            Ok(CutTransition { retained: Vec::new(), branches_to_open: vec![root, nested], branches_to_pack: Vec::new() })
+        );
+        assert_eq!(
+            plan.cut_transition("Opened", "Packed"),
+            Ok(CutTransition { retained: Vec::new(), branches_to_open: Vec::new(), branches_to_pack: vec![nested, root] })
+        );
     }
 
     #[test]
