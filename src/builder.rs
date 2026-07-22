@@ -341,6 +341,46 @@ mod tests {
     }
 
     #[test]
+    fn context_executes_single_actor_self_consume_without_template_witnesses() {
+        let artifact = example_artifact("tests/fixtures/emit/single_actor_self_consume/app.ag", "single-actor-self-consume");
+        let builder = TxBuilder::new(&artifact).expect("builder accepts single-actor artifact");
+        let merge = entry_artifact(&artifact, "Counter", "merge");
+        assert!(merge.hidden_params.is_empty());
+        assert!(merge.route_plan.witness_recipe_ids.is_empty());
+
+        let covenant_id = Hash::from_bytes([0x47; 32]);
+        let source_state = count_state(7);
+        let other_state = count_state(5);
+        let next_state = count_state(12);
+        let source_value = 1_200;
+        let other_value = 800;
+        let source_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x48; 32]), 0);
+        let other_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x49; 32]), 0);
+        let source_utxo = builder
+            .covenant_utxo("Counter", source_state.clone(), source_value, 0, false, Some(covenant_id))
+            .expect("source Counter UTXO builds");
+        let other_utxo = builder
+            .covenant_utxo("Counter", other_state.clone(), other_value, 0, false, Some(covenant_id))
+            .expect("consumed Counter UTXO builds");
+
+        let context = TxContext::new()
+            .actor_input("Counter", source_state.clone(), "merge", source_outpoint, source_utxo.clone(), 0)
+            .actor_input("Counter", other_state.clone(), "hold", other_outpoint, other_utxo.clone(), 0)
+            .actor_output("Counter", next_state, CovenantBinding::new(0, covenant_id), source_value + other_value);
+        let transaction = builder.build(&context).expect("single-actor self-consume executes");
+        assert_eq!(transaction.inputs.len(), 2);
+        assert_eq!(transaction.outputs.len(), 1);
+        assert!(transaction.inputs.iter().all(|input| input.compute_commit.compute_budget().is_some()));
+
+        let wrong_state = TxContext::new()
+            .actor_input("Counter", source_state, "merge", source_outpoint, source_utxo, 0)
+            .actor_input("Counter", other_state, "hold", other_outpoint, other_utxo, 0)
+            .actor_output("Counter", count_state(11), CovenantBinding::new(0, covenant_id), source_value + other_value);
+        let err = builder.build(&wrong_state).expect_err("merge must read and add the consumed Counter state");
+        assert!(matches!(err, BuilderError::InputScript { input_index: 0, .. }));
+    }
+
+    #[test]
     fn context_builds_and_verifies_signed_single_output() {
         let artifact = inline_artifact(
             "context-counter",
