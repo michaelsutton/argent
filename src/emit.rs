@@ -1642,8 +1642,10 @@ fn infer_direct_routes<'a>(
                 }
                 if actor.name != target.name {
                     graph.add_emit(actor.name.clone(), target.name.clone());
-                    transition_pairs.insert((actor.name.clone(), target.name.clone()));
                 }
+                // A selector can include its source actor. Keep that identity
+                // transition without adding a false dependency edge.
+                transition_pairs.insert((actor.name.clone(), target.name.clone()));
             }
         }
     }
@@ -9965,6 +9967,45 @@ mod tests {
 
         assert_eq!(model.route_families.len(), 1);
         assert_eq!(model.route_families[0].table_actors, ["Pawn", "Knight", "Mux", "Bishop"]);
+    }
+
+    #[test]
+    fn selector_can_include_its_source_actor() {
+        let artifact = inline_artifact(
+            "self-selector-variant",
+            r#"
+            state SharedState {
+                int value;
+            }
+
+            actor enum NextActor {
+                Worker;
+                Challenge;
+            }
+
+            actor Worker owns SharedState {
+                entry inspect() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            actor Challenge owns SharedState {
+                entry choose(target: NextActor) emits one NextActor {
+                    SharedState next = {
+                        value: value + 1,
+                    };
+                    become target(next);
+                }
+            }
+
+            app SelfSelectorVariant {
+                actor Worker;
+                actor Challenge;
+            }
+            "#,
+        );
+
+        artifact.verify_template_plan().expect("self selector variant has a valid identity cut transition");
     }
 
     #[test]
