@@ -271,6 +271,14 @@ impl<'a> Model<'a> {
         self.actors_by_name.get(name).copied().ok_or_else(|| ArgentError::new(format!("unknown actor `{name}`")))
     }
 
+    fn static_spawn_actor(&self, expr: &str) -> Option<&ActorDecl> {
+        let actor = expr.trim();
+        if !is_identifier(actor) || !self.template_actors.iter().any(|candidate| candidate == actor) {
+            return None;
+        }
+        self.actors_by_name.get(actor).copied()
+    }
+
     fn actor_state(&self, name: &str) -> Result<&StateDecl> {
         let actor = self.actor(name)?;
         self.storage_state(&actor.state)
@@ -697,7 +705,7 @@ impl<'a> Model<'a> {
                 }
                 if spawn_target_state_for_expr(&output.actor, actor, entry, self)?.is_none() {
                     return Err(ArgentError::new(format!(
-                        "entry `{}::{}` spawn `{}.{}` target `{}` must be an actor_type value or a known actor",
+                        "entry `{}::{}` spawn `{}.{}` target `{}` must be an actor_type value or an actor in the selected app",
                         actor.name, entry.name, spawn.name, output.name, output.actor
                     )));
                 }
@@ -1605,6 +1613,18 @@ fn infer_direct_routes<'a>(
             for consume in &entry.consumes {
                 if template_actor_set.contains(&consume.actor) {
                     graph.add_consume(actor.name.clone(), consume.actor.clone());
+                }
+            }
+            for spawn in &entry.spawns {
+                for output in &spawn.outputs {
+                    let target = output.actor.trim();
+                    if !is_identifier(target) || !template_actor_set.contains(target) {
+                        continue;
+                    }
+                    graph.add_emit(actor.name.clone(), target.to_string());
+                    if actor.name != target {
+                        transition_pairs.insert((actor.name.clone(), target.to_string()));
+                    }
                 }
             }
             for route in expand_entry_template_routes(actor, entry, actor_enums)? {
@@ -2893,7 +2913,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
     ) -> Result<()> {
         let state_name = spawn_target_state_for_expr(&output.actor, self.actor, self.entry, self.model)?
             .expect("spawn target checked during model validation");
-        let concrete_actor = self.model.actors_by_name.contains_key(&output.actor).then_some(output.actor.as_str());
+        let concrete_actor = self.model.static_spawn_actor(&output.actor).map(|actor| actor.name.as_str());
+        let transition = concrete_actor.filter(|target| *target != self.actor.name).map(|target| {
+            self.model.route_transition(&self.actor.name, target).expect("fixed spawn target has a planned cut transition")
+        });
         let state_ty = if let Some(actor) = concrete_actor {
             contract_state_type_for_actor(actor, self.actor, self.model)?
         } else if state_name == self.actor.state {
@@ -2908,7 +2931,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         } else {
             let name = generated_state_name(&route, &state_ty);
             let lowered = if let Some(actor) = concrete_actor {
-                self.lower_state_expr_for_actor(actor, None, state_expr, indent)?
+                self.lower_state_expr_for_actor(actor, transition, state_expr, indent)?
             } else {
                 self.lower_state_expr_for_dynamic_state(&state_name, &state_ty, state_expr, indent)?
             };
@@ -2916,11 +2939,12 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             out.push_str(&format!("{state_ty} {name} = {lowered};\n"));
             name
         };
-        let source = clause_actor_type_ref(&output.actor, self.actor, self.entry, self.model)?;
+        let source =
+            if concrete_actor.is_some() { None } else { clause_actor_type_ref(&output.actor, self.actor, self.entry, self.model)? };
         let spec =
             SpawnActorWitnessSpec { spawn: spawn.name.clone(), handle: output.name.clone(), actor: output.actor.clone(), source };
-        let template = if is_static_spawn_actor(&output.actor, self.model) {
-            hidden_template_name(output.actor.trim())
+        let template = if let Some(actor) = concrete_actor {
+            hidden_template_name(actor)
         } else {
             self.lower_expr(&output.actor, Some("byte[32]"), indent)?
         };
@@ -4004,6 +4028,7 @@ fn split_top_level_commas(input: &str) -> Vec<&str> {
 enum TemplateWitnessForm {
     Bytes,
     Len,
+    Materialize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4114,6 +4139,7 @@ fn lower_entry_params(actor: &ActorDecl, entry: &EntryDecl, witness_specs: &Entr
                 out.push(format!("int {}", hidden_witness_prefix_len_name(&spec.actor)));
                 out.push(format!("int {}", hidden_witness_suffix_len_name(&spec.actor)));
             }
+            TemplateWitnessForm::Materialize => {}
         }
     }
     for spec in &witness_specs.families {
@@ -4174,7 +4200,13 @@ fn entry_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) 
         .filter(|route| route_validation_kind(actor, route) == RouteValidationKind::ForeignTemplate)
         .map(|route| route.actor.clone())
         .collect::<BTreeSet<_>>();
-    let mut specs = template_witness_specs_for_actor(actor, model, read_actors, write_actors);
+    let materialized_actors = entry
+        .spawns
+        .iter()
+        .flat_map(|spawn| &spawn.outputs)
+        .filter_map(|output| model.static_spawn_actor(&output.actor).map(|actor| actor.name.clone()))
+        .collect::<BTreeSet<_>>();
+    let mut specs = template_witness_specs_for_actor(actor, model, read_actors, write_actors, materialized_actors);
     specs.selectors = selector_specs;
     specs.observed_actors = observed_actor_witness_specs(actor, entry, model)?;
     specs.spawn_outputs = spawn_output_witness_specs(actor, entry, model)?;
@@ -4196,7 +4228,11 @@ fn spawn_output_witness_specs(actor: &ActorDecl, entry: &EntryDecl, model: &Mode
     let mut specs = Vec::new();
     for spawn in &entry.spawns {
         for output in &spawn.outputs {
-            let source = clause_actor_type_ref(&output.actor, actor, entry, model)?;
+            let source = if model.static_spawn_actor(&output.actor).is_some() {
+                None
+            } else {
+                clause_actor_type_ref(&output.actor, actor, entry, model)?
+            };
             specs.push(SpawnActorWitnessSpec {
                 spawn: spawn.name.clone(),
                 handle: output.name.clone(),
@@ -4262,10 +4298,14 @@ fn template_witness_specs_for_actor(
     model: &Model<'_>,
     read_actors: BTreeSet<String>,
     write_actors: BTreeSet<String>,
+    materialized_actors: BTreeSet<String>,
 ) -> EntryWitnessSpecs {
-    let mut specs = template_witness_specs(model, read_actors, write_actors.clone());
+    let mut specs = template_witness_specs(model, read_actors, write_actors.clone(), materialized_actors.clone());
     let mut family_specs = BTreeMap::<String, RouteFamilyWitnessSpec>::new();
-    for target in &write_actors {
+    for target in write_actors.union(&materialized_actors) {
+        if target == &actor.name {
+            continue;
+        }
         let transition =
             model.route_transition(&actor.name, target).expect("validated foreign-template route has a planned cut transition");
         for family_id in &transition.families_to_open {
@@ -4332,8 +4372,10 @@ fn template_witness_specs(
     model: &Model<'_>,
     read_actors: BTreeSet<String>,
     write_actors: BTreeSet<String>,
+    materialized_actors: BTreeSet<String>,
 ) -> Vec<TemplateWitnessSpec> {
     let mut required = read_actors.union(&write_actors).cloned().collect::<BTreeSet<_>>();
+    required.extend(materialized_actors.iter().cloned());
     let mut ordered = Vec::new();
     for actor in &model.template_actors {
         if required.remove(actor) {
@@ -4352,7 +4394,13 @@ fn template_witness_specs(
 }
 
 fn witness_form(actor: &str, read_actors: &BTreeSet<String>, write_actors: &BTreeSet<String>) -> TemplateWitnessForm {
-    if write_actors.contains(actor) && !read_actors.contains(actor) { TemplateWitnessForm::Bytes } else { TemplateWitnessForm::Len }
+    if write_actors.contains(actor) && !read_actors.contains(actor) {
+        TemplateWitnessForm::Bytes
+    } else if read_actors.contains(actor) || write_actors.contains(actor) {
+        TemplateWitnessForm::Len
+    } else {
+        TemplateWitnessForm::Materialize
+    }
 }
 
 fn template_source_for_actor(state: &str, actor: &str, model: &Model<'_>) -> TemplateWitnessSource {
@@ -4607,24 +4655,17 @@ fn source_actor_type_state_for_expr(expr: &str, actor: &ActorDecl, entry: &Entry
 }
 
 // Spawn targets may be an explicitly dynamic actor_type value or a fixed actor
-// imported into the current app. Fixed actors are compiler-owned template
+// in the selected app. Fixed actors are compiler-owned template
 // capabilities, exactly like direct `emits` targets; they need not be threaded
 // through authored covenant state.
 fn spawn_target_state_for_expr(expr: &str, actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>) -> Result<Option<String>> {
+    if let Some(target) = model.static_spawn_actor(expr) {
+        return Ok(Some(target.state.clone()));
+    }
     if let Some(state) = source_actor_type_state_for_expr(expr, actor, entry, model)? {
         return Ok(Some(state));
     }
-    let expr = expr.trim();
-    if is_identifier(expr) {
-        if let Ok(target) = model.actor(expr) {
-            return Ok(Some(target.state.clone()));
-        }
-    }
     Ok(None)
-}
-
-fn is_static_spawn_actor(expr: &str, model: &Model<'_>) -> bool {
-    is_identifier(expr.trim()) && model.actor(expr.trim()).is_ok()
 }
 
 fn observed_actor_template_expr_for_entry(
@@ -5447,6 +5488,7 @@ fn hidden_params_for_entry(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'
                     route_proof_id: None,
                 });
             }
+            TemplateWitnessForm::Materialize => {}
         }
     }
     for spec in &witness_specs.families {
@@ -5664,7 +5706,7 @@ fn spawn_artifact(actor: &ActorDecl, entry: &EntryDecl, model: &Model<'_>, spawn
             .map(|output| {
                 let state = spawn_target_state_for_expr(&output.actor, actor, entry, model)?.ok_or_else(|| {
                     ArgentError::new(format!(
-                        "spawn `{}.{}` target `{}` is not an actor_type value or known actor",
+                        "spawn `{}.{}` target `{}` is not an actor_type value or an actor in the selected app",
                         spawn.name, output.name, output.actor
                     ))
                 })?;
@@ -9186,7 +9228,8 @@ mod tests {
         let choose_pawn = mux.entries.iter().find(|entry| entry.name == "choose_pawn").expect("choose_pawn exists");
         assert!(entry_witness_specs(mux, choose_pawn, &model).expect("choose_pawn witnesses lower").families.is_empty());
 
-        let read_only_mux = template_witness_specs_for_actor(player, &model, BTreeSet::from(["Mux".to_string()]), BTreeSet::new());
+        let read_only_mux =
+            template_witness_specs_for_actor(player, &model, BTreeSet::from(["Mux".to_string()]), BTreeSet::new(), BTreeSet::new());
         assert!(read_only_mux.families.is_empty());
     }
 
@@ -10649,13 +10692,16 @@ mod tests {
                 spawns child_group by child_id {
                     outputs {
                         child: Child;
+                        sibling: Child;
                     }
                 }
                 emits one Launcher {
                     ChildState child_state = { value: value };
+                    ChildState sibling_state = { value: value + 1 };
                     LauncherState next = { launches: launches + 1 };
                     require child_group.outputs become {
                         child <- Child(child_state);
+                        sibling <- Child(sibling_state);
                     };
                     become Launcher(next);
                 }
@@ -10672,12 +10718,135 @@ mod tests {
 
             app Test {
                 actor Launcher;
+                actor Child;
             }
         "#;
         let artifact = inline_artifact("fixed_actor_spawn", source);
         let launcher = artifact.argent.actors.iter().find(|actor| actor.name == "Launcher").expect("Launcher artifact exists");
         assert_eq!(launcher.entries[0].spawns[0].outputs[0].actor, "Child");
+        assert_eq!(
+            launcher.entries[0]
+                .hidden_params
+                .iter()
+                .filter(|param| {
+                    matches!(
+                        param.purpose,
+                        HiddenParamPurposeArtifact::TemplatePrefixBytes | HiddenParamPurposeArtifact::TemplateSuffixBytes
+                    )
+                })
+                .count(),
+            2,
+            "two fixed outputs for one actor share one prefix/suffix pair"
+        );
         artifact.verify_template_plan().expect("fixed spawn template closure verifies");
+
+        let unselected = source.replace("                actor Child;\n", "");
+        let err = parse_and_validate(&unselected).expect_err("fixed spawn actor must belong to the selected app");
+        assert!(err.to_string().contains("actor in the selected app"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn fixed_actor_self_spawn_retains_its_template() {
+        let artifact = inline_artifact(
+            "fixed_actor_self_spawn",
+            r#"
+            state NodeState {
+                int value;
+            }
+
+            actor Node owns NodeState {
+                entry fork(next_value: int)
+                spawns child_group by child_id {
+                    outputs {
+                        child: Node;
+                    }
+                }
+                emits one Node {
+                    NodeState child = { value: next_value };
+                    NodeState next = { value: next_value + 1 };
+                    require child_group.outputs become {
+                        child <- Node(child);
+                    };
+                    become Node(next);
+                }
+            }
+
+            app Test {
+                actor Node;
+            }
+            "#,
+        );
+
+        let state = runtime_state_plan(&artifact, "Node").expect("self-spawning Node stores route context");
+        assert!(state.field_roles.iter().any(|field| field.name == "gen__node_template"));
+        artifact.verify_template_plan().expect("fixed self-spawn template plan verifies");
+    }
+
+    #[test]
+    fn fixed_actor_spawn_opens_the_target_family_cut() {
+        let artifact = inline_artifact(
+            "fixed_actor_spawn_family",
+            r#"
+            state LauncherState {
+                int launches;
+            }
+
+            state BoardState {
+                int turn;
+            }
+
+            actor Launcher owns LauncherState {
+                entry launch()
+                spawns game by game_id {
+                    outputs {
+                        mux: Mux;
+                    }
+                }
+                emits one Launcher {
+                    BoardState board = { turn: 0 };
+                    LauncherState next = { launches: launches + 1 };
+                    require game.outputs become {
+                        mux <- Mux(board);
+                    };
+                    become Launcher(next);
+                }
+            }
+
+            actor Mux owns BoardState {
+                entry move() emits one Pawn {
+                    BoardState next = { turn: turn + 1 };
+                    become Pawn(next);
+                }
+            }
+
+            actor Pawn owns BoardState {
+                entry finish() emits one Mux {
+                    BoardState next = { turn: turn + 1 };
+                    become Mux(next);
+                }
+            }
+
+            actor Knight owns BoardState {
+                entry finish() emits one Mux {
+                    BoardState next = { turn: turn + 1 };
+                    become Mux(next);
+                }
+            }
+
+            app Test {
+                actor Launcher;
+                actor Mux;
+                actor Pawn;
+                actor Knight;
+            }
+            "#,
+        );
+
+        let launcher = artifact.argent.actors.iter().find(|actor| actor.name == "Launcher").expect("Launcher artifact exists");
+        let launch = launcher.entries.iter().find(|entry| entry.name == "launch").expect("launch entry exists");
+        assert!(launch.hidden_params.iter().any(|param| param.purpose == HiddenParamPurposeArtifact::RouteFamilyTable));
+        assert!(!launch.hidden_params.iter().any(|param| param.name == "gen__mux_prefix" || param.name == "gen__mux_suffix"));
+        artifact.verify_template_plan().expect("fixed family spawn template plan verifies");
     }
 
     #[test]

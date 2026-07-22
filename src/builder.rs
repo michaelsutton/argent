@@ -766,6 +766,49 @@ mod tests {
     }
 
     #[test]
+    fn context_spawns_a_static_actor_without_an_actor_type_value() {
+        let source = "tests/fixtures/runtime/context_static_actor_spawn/app.ag";
+        let artifact = selected_app_artifact(source, "StaticActorSpawn", "context-static-actor-spawn");
+        let builder = TxBuilder::new(&artifact).expect("builder accepts static-spawn artifact");
+
+        let launcher_id = Hash::from_bytes([0x91; 32]);
+        let launcher_outpoint = TransactionOutpoint::new(TransactionId::from_bytes([0x92; 32]), 3);
+        let launcher_state = state! { launches: 0 };
+        let launcher_utxo = builder
+            .covenant_utxo("Launcher", launcher_state.clone(), 5_000, 0, false, Some(launcher_id))
+            .expect("launcher UTXO builds");
+        let context = TxContext::new()
+            .actor_input(
+                "Launcher",
+                launcher_state,
+                EntryCall::new("launch").args(args![42]),
+                launcher_outpoint,
+                launcher_utxo.clone(),
+                0,
+            )
+            .actor_output("Launcher", state! { launches: 1 }, CovenantBinding::new(0, launcher_id), 3_000)
+            .actor_genesis_output(0, "spawn::child_group", "Child", state! { value: 42 }, 2_000);
+
+        let transaction = builder.build(&context).expect("static actor spawn executes");
+        let child_id = covenant_id(launcher_outpoint, [(1, &transaction.outputs[1])].into_iter());
+        assert_eq!(transaction.outputs[1].covenant, Some(CovenantBinding::new(0, child_id)));
+
+        let wrong_actor = TxContext::new()
+            .actor_input(
+                "Launcher",
+                state! { launches: 0 },
+                EntryCall::new("launch").args(args![42]),
+                launcher_outpoint,
+                launcher_utxo,
+                0,
+            )
+            .actor_output("Launcher", state! { launches: 1 }, CovenantBinding::new(0, launcher_id), 3_000)
+            .actor_genesis_output(0, "spawn::child_group", "Launcher", state! { launches: 42 }, 2_000);
+        let err = builder.build(&wrong_actor).expect_err("static spawn requires the declared actor template");
+        assert!(matches!(err, BuilderError::InvalidSpawnGroup(ref spawn, _) if spawn == "child_group"), "unexpected error: {err}");
+    }
+
+    #[test]
     fn context_orders_multiple_spawn_groups_and_rejects_invalid_witnesses() {
         let source = "tests/fixtures/runtime/context_multiple_genesis_spawns/app.ag";
         let controller_artifact = selected_app_artifact(source, "ControllerApp", "context-multiple-spawns-controller");
