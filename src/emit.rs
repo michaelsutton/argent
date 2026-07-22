@@ -66,6 +66,7 @@ struct Model<'a> {
     actors: Vec<&'a ActorDecl>,
     /// Delegate entries that establish each actor as a leader actor.
     leader_for: BTreeMap<String, Vec<EntryRefArtifact>>,
+    route_leaves_by_actor: BTreeMap<String, Vec<RouteRootLeaf>>,
     state_route_leaves: BTreeMap<String, Vec<RouteRootLeaf>>,
 }
 
@@ -196,7 +197,7 @@ impl<'a> Model<'a> {
         let state_template_deps = compute_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
-        let CompilerRoutePlan { families: route_families, leaves_by_actor: _leaves_by_actor } =
+        let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor } =
             infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums)?;
         let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
@@ -211,6 +212,7 @@ impl<'a> Model<'a> {
             actor_enums,
             actors,
             leader_for,
+            route_leaves_by_actor,
             state_route_leaves,
         };
         model.validate()?;
@@ -284,6 +286,7 @@ impl<'a> Model<'a> {
         self.validate_reserved_identifiers()?;
         self.validate_state_expansions()?;
         self.validate_generated_actor_suffixes()?;
+        self.validate_route_plan_coverage()?;
 
         let template_actor_set = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
         for actor in &self.actors {
@@ -292,6 +295,18 @@ impl<'a> Model<'a> {
             }
         }
         self.validate_observed_template_state_fields()?;
+        Ok(())
+    }
+
+    fn validate_route_plan_coverage(&self) -> Result<()> {
+        let template_actors = self.template_actors.iter().cloned().collect::<BTreeSet<_>>();
+        let planned_actors = self.route_leaves_by_actor.keys().cloned().collect::<BTreeSet<_>>();
+        if planned_actors != template_actors {
+            return Err(ArgentError::new(format!(
+                "route planner actor coverage differs from the selected app; expected {:?}, found {:?}",
+                template_actors, planned_actors
+            )));
+        }
         Ok(())
     }
 
@@ -8146,6 +8161,50 @@ mod tests {
             ]
         );
         assert!(leaves["Settle"].is_empty());
+    }
+
+    #[test]
+    fn model_retains_distinct_actor_cuts_for_one_declared_state() {
+        let path = PathBuf::from("actor-route-cuts.ag");
+        let module = crate::parser::parse_module(
+            path.clone(),
+            r#"
+            state SharedState {
+                int value;
+            }
+
+            state TailState {
+                int value;
+            }
+
+            actor A owns SharedState {
+                entry leave() emits one Tail {
+                    TailState next_tail = {
+                        value: value,
+                    };
+                    become Tail(next_tail);
+                }
+            }
+
+            actor B owns SharedState {}
+            actor Tail owns TailState {}
+
+            app ActorRouteCuts {
+                actor A;
+                actor B;
+                actor Tail;
+            }
+            "#
+            .to_string(),
+        )
+        .expect("source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let model = Model::from_program(&program).expect("model retains the planned actor cuts");
+
+        assert_eq!(model.route_leaves_by_actor["A"], [RouteRootLeaf::Actor("Tail".to_string())]);
+        assert!(model.route_leaves_by_actor["B"].is_empty());
+        assert_eq!(model.state_route_leaves["SharedState"], [RouteRootLeaf::Actor("Tail".to_string())]);
     }
 
     #[test]
