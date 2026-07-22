@@ -368,9 +368,7 @@ pub fn commitment_plan(g: &RouteGraph, constraints: &CommitmentConstraints) -> R
     for cohort in &constraints.cohorts {
         // These edges exist only in the cloned dependency graph; they do not
         // claim that cohort peers route to one another in the source program.
-        // TODO: Contract cohorts into dependency nodes, or introduce a
-        // dedicated dependency graph, instead of materializing quadratic
-        // synthetic cliques.
+        // See optimization.md for optimization notes.
         needs_graph.add_emit_clique(cohort);
     }
     let actor_needs = needs(&needs_graph);

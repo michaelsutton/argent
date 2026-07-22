@@ -254,11 +254,6 @@ impl<'a> Model<'a> {
         self.state_route_leaves.get(state).map(Vec::as_slice).unwrap_or(&[])
     }
 
-    #[cfg(test)]
-    fn route_leaves_for_actor(&self, actor: &str) -> &[RouteRootLeaf] {
-        self.route_leaves_by_actor.get(actor).map(Vec::as_slice).expect("validated template actors have planned route leaves")
-    }
-
     fn route_family_for_actor(&self, actor: &str) -> Option<&RouteFamily> {
         self.route_families.iter().find(|family| family.actors.iter().any(|member| member == actor))
     }
@@ -1665,7 +1660,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
 
     out.push_str(&format!("contract {}(\n", actor.name));
     let mut args = Vec::new();
-    args.extend(hidden_template_init_args_for_state(&actor.state, model).into_iter().map(|arg| format!("    {arg}")));
+    args.extend(hidden_template_init_args_for_actor(actor, model).into_iter().map(|arg| format!("    {arg}")));
     for field in &state.fields {
         args.push(format!("    {} init_{}", lower_type_ref(&field.ty, model), field.name));
     }
@@ -1677,7 +1672,7 @@ fn emit_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     emit_shared_functions(&mut out, model);
 
     emit_section_header(&mut out, "Route templates");
-    emit_route_template_table(&mut out, &actor.state, model);
+    emit_route_template_table(&mut out, actor, model);
     out.push('\n');
 
     emit_section_header_raw(&mut out, &format!("state fields: {}", actor.name));
@@ -3057,7 +3052,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         }
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(&self.actor.state, state_name, self.model);
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -3107,7 +3102,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
         let close_indent = " ".repeat(indent);
         let mut out = String::new();
         out.push_str("{\n");
-        let generated_fields = hidden_template_object_fields_for_state(&self.actor.state, state_name, self.model);
+        let generated_fields = hidden_template_object_fields_for_state(self.actor, state_name, self.model);
         out.push_str(&format!("{field_indent}// :: generated fields\n"));
         for (field, expr) in generated_fields {
             out.push_str(&format!("{field_indent}{field}: {expr},\n"));
@@ -4488,7 +4483,7 @@ fn interface_set_artifact(model: &Model<'_>) -> Result<InterfaceSetArtifact> {
 
 fn actor_interface_artifact(actor_name: &str, model: &Model<'_>) -> Result<ActorInterfaceArtifact> {
     let actor = model.actor(actor_name)?;
-    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let runtime_fields = runtime_state_fields_for_actor(actor, model)?;
     let fingerprint_hex = actor_interface_fingerprint_hex(&actor.name, &actor.state, &runtime_fields)
         .map_err(|err| ArgentError::new(format!("failed to compute actor interface fingerprint for `{}`: {err}", actor.name)))?;
     Ok(ActorInterfaceArtifact {
@@ -4604,7 +4599,7 @@ fn actor_type_handle_artifact(
         })
         .transpose()?
         .unwrap_or_default();
-    let runtime_fields = runtime_state_fields_for_source(&actor.state, model)?;
+    let runtime_fields = runtime_state_fields_for_actor(actor, model)?;
     let context_state = RuntimeStateArtifact {
         source: expansion.base.clone(),
         fields: runtime_fields.iter().take(context_fields.len()).cloned().collect(),
@@ -4797,10 +4792,7 @@ fn sil_contract_artifact(actor: &ActorDecl, model: &Model<'_>, actor_sil: &BTree
     Ok(SilContractArtifact {
         name: actor.name.clone(),
         source_path: format!("sil/{}.sil", actor.name),
-        runtime_state: RuntimeStateArtifact {
-            source: actor.state.clone(),
-            fields: runtime_state_fields_for_source(&actor.state, model)?,
-        },
+        runtime_state: RuntimeStateArtifact { source: actor.state.clone(), fields: runtime_state_fields_for_actor(actor, model)? },
         entries,
         compiled: compile_contract_artifact(sil, actor, model)?,
     })
@@ -4815,7 +4807,7 @@ fn compile_contract_artifact<'i>(sil: &'i str, actor: &ActorDecl, model: &Model<
 
 fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<SilExpr<'i>>> {
     let state = model.storage_state(&actor.state)?;
-    let hidden_args = hidden_template_init_args_for_state(&actor.state, model);
+    let hidden_args = hidden_template_init_args_for_actor(actor, model);
     let mut args = Vec::with_capacity(hidden_args.len() + state.fields.len());
 
     // These placeholders are valid because Argent-generated constructor
@@ -4823,7 +4815,7 @@ fn constructor_args_for_actor<'i>(actor: &ActorDecl, model: &Model<'_>) -> Resul
     // state fields. If a constructor argument affects code shape outside the
     // compiled state span, the template hash changes and the contract must be
     // recompiled for that value.
-    match route_field_kind(&actor.state, model) {
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             args.extend(actor_templates.into_iter().map(|_| zero_byte_array_expr(32)));
@@ -4906,13 +4898,13 @@ fn compiled_contract_artifact(compiled: &CompiledContract<'_>) -> Result<Compile
     })
 }
 
-fn runtime_state_field_defs_for_source(
-    source_state: &str,
+fn runtime_state_field_defs_for_actor(
+    actor: &ActorDecl,
     model: &Model<'_>,
 ) -> Result<Vec<(String, TypeArtifact, Option<RuntimeFieldRoleArtifact>)>> {
-    let state = model.storage_state(source_state)?;
+    let state = model.storage_state(&actor.state)?;
     let mut fields = Vec::new();
-    match route_field_kind(source_state, model) {
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
@@ -4961,7 +4953,7 @@ fn runtime_state_field_defs_for_source(
             }
         }
     }
-    for spec in observed_template_specs_for_state(source_state, model) {
+    for spec in observed_template_specs_for_state(&actor.state, model) {
         fields.push((
             hidden_observed_actor_template_name(&spec),
             TypeArtifact::from_parts("byte", Some(32)),
@@ -4979,15 +4971,15 @@ fn runtime_state_field_defs_for_source(
     Ok(fields)
 }
 
-fn runtime_state_fields_for_source(source_state: &str, model: &Model<'_>) -> Result<Vec<RuntimeFieldArtifact>> {
-    Ok(runtime_state_field_defs_for_source(source_state, model)?
+fn runtime_state_fields_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Result<Vec<RuntimeFieldArtifact>> {
+    Ok(runtime_state_field_defs_for_actor(actor, model)?
         .into_iter()
         .map(|(name, ty, _role)| RuntimeFieldArtifact { name, ty })
         .collect())
 }
 
 fn runtime_state_plan_artifact(actor: &ActorDecl, model: &Model<'_>) -> Result<Option<RuntimeStatePlanArtifact>> {
-    let field_roles = runtime_state_field_defs_for_source(&actor.state, model)?
+    let field_roles = runtime_state_field_defs_for_actor(actor, model)?
         .into_iter()
         .filter_map(|(name, _ty, role)| role.map(|role| RuntimeFieldRolePlanArtifact { name, role }))
         .collect::<Vec<_>>();
@@ -5872,10 +5864,13 @@ fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<
     route_field_kind_from_leaves(model.route_leaves_for_state(state), families, model)
 }
 
-#[cfg(test)]
 fn route_field_kind_for_actor<'a>(actor: &str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
+    let Some(leaves) = model.route_leaves_by_actor.get(actor) else {
+        let state = &model.actors_by_name[actor].state;
+        return route_field_kind(state, model);
+    };
     let families = model.route_family_for_actor(actor).into_iter().collect::<Vec<_>>();
-    route_field_kind_from_leaves(model.route_leaves_for_actor(actor), families, model)
+    route_field_kind_from_leaves(leaves, families, model)
 }
 
 fn route_field_kind_from_leaves<'a>(
@@ -5933,8 +5928,8 @@ enum RouteFieldKind<'a> {
     FamilyTables { actor_templates: Vec<&'a str>, family_commitments: Vec<&'a RouteFamily>, families: Vec<&'a RouteFamily> },
 }
 
-fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<String> {
-    let mut args = match route_field_kind(state, model) {
+fn hidden_template_init_args_for_actor(actor: &ActorDecl, model: &Model<'_>) -> Vec<String> {
+    let mut args = match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => Vec::new(),
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             let mut args =
@@ -5960,16 +5955,16 @@ fn hidden_template_init_args_for_state(state: &str, model: &Model<'_>) -> Vec<St
         }
     };
     args.extend(
-        observed_template_specs_for_state(state, model)
+        observed_template_specs_for_state(&actor.state, model)
             .iter()
             .map(|spec| format!("byte[32] {}", hidden_observed_actor_template_init_name(spec))),
     );
     args
 }
 
-fn emit_route_template_table(out: &mut String, state: &str, model: &Model<'_>) {
-    let observed_templates = observed_template_specs_for_state(state, model);
-    match route_field_kind(state, model) {
+fn emit_route_template_table(out: &mut String, actor: &ActorDecl, model: &Model<'_>) {
+    let observed_templates = observed_template_specs_for_state(&actor.state, model);
+    match route_field_kind_for_actor(&actor.name, model) {
         RouteFieldKind::None => {}
         RouteFieldKind::Direct { actor_templates, family_commitments } => {
             for actor in actor_templates {
@@ -6060,46 +6055,49 @@ fn emit_hidden_template_fields(out: &mut String, state: &str, model: &Model<'_>,
     }
 }
 
-fn hidden_template_object_fields_for_state(source_state: &str, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
-    let mut fields = match route_field_kind(target_state, model) {
-        RouteFieldKind::None => Vec::new(),
-        RouteFieldKind::Direct { actor_templates, family_commitments } => {
-            let mut fields = actor_templates
-                .into_iter()
-                .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
-                .collect::<Vec<_>>();
-            fields.extend(family_commitments.into_iter().map(|family| {
-                (
-                    hidden_route_family_commitment_name(family),
-                    hidden_route_family_commitment_expr_for_state(source_state, family, model),
-                )
-            }));
-            fields
-        }
-        RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
-            let mut fields = actor_templates
-                .into_iter()
-                .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model)))
-                .collect::<Vec<_>>();
-            fields.extend(family_commitments.into_iter().map(|family| {
-                (
-                    hidden_route_family_commitment_name(family),
-                    hidden_route_family_commitment_expr_for_state(source_state, family, model),
-                )
-            }));
-            for family in families {
-                let table_expr = hidden_route_family_table_name(family);
-                fields.extend(
-                    family
-                        .direct_template_actors()
-                        .iter()
-                        .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(source_state, actor, model))),
-                );
-                fields.push((hidden_route_family_table_name(family), table_expr));
-            }
-            fields
-        }
+fn hidden_template_object_fields_for_state(source_actor: &ActorDecl, target_state: &str, model: &Model<'_>) -> Vec<(String, String)> {
+    let target_fields = if target_state == source_actor.state {
+        route_field_kind_for_actor(&source_actor.name, model)
+    } else {
+        route_field_kind(target_state, model)
     };
+    let mut fields =
+        match target_fields {
+            RouteFieldKind::None => Vec::new(),
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                let mut fields = actor_templates
+                    .into_iter()
+                    .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
+                    .collect::<Vec<_>>();
+                fields.extend(family_commitments.into_iter().map(|family| {
+                    (
+                        hidden_route_family_commitment_name(family),
+                        hidden_route_family_commitment_expr_for_actor(source_actor, family, model),
+                    )
+                }));
+                fields
+            }
+            RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+                let mut fields = actor_templates
+                    .into_iter()
+                    .map(|actor| (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model)))
+                    .collect::<Vec<_>>();
+                fields.extend(family_commitments.into_iter().map(|family| {
+                    (
+                        hidden_route_family_commitment_name(family),
+                        hidden_route_family_commitment_expr_for_actor(source_actor, family, model),
+                    )
+                }));
+                for family in families {
+                    let table_expr = hidden_route_family_table_name(family);
+                    fields.extend(family.direct_template_actors().iter().map(|actor| {
+                        (hidden_template_name(actor), hidden_template_expr_for_actor(&source_actor.state, actor, model))
+                    }));
+                    fields.push((hidden_route_family_table_name(family), table_expr));
+                }
+                fields
+            }
+        };
     fields.extend(observed_template_specs_for_state(target_state, model).into_iter().map(|spec| {
         let field = hidden_observed_actor_template_name(&spec);
         (field.clone(), field)
@@ -6107,8 +6105,8 @@ fn hidden_template_object_fields_for_state(source_state: &str, target_state: &st
     fields
 }
 
-fn hidden_route_family_commitment_expr_for_state(source_state: &str, family: &RouteFamily, model: &Model<'_>) -> String {
-    if model.route_families_for_state(source_state).iter().any(|source_family| source_family.id == family.id) {
+fn hidden_route_family_commitment_expr_for_actor(source_actor: &ActorDecl, family: &RouteFamily, model: &Model<'_>) -> String {
+    if model.route_family_for_actor(&source_actor.name).is_some_and(|source_family| source_family.id == family.id) {
         format!("blake2b({})", hidden_route_family_table_name(family))
     } else {
         hidden_route_family_commitment_name(family)
@@ -8291,6 +8289,30 @@ mod tests {
             RouteFieldKind::None | RouteFieldKind::FamilyTables { .. } => panic!("A has one direct actor template"),
         }
         assert!(matches!(route_field_kind_for_actor("B", &model), RouteFieldKind::None));
+
+        let actor_a = model.actor("A").expect("A exists");
+        let actor_b = model.actor("B").expect("B exists");
+        let a_sil = emit_actor(actor_a, &model).expect("A Sil emits");
+        let b_sil = emit_actor(actor_b, &model).expect("B Sil emits");
+        assert!(a_sil.contains("byte[32] gen__init_tail_template"), "{a_sil}");
+        assert!(a_sil.contains("byte[32] gen__tail_template = gen__init_tail_template;"), "{a_sil}");
+        assert!(!b_sil.contains("gen__tail_template"), "{b_sil}");
+        assert_eq!(
+            runtime_state_fields_for_actor(actor_a, &model)
+                .expect("A runtime fields lower")
+                .into_iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            ["gen__tail_template", "value"]
+        );
+        assert_eq!(
+            runtime_state_fields_for_actor(actor_b, &model)
+                .expect("B runtime fields lower")
+                .into_iter()
+                .map(|field| field.name)
+                .collect::<Vec<_>>(),
+            ["value"]
+        );
     }
 
     #[test]
@@ -9089,16 +9111,22 @@ mod tests {
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
-            vec![
-                (
-                    "gen__a_routes",
-                    RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["A".to_string(), "B".to_string(), "C".to_string()] }
-                ),
-                (
-                    "gen__d_routes",
-                    RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string(), "E".to_string(), "F".to_string()] }
-                ),
-            ]
+            vec![(
+                "gen__a_routes",
+                RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["A".to_string(), "B".to_string(), "C".to_string()] }
+            ),]
+        );
+        assert_eq!(
+            runtime_state_plan(&artifact, "D")
+                .expect("D runtime role overlay exists")
+                .field_roles
+                .iter()
+                .map(|field| (field.name.as_str(), field.role.clone()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "gen__d_routes",
+                RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string(), "E".to_string(), "F".to_string()] }
+            ),]
         );
         artifact.verify_template_plan().expect("multi-family route state receipt verifies");
     }
@@ -9181,7 +9209,11 @@ mod tests {
                 .iter()
                 .map(|field| (field.name.as_str(), field.role.clone()))
                 .collect::<Vec<_>>(),
-            vec![("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() })]
+            vec![
+                ("gen__hub_a_template", RuntimeFieldRoleArtifact::Template { contract: "HubA".to_string() }),
+                ("gen__hub_b_template", RuntimeFieldRoleArtifact::Template { contract: "HubB".to_string() }),
+                ("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() }),
+            ]
         );
         artifact.verify_template_plan().expect("direct route plan verifies");
     }
