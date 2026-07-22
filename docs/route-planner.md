@@ -1,9 +1,29 @@
 # Route Planning
 
-This document describes the routing model implemented on the `route-algo`
-branch and the boundary between the pure planner and Argent emission. It is a
-description of the current system, not a claim that the present family and
-cohort heuristics are optimal.
+Argent actors may own the same source-level state while needing different
+runtime route commitments. An actor should carry enough information to
+authenticate every actor it may emit, but storing every reachable template
+individually would make state large and couple compiler emission to one fixed
+grouping strategy.
+
+The route planner represents those commitments as a forest. Related templates
+can be grouped under an ordered, hash-committed table, and each actor receives
+a cut through that forest: a compact mix of concrete templates and packed
+table commitments. Moving from one actor to another becomes a structural cut
+transition—retain common nodes, open packed families, and pack families that
+the target no longer needs open.
+
+The design separates three concerns:
+
+1. Graph classification proposes families and actors that should share a cut.
+2. Commitment planning constructs the forest, computes actor cuts, and derives
+   transitions without knowing about Argent syntax or SIL.
+3. Compiler lowering turns those cuts and transitions into state fields,
+   witnesses, hashes, and output validation.
+
+The family and cohort rules below are an initial grouping policy. They can be
+replaced or optimized without changing the commitment or compiler boundary,
+provided the stated invariants continue to hold.
 
 ## Terms
 
@@ -32,7 +52,7 @@ cohort heuristics are optimal.
   the route fields for one concrete target actor. It is a compiler transport
   type, not a planner node or cut.
 
-Several older names are narrower than their current jobs:
+Some API names require a more precise interpretation:
 
 - `RouteFamily.actors` is the complete component, while the commitment family
   is only `table_actors`.
@@ -44,7 +64,7 @@ Several older names are narrower than their current jobs:
 - A declared Argent state is not necessarily one runtime layout. Actors owning
   the same state can have different generated route fields.
 
-## Planner inputs and classification
+## Planner inputs and classification policy
 
 The compiler builds a `RouteGraph` for the selected app, one state domain per
 declared actor state, and selector requirements for actor-enum values used as
@@ -52,10 +72,10 @@ route selectors. Dynamic and fixed enum routes are expanded to their possible
 concrete targets for dependency planning.
 
 For each domain, `route_plan` finds weak emit components using only edges whose
-two endpoints are in that domain. It still consults the full graph to identify
-inbound gates.
+two endpoints are in that domain. Gate detection consults the full graph so it
+can see inbound edges from other domains.
 
-The current classification is deliberately simple:
+The initial classification policy is deliberately simple:
 
 1. Every component with at least two actors becomes a cohort.
 2. A selector requirement always creates a family. Its enum order is the table
@@ -72,11 +92,10 @@ Selector requirements must name one known domain, use a source and variants in
 one component, contain at least two distinct variants, and agree on one prefix
 order when multiple selectors affect the same component.
 
-An actor-enum declaration itself is validated to contain selected actors that
-own the same state. Currently, only an enum used as a selector becomes a
-planner requirement; an otherwise-unused enum does not independently merge
-cohorts. Whether the declaration alone should impose that equality remains a
-policy decision.
+An actor-enum declaration itself is validated to contain actors that own the
+same state. Only an enum used as a selector becomes a planner requirement; an
+otherwise-unused enum does not independently merge cohorts. Making every enum
+declaration impose cohort equality is a separate policy choice.
 
 ## Commitment planning
 
@@ -86,9 +105,9 @@ route graph plus ordered families and cohorts.
 Forest construction is deterministic. Each table is one branch whose children
 follow table order. Actors outside tables are root leaves. A branch occupies
 the root position of its lexically earliest child, independently of the order
-in which family constraints were supplied. The current compiler only lowers
-one-level family branches, although the forest and transition structures can
-represent nesting.
+in which family constraints were supplied. Compiler lowering supports
+one-level family branches; the forest and transition structures can represent
+nesting.
 
 Dependency planning happens on a clone of the route graph. Every cohort is
 made into a synthetic directed clique on that clone, then ordinary needs are
@@ -143,11 +162,11 @@ layout. If their cuts differ, Argent can emit actor-qualified layouts and a
 user-fields-only state body. The state body is retained when a source value must
 remain neutral between multiple target layouts. A local used only by exactly
 one concrete route is materialized directly in that target's layout at its
-original declaration point. Packing still depends on the specific edge, but this
-straight-line case can compute the digest there without an intermediate
-state body.
+original declaration point. Packing is edge-specific; in this straight-line
+case the compiler can compute the digest there without an intermediate state
+body.
 
-There is still a conservative compiler-local state dependency calculation for
+The compiler also retains a conservative state dependency calculation for
 unqualified and dynamic state values. It aggregates template needs by declared
 state and propagates them over state-to-state routes. Actor-qualified routes use
 the commitment planner; the state-wide result is a fallback layout, not an
@@ -170,11 +189,11 @@ alternative commitment plan.
   artifact route receipts all describe the same actor cut.
 - Selector variants use one table order and one cut transition.
 
-## Current limits and pinned cases
+## Limits and reference cases
 
 The heuristic is one-level and intentionally coarse. In particular, every
-nontrivial weak component becomes a cohort, and cohort propagation currently
-uses a quadratic synthetic clique. Concrete optimization cases and the
+nontrivial weak component becomes a cohort, and cohort propagation uses a
+quadratic synthetic clique. Concrete optimization cases and the
 invariants they must preserve live in
 [`src/routing/optimization.md`](../src/routing/optimization.md).
 
