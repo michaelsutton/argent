@@ -245,6 +245,11 @@ impl<'a> Model<'a> {
         self.state_route_leaves.get(state).map(Vec::as_slice).unwrap_or(&[])
     }
 
+    #[cfg(test)]
+    fn route_leaves_for_actor(&self, actor: &str) -> &[RouteRootLeaf] {
+        self.route_leaves_by_actor.get(actor).map(Vec::as_slice).expect("validated template actors have planned route leaves")
+    }
+
     fn route_family_for_actor(&self, actor: &str) -> Option<&RouteFamily> {
         self.route_families.iter().find(|family| family.actors.iter().any(|member| member == actor))
     }
@@ -5812,19 +5817,31 @@ fn route_family_proof_id_from_id(family_id: &str) -> String {
 
 fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
     let families = model.route_families_for_state(state);
+    route_field_kind_from_leaves(model.route_leaves_for_state(state), families, model)
+}
+
+#[cfg(test)]
+fn route_field_kind_for_actor<'a>(actor: &str, model: &'a Model<'_>) -> RouteFieldKind<'a> {
+    let families = model.route_family_for_actor(actor).into_iter().collect::<Vec<_>>();
+    route_field_kind_from_leaves(model.route_leaves_for_actor(actor), families, model)
+}
+
+fn route_field_kind_from_leaves<'a>(
+    leaves: &'a [RouteRootLeaf],
+    families: Vec<&'a RouteFamily>,
+    model: &'a Model<'_>,
+) -> RouteFieldKind<'a> {
     if !families.is_empty() {
         let family_actors = families.iter().flat_map(|family| family.actors.iter().map(String::as_str)).collect::<BTreeSet<_>>();
         let family_ids = families.iter().map(|family| family.id.as_str()).collect::<BTreeSet<_>>();
-        let actor_templates = model
-            .route_leaves_for_state(state)
+        let actor_templates = leaves
             .iter()
             .filter_map(|leaf| match leaf {
                 RouteRootLeaf::Actor(actor) if !family_actors.contains(actor.as_str()) => Some(actor.as_str()),
                 RouteRootLeaf::Actor(_) | RouteRootLeaf::Family(_) => None,
             })
             .collect::<Vec<_>>();
-        let family_commitments = model
-            .route_leaves_for_state(state)
+        let family_commitments = leaves
             .iter()
             .filter_map(|leaf| match leaf {
                 RouteRootLeaf::Family(family_id) if !family_ids.contains(family_id.as_str()) => {
@@ -5836,16 +5853,14 @@ fn route_field_kind<'a>(state: &'a str, model: &'a Model<'_>) -> RouteFieldKind<
         return RouteFieldKind::FamilyTables { actor_templates, family_commitments, families };
     }
 
-    let actor_templates = model
-        .route_leaves_for_state(state)
+    let actor_templates = leaves
         .iter()
         .filter_map(|leaf| match leaf {
             RouteRootLeaf::Actor(actor) => Some(actor.as_str()),
             RouteRootLeaf::Family(_) => None,
         })
         .collect::<Vec<_>>();
-    let family_commitments = model
-        .route_leaves_for_state(state)
+    let family_commitments = leaves
         .iter()
         .filter_map(|leaf| match leaf {
             RouteRootLeaf::Actor(_) => None,
@@ -8205,6 +8220,46 @@ mod tests {
         assert_eq!(model.route_leaves_by_actor["A"], [RouteRootLeaf::Actor("Tail".to_string())]);
         assert!(model.route_leaves_by_actor["B"].is_empty());
         assert_eq!(model.state_route_leaves["SharedState"], [RouteRootLeaf::Actor("Tail".to_string())]);
+
+        match route_field_kind_for_actor("A", &model) {
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                assert_eq!(actor_templates, ["Tail"]);
+                assert!(family_commitments.is_empty());
+            }
+            RouteFieldKind::None | RouteFieldKind::FamilyTables { .. } => panic!("A has one direct actor template"),
+        }
+        assert!(matches!(route_field_kind_for_actor("B", &model), RouteFieldKind::None));
+    }
+
+    #[test]
+    fn actor_route_field_kind_distinguishes_local_tables_from_foreign_commitments() {
+        let path = PathBuf::from("actor-route-field-kinds.ag");
+        let module = crate::parser::parse_module(path.clone(), toy_chess_source()).expect("toy chess source parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        let model = Model::from_program(&program).expect("toy chess model validates");
+
+        match route_field_kind_for_actor("Mux", &model) {
+            RouteFieldKind::FamilyTables { actor_templates, family_commitments, families } => {
+                assert!(actor_templates.is_empty());
+                assert!(family_commitments.is_empty());
+                assert_eq!(families.iter().map(|family| family.id.as_str()).collect::<Vec<_>>(), ["route_family/BoardState/mux"]);
+            }
+            RouteFieldKind::None | RouteFieldKind::Direct { .. } => panic!("Mux owns its local route table"),
+        }
+
+        match route_field_kind_for_actor("Player", &model) {
+            RouteFieldKind::Direct { actor_templates, family_commitments } => {
+                assert_eq!(actor_templates, ["Mux"]);
+                assert_eq!(
+                    family_commitments.iter().map(|family| family.id.as_str()).collect::<Vec<_>>(),
+                    ["route_family/BoardState/mux"]
+                );
+            }
+            RouteFieldKind::None | RouteFieldKind::FamilyTables { .. } => {
+                panic!("Player carries a foreign family commitment")
+            }
+        }
     }
 
     #[test]
