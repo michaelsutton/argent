@@ -347,6 +347,127 @@ mod tests {
         );
     }
 
+    #[test]
+    fn plans_complex_routes_across_thirty_actors() {
+        let actor = |index: usize| format!("A{index:02}");
+        let mut graph = RouteGraph::default();
+        for index in 0..30 {
+            graph.add_actor(actor(index));
+        }
+
+        let emits = {
+            let mut emits = Vec::new();
+            let mut add_emit = |source: usize, target: usize| {
+                let edge = (actor(source), actor(target));
+                graph.add_emit(edge.0.clone(), edge.1.clone());
+                emits.push(edge);
+            };
+
+            // Four same-domain components with cycles, cross-links, multiple
+            // inbound gates, and a cross-domain dependency chain.
+            for component in [0..10, 10..15, 15..20, 20..30] {
+                for index in component.clone() {
+                    let next = if index + 1 == component.end { component.start } else { index + 1 };
+                    add_emit(index, next);
+                }
+            }
+            for (source, target) in [(1, 10), (5, 16), (6, 18), (17, 3), (24, 7), (24, 13)] {
+                add_emit(source, target);
+            }
+            emits
+        };
+
+        graph.add_consume(actor(0), actor(12));
+        graph.add_consume(actor(16), actor(27));
+        graph.add_consume(actor(23), actor(19));
+
+        let domains = BTreeMap::from([
+            ("Alpha".to_string(), (0..10).map(actor).collect()),
+            ("Beta".to_string(), (10..20).map(actor).collect()),
+            ("Gamma".to_string(), (20..30).map(actor).collect()),
+        ]);
+        let selectors = vec![
+            SelectorRequirement {
+                domain: "Alpha".to_string(),
+                source: actor(4),
+                variants: [5, 2, 8].into_iter().map(actor).collect(),
+            },
+            SelectorRequirement { domain: "Beta".to_string(), source: actor(17), variants: [19, 15].into_iter().map(actor).collect() },
+            SelectorRequirement {
+                domain: "Gamma".to_string(),
+                source: actor(25),
+                variants: [29, 20, 24, 22].into_iter().map(actor).collect(),
+            },
+        ];
+
+        let plan = route_plan(&graph, &domains, &selectors).expect("complex route plan is valid");
+
+        assert_eq!(
+            plan.families,
+            vec![
+                FamilyPlan {
+                    domain: "Alpha".to_string(),
+                    rep: actor(3),
+                    members: (0..10).map(actor).collect(),
+                    gates: [3, 7].into_iter().map(actor).collect(),
+                    table: [5, 2, 8, 0, 1, 4, 6, 9].into_iter().map(actor).collect(),
+                },
+                FamilyPlan {
+                    domain: "Beta".to_string(),
+                    rep: actor(10),
+                    members: (10..15).map(actor).collect(),
+                    gates: [10, 13].into_iter().map(actor).collect(),
+                    table: [11, 12, 14].into_iter().map(actor).collect(),
+                },
+                FamilyPlan {
+                    domain: "Beta".to_string(),
+                    rep: actor(16),
+                    members: (15..20).map(actor).collect(),
+                    gates: [16, 18].into_iter().map(actor).collect(),
+                    table: [19, 15, 17].into_iter().map(actor).collect(),
+                },
+                FamilyPlan {
+                    domain: "Gamma".to_string(),
+                    rep: actor(20),
+                    members: (20..30).map(actor).collect(),
+                    gates: Vec::new(),
+                    table: [29, 20, 24, 22, 21, 23, 25, 26, 27, 28].into_iter().map(actor).collect(),
+                },
+            ]
+        );
+
+        for cut in plan.commitments.cuts.values() {
+            assert!(plan.commitments.forest.is_valid_cut(cut));
+        }
+        for component in [0..10, 10..15, 15..20, 20..30] {
+            let first_cut = &plan.commitments.cuts[&actor(component.start)];
+            assert!(component.map(actor).all(|member| &plan.commitments.cuts[&member] == first_cut));
+        }
+        for (source, target) in emits {
+            plan.commitments
+                .cut_transition(&source, &target)
+                .unwrap_or_else(|err| panic!("missing transition {source} -> {target}: {err}"));
+        }
+
+        // Direct consumes expose complete family tables in the consuming
+        // cohort, including siblings that were not consumed themselves.
+        assert!(selected_leaf_actors(&plan, &actor(0)).is_superset(&[11, 12, 14].into_iter().map(actor).collect()));
+        assert!(selected_leaf_actors(&plan, &actor(16)).is_superset(&(20..30).map(actor).collect()));
+        assert!(selected_leaf_actors(&plan, &actor(23)).is_superset(&[15, 17, 19].into_iter().map(actor).collect()));
+    }
+
+    fn selected_leaf_actors(plan: &RoutePlan, actor: &str) -> BTreeSet<String> {
+        plan.commitments
+            .cut_nodes(actor)
+            .expect("planned actor has a cut")
+            .into_iter()
+            .filter_map(|node| match node {
+                CommitmentNode::Leaf { actor } => Some(actor.clone()),
+                CommitmentNode::Branch { .. } => None,
+            })
+            .collect()
+    }
+
     fn leaf(actor: &str) -> CommitmentNode {
         CommitmentNode::Leaf { actor: actor.to_string() }
     }

@@ -141,6 +141,19 @@ struct CompilerRouteTransition {
     families_to_pack: Vec<String>,
 }
 
+/// Compiler-facing injection point for route classification and commitment
+/// planning. Production uses `route_plan`; tests can supply crafted plans to
+/// exercise lowering independently of the default heuristic.
+type CompilerRoutePlanner = dyn Fn(&RouteGraph, &BTreeMap<String, Vec<String>>, &[SelectorRequirement]) -> Result<PlannerRoutePlan>;
+
+fn default_route_planner(
+    graph: &RouteGraph,
+    domains: &BTreeMap<String, Vec<String>>,
+    selectors: &[SelectorRequirement],
+) -> Result<PlannerRoutePlan> {
+    route_plan(graph, domains, selectors).map_err(|err| ArgentError::new(err.to_string()))
+}
+
 fn compute_leader_for(actors: &[&ActorDecl]) -> BTreeMap<String, Vec<EntryRefArtifact>> {
     let mut leader_for = BTreeMap::<String, Vec<EntryRefArtifact>>::new();
     for actor in actors {
@@ -170,6 +183,19 @@ impl<'a> Model<'a> {
     }
 
     fn from_program_selected(program: &'a Program, app_name: Option<&str>) -> Result<Self> {
+        Self::from_program_selected_with_route_planner(program, app_name, &default_route_planner)
+    }
+
+    #[cfg(test)]
+    fn from_program_with_route_planner(program: &'a Program, route_planner: &CompilerRoutePlanner) -> Result<Self> {
+        Self::from_program_selected_with_route_planner(program, None, route_planner)
+    }
+
+    fn from_program_selected_with_route_planner(
+        program: &'a Program,
+        app_name: Option<&str>,
+        route_planner: &CompilerRoutePlanner,
+    ) -> Result<Self> {
         validate_unique_apps(program)?;
         let consts = collect_consts(program)?;
         let functions = collect_functions(program)?;
@@ -206,7 +232,7 @@ impl<'a> Model<'a> {
         let direct_state_template_deps =
             compute_direct_state_template_deps(&layout_actors, &all_actors, &layout_template_actors, &actor_enums)?;
         let CompilerRoutePlan { families: route_families, leaves_by_actor: route_leaves_by_actor, transitions: route_transitions } =
-            infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums)?;
+            infer_direct_routes(&actors, &all_actors, &template_actors, &actor_enums, route_planner)?;
         let leader_for = compute_leader_for(&actors);
         let state_route_leaves = compute_state_route_leaves(&state_template_deps, &direct_state_template_deps, &route_families);
         let model = Self {
@@ -1535,6 +1561,7 @@ fn infer_direct_routes<'a>(
     actors_by_name: &BTreeMap<String, &'a ActorDecl>,
     template_actors: &[String],
     actor_enums: &BTreeMap<String, ActorEnumInfo>,
+    route_planner: &CompilerRoutePlanner,
 ) -> Result<CompilerRoutePlan> {
     let template_actor_set = template_actors.iter().cloned().collect::<BTreeSet<_>>();
     let mut graph = RouteGraph::default();
@@ -1574,7 +1601,7 @@ fn infer_direct_routes<'a>(
         }
     }
 
-    let plan = route_plan(&graph, &domains, &selector_requirements).map_err(|err| ArgentError::new(err.to_string()))?;
+    let plan = route_planner(&graph, &domains, &selector_requirements)?;
     let leaves_by_actor = compiler_route_leaves(&plan)?;
     let transitions = transition_pairs
         .into_iter()
@@ -1814,9 +1841,6 @@ fn emit_state_layouts(
         let Some(actor) = model.actors_by_name.get(&actor_name) else {
             continue;
         };
-        if actor.state == current_actor.state {
-            continue;
-        }
         if contract_state_type_for_actor(&actor.name, current_actor, model)? != hidden_actor_state_type_name(&actor.name) {
             continue;
         }
@@ -6793,16 +6817,20 @@ fn hidden_output_idx_name(output: &str) -> String {
 fn contract_state_type_for_actor(actor: &str, current_actor: &ActorDecl, model: &Model<'_>) -> Result<String> {
     let target_state = model.actor(actor)?.state.as_str();
     if target_state == current_actor.state {
-        Ok("State".to_string())
-    } else {
-        let actor_fields = route_field_kind_for_actor(actor, model);
-        if actor_fields == route_field_kind_for_state_layout(target_state, model) {
-            Ok(target_state.to_string())
-        } else if matches!(actor_fields, RouteFieldKind::None) && observed_template_specs_for_state(target_state, model).is_empty() {
-            Ok(state_body_type_name(target_state, model))
+        return Ok(if route_field_kind_for_actor(actor, model) == route_field_kind_for_actor(&current_actor.name, model) {
+            "State".to_string()
         } else {
-            Ok(hidden_actor_state_type_name(actor))
-        }
+            hidden_actor_state_type_name(actor)
+        });
+    }
+
+    let actor_fields = route_field_kind_for_actor(actor, model);
+    if actor_fields == route_field_kind_for_state_layout(target_state, model) {
+        Ok(target_state.to_string())
+    } else if matches!(actor_fields, RouteFieldKind::None) && observed_template_specs_for_state(target_state, model).is_empty() {
+        Ok(state_body_type_name(target_state, model))
+    } else {
+        Ok(hidden_actor_state_type_name(actor))
     }
 }
 
@@ -8688,6 +8716,193 @@ mod tests {
             compiler_route_transition(&plan, "Mux", "Player").expect("Mux can pack its family for Player"),
             CompilerRouteTransition { families_to_open: Vec::new(), families_to_pack: vec![family_id] }
         );
+    }
+
+    #[test]
+    fn compiler_lowers_injected_deep_forest_cuts() {
+        use crate::routing::{CommitmentForest, CommitmentPlan, Cut, FamilyPlan, NodePath, RoutePlan};
+
+        fn leaf(actor: &str) -> CommitmentNode {
+            CommitmentNode::Leaf { actor: actor.to_string() }
+        }
+
+        fn cut(paths: &[&[usize]]) -> Cut {
+            paths.iter().map(|path| NodePath::new(path.to_vec())).collect()
+        }
+
+        let source = r#"
+            state SourceState {
+                int value;
+            }
+
+            state SharedState {
+                int value;
+            }
+
+            state TailState {
+                int value;
+            }
+
+            actor Source owns SourceState {
+                entry start() emits one HubA {
+                    SharedState next = { value: value + 1 };
+                    become HubA(next);
+                }
+            }
+
+            actor HubA owns SharedState {
+                entry advance() emits one A1 {
+                    SharedState next = { value: value + 1 };
+                    become A1(next);
+                }
+            }
+
+            actor A1 owns SharedState {
+                entry advance() emits one A2 {
+                    SharedState next = { value: value + 1 };
+                    become A2(next);
+                }
+            }
+
+            actor A2 owns SharedState {
+                entry cross() emits one HubB {
+                    SharedState next = { value: value + 1 };
+                    become HubB(next);
+                }
+            }
+
+            actor HubB owns SharedState {
+                entry advance() emits one B1 {
+                    SharedState next = { value: value + 1 };
+                    become B1(next);
+                }
+
+                entry rewind() emits one A1 {
+                    SharedState next = { value: value + 1 };
+                    become A1(next);
+                }
+            }
+
+            actor B1 owns SharedState {
+                entry advance() emits one B2 {
+                    SharedState next = { value: value + 1 };
+                    become B2(next);
+                }
+            }
+
+            actor B2 owns SharedState {
+                entry finish() emits one Tail {
+                    TailState next = { value: value + 1 };
+                    become Tail(next);
+                }
+            }
+
+            actor Tail owns TailState {
+                entry finish() emits none {
+                    require(value >= 0);
+                }
+            }
+
+            app DeepForest {
+                actor Source;
+                actor HubA;
+                actor A1;
+                actor A2;
+                actor HubB;
+                actor B1;
+                actor B2;
+                actor Tail;
+            }
+        "#;
+        let path = PathBuf::from("deep-forest.ag");
+        let module = crate::parser::parse_module(path.clone(), source.to_string()).expect("deep-forest app parses");
+        let program = Program { root: path, modules: vec![module] };
+
+        // The useful family branches live four levels below the forest root.
+        // Wrapper branches are deliberately absent from every partial cut;
+        // cuts mix packed families, opened family leaves, and a retained leaf.
+        let forest = CommitmentForest {
+            roots: vec![CommitmentNode::Branch {
+                children: vec![
+                    leaf("Source"),
+                    CommitmentNode::Branch {
+                        children: vec![CommitmentNode::Branch {
+                            children: vec![
+                                CommitmentNode::Branch { children: vec![leaf("HubA"), leaf("A1"), leaf("A2")] },
+                                leaf("Tail"),
+                                CommitmentNode::Branch { children: vec![leaf("HubB"), leaf("B1"), leaf("B2")] },
+                            ],
+                        }],
+                    },
+                ],
+            }],
+        };
+        let packed = cut(&[&[0, 1, 0, 0], &[0, 1, 0, 1], &[0, 1, 0, 2]]);
+        let family_a_open = cut(&[&[0, 1, 0, 0, 0], &[0, 1, 0, 0, 1], &[0, 1, 0, 0, 2], &[0, 1, 0, 1], &[0, 1, 0, 2]]);
+        let family_b_open = cut(&[&[0, 1, 0, 0], &[0, 1, 0, 1], &[0, 1, 0, 2, 0], &[0, 1, 0, 2, 1], &[0, 1, 0, 2, 2]]);
+        let commitments = CommitmentPlan {
+            forest,
+            cuts: BTreeMap::from([
+                ("Source".to_string(), packed),
+                ("HubA".to_string(), family_a_open.clone()),
+                ("A1".to_string(), family_a_open.clone()),
+                ("A2".to_string(), family_a_open),
+                ("HubB".to_string(), family_b_open.clone()),
+                ("B1".to_string(), family_b_open.clone()),
+                ("B2".to_string(), family_b_open),
+                ("Tail".to_string(), Cut::new()),
+            ]),
+        };
+        let crafted_plan = RoutePlan {
+            families: vec![
+                FamilyPlan {
+                    domain: "SharedState".to_string(),
+                    rep: "HubA".to_string(),
+                    members: ["HubA", "A1", "A2"].into_iter().map(str::to_string).collect(),
+                    gates: vec!["HubA".to_string()],
+                    table: ["HubA", "A1", "A2"].into_iter().map(str::to_string).collect(),
+                },
+                FamilyPlan {
+                    domain: "SharedState".to_string(),
+                    rep: "HubB".to_string(),
+                    members: ["HubB", "B1", "B2"].into_iter().map(str::to_string).collect(),
+                    gates: vec!["HubB".to_string()],
+                    table: ["HubB", "B1", "B2"].into_iter().map(str::to_string).collect(),
+                },
+            ],
+            commitments,
+        };
+        assert!(crafted_plan.commitments.cuts.values().all(|cut| crafted_plan.commitments.forest.is_valid_cut(cut)));
+        let cross = crafted_plan.commitments.cut_transition("A2", "HubB").expect("cross-family cut is derivable");
+        assert_eq!(cross.branches_to_open.len(), 1);
+        assert_eq!(cross.branches_to_pack.len(), 1);
+
+        let injected_planner =
+            move |_graph: &RouteGraph, domains: &BTreeMap<String, Vec<String>>, selectors: &[SelectorRequirement]| {
+                assert_eq!(domains["SharedState"], ["HubA", "A1", "A2", "HubB", "B1", "B2"]);
+                assert!(selectors.is_empty());
+                Ok(crafted_plan.clone())
+            };
+        let model = Model::from_program_with_route_planner(&program, &injected_planner).expect("injected route plan validates");
+
+        let family_a_id = "route_family/SharedState/hub_a".to_string();
+        let family_b_id = "route_family/SharedState/hub_b".to_string();
+        assert_eq!(
+            model.route_transitions[&("A2".to_string(), "HubB".to_string())],
+            CompilerRouteTransition { families_to_open: vec![family_b_id], families_to_pack: vec![family_a_id] }
+        );
+
+        let actor_sil = actor_sil_for_model(&model);
+        let a2_sil = &actor_sil["A2"];
+        assert!(a2_sil.contains("byte[96] gen__hub_b_routes"), "{a2_sil}");
+        assert!(a2_sil.contains("gen__hub_a_routes_digest: blake2b(gen__hub_a_routes),"), "{a2_sil}");
+        let hub_b_sil = &actor_sil["HubB"];
+        assert!(hub_b_sil.contains("byte[96] gen__hub_a_routes"), "{hub_b_sil}");
+        assert!(hub_b_sil.contains("gen__hub_b_routes_digest: blake2b(gen__hub_b_routes),"), "{hub_b_sil}");
+
+        let artifact = emit_artifact(&program, &model, &actor_sil).expect("deep-forest artifact emits");
+        artifact.verify_template_plan().expect("deep-forest template plan verifies");
+        assert_eq!(artifact.argent.template_plan.route_families.len(), 2);
     }
 
     #[test]
