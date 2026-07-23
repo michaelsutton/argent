@@ -1,4 +1,7 @@
-# Entry effect ranges
+# Ranges in entry clauses
+
+> This document is one design sketch. Its proposed vocabulary and syntax are
+open for discussion.
 
 ## Purpose
 
@@ -19,7 +22,7 @@ hidden witnesses, and runtime resolution.
 
 Use the current singleton form for one item:
 
-```ag
+```rust
 consumes {
     owner: Account;
 }
@@ -27,7 +30,7 @@ consumes {
 
 Use a cardinality suffix for a range:
 
-```ag
+```rust
 const int MAX_ACCOUNTS = 8;
 
 consumes {
@@ -40,7 +43,7 @@ integers. A range handle is an array in the entry body.
 
 The same form applies to all ordered entry sections:
 
-```ag
+```rust
 entry rebalance(next_states: AccountState[])
 consumes {
     accounts: Account[1..=MAX_ACCOUNTS];
@@ -58,7 +61,7 @@ an array. The compiler validates one output for each array item.
 
 Observed and spawned ranges use the same rule:
 
-```ag
+```rust
 observes assets by self.asset_id {
     inputs {
         previous: Asset[1..=MAX_ASSETS];
@@ -180,7 +183,7 @@ transaction shape.
 
 For this declaration:
 
-```ag
+```rust
 consumes {
     accounts: Account[1..=MAX_ACCOUNTS];
 }
