@@ -3,7 +3,7 @@ state ForeignState {
 }
 
 state LocalState {
-    covid target_id;
+    cov_id target_id;
 }
 
 actor Foreign owns ForeignState {

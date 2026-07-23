@@ -8,7 +8,7 @@ state AgentCapsule {
     byte[32] agent_id;
     byte[32] species_id;
 
-    covid controller_id;
+    cov_id controller_id;
     byte[32] capabilities_digest;
     virtual strategy;
 
@@ -24,7 +24,7 @@ state CellState {
     int y;
     int food;
 
-    covid occupant_agent_covid;
+    cov_id occupant_agent_covid;
     actor_type<AgentCapsule> occupant_agent_type;
     byte[32] occupant_caps_digest;
 }
@@ -88,7 +88,7 @@ actor Cell owns CellState {
     entry move(
         int dx,
         int dy,
-        covid empty_agent_covid,
+        cov_id empty_agent_covid,
         actor_type<AgentCapsule> empty_agent_type,
         byte[32] empty_caps_digest
     )

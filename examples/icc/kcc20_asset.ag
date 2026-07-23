@@ -10,7 +10,7 @@ state KCC20State {
 }
 
 state MinterProxyState {
-    covid controller_id;
+    cov_id controller_id;
 }
 
 actor KCC20 owns KCC20State {
@@ -24,7 +24,7 @@ actor KCC20 owns KCC20State {
         if (identifier_type == IDENTIFIER_PUBKEY) {
             require(checkSig(owner_sig, owner_identifier));
         } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
-            require(covid(owner_identifier).co_spent());
+            require(cov_id(owner_identifier).co_spent());
         } else {
             require(false);
         }

@@ -8,7 +8,7 @@ import "./kcc20_asset.ag";
 
 state MinterState {
     pubkey owner;
-    covid kcc20_covid;
+    cov_id kcc20_covid;
     int amount;
     bool initialized;
 }

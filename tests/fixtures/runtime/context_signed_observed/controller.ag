@@ -6,7 +6,7 @@ state ControllerState {
 }
 
 actor Controller owns ControllerState {
-    entry swap(covid asset_id, pubkey next_owner)
+    entry swap(cov_id asset_id, pubkey next_owner)
     observes flow by asset_id {
         inputs {
             payment: self.asset_type,

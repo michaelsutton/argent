@@ -182,7 +182,7 @@ hard-code every possible implementation.
 
 ```rust
 state CellState {
-    covid agent_covid;
+    cov_id agent_covid;
     actor_type<AgentState> agent_type;
     int tick;
 }
@@ -325,7 +325,7 @@ Legal state-carried form:
 
 ```rust
 state CellState {
-    covid agent_covid;
+    cov_id agent_covid;
     actor_type<AgentState> agent_type;
 }
 ```
@@ -371,9 +371,9 @@ should not accidentally become a closed dependency on one implementation.
 
 Current and expected source-level ICC features:
 
-- `covid`: covenant id value type
+- `cov_id`: covenant id value type
 - `id.co_spent()`: require the covenant id to be present in the transaction
-- `observes <name> by <covid_expr>`: declare an observed covenant view
+- `observes <name> by <cov_id_expr>`: declare an observed covenant view
 - `inputs { handle: Actor, }`: name observed inputs
 - `outputs { handle: Actor, }`: name observed outputs
 - `inputs { handle: self.actor_field, }`: constrain an observed input by a

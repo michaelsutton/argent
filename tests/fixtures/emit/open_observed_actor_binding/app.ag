@@ -1,11 +1,11 @@
 state AgentCapsule {
-    covid controller_id;
+    cov_id controller_id;
     byte[32] caps_digest;
     int energy;
 }
 
 state CellState {
-    covid agent_covid;
+    cov_id agent_covid;
     actor_type<AgentCapsule> agent_type;
     int tick;
 }

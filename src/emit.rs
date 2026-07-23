@@ -7876,7 +7876,7 @@ mod tests {
             }
 
             state MinterState {
-                covid kcc20_covid;
+                cov_id kcc20_covid;
                 int amount;
             }
 
@@ -8039,7 +8039,7 @@ mod tests {
             }
 
             actor Local owns LocalState {
-                entry step(int unused, covid target_id)
+                entry step(int unused, cov_id target_id)
                 observes asset by target_id {
                     inputs {
                         foreign: Foreign,
@@ -8068,7 +8068,7 @@ mod tests {
             state LocalState {}
 
             actor Local owns LocalState {
-                entry step(covid first, covid second)
+                entry step(cov_id first, cov_id second)
                 observes asset by first + second {}
                 emits none {
                     require(1 == 1);
@@ -8083,13 +8083,13 @@ mod tests {
         .expect_err("computed observe covenant ids must be rejected");
 
         assert!(
-            err.to_string().contains("covenant id source must be a `self.<field>` state field or entry argument of type `covid`"),
+            err.to_string().contains("covenant id source must be a `self.<field>` state field or entry argument of type `cov_id`"),
             "unexpected error: {err}"
         );
     }
 
     #[test]
-    fn observe_covenant_id_source_requires_covid_type() {
+    fn observe_covenant_id_source_requires_cov_id_type() {
         let err = parse_and_validate(
             r#"
             state LocalState {
@@ -8111,7 +8111,7 @@ mod tests {
         )
         .expect_err("byte arrays must not stand in for covenant ids");
 
-        assert!(err.to_string().contains("has type `byte[32]`; expected `covid`"), "unexpected error: {err}");
+        assert!(err.to_string().contains("has type `byte[32]`; expected `cov_id`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -8119,7 +8119,7 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor Local owns LocalState {
@@ -8146,7 +8146,7 @@ mod tests {
             r#"
             state ForeignState {}
             state LocalState {
-                covid target_id;
+                cov_id target_id;
                 actor_type<ForeignState> foreign_type;
             }
 
@@ -8215,7 +8215,7 @@ mod tests {
                 int value;
             }
             state LocalState {
-                covid remote_id;
+                cov_id remote_id;
                 actor_type<RemoteState> target;
             }
 
@@ -8300,7 +8300,7 @@ mod tests {
     }
 
     #[test]
-    fn icc_asset_lowers_covid_co_spend_and_else_if() {
+    fn icc_asset_lowers_cov_id_co_spend_and_else_if() {
         let out_dir = std::env::temp_dir().join(format!("argent-icc-asset-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
 
@@ -8331,7 +8331,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_co_spent_on_non_covid_value() {
+    fn rejects_co_spent_on_non_cov_id_value() {
         let out_dir = std::env::temp_dir().join(format!("argent-co-spent-type-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&out_dir);
         let module = crate::parser::parse_module(
@@ -8368,7 +8368,7 @@ mod tests {
             r#"
             state ForeignState {}
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -8410,7 +8410,7 @@ mod tests {
             r#"
             state ForeignState {}
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -8647,7 +8647,7 @@ mod tests {
             }
 
             state CellState {
-                covid agent_covid;
+                cov_id agent_covid;
             }
 
             actor Cell owns CellState {
@@ -8685,7 +8685,7 @@ mod tests {
             }
 
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -8731,7 +8731,7 @@ mod tests {
             }
 
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor Foreign owns ForeignState {
@@ -8778,7 +8778,7 @@ mod tests {
             }
 
             state LocalState {
-                covid target_id;
+                cov_id target_id;
             }
 
             actor ForeignA owns ForeignState {
@@ -11080,7 +11080,7 @@ mod tests {
             r#"
             state PairState {}
             state LauncherState {
-                covid observed_id;
+                cov_id observed_id;
                 actor_type<PairState> pair_type;
             }
 
@@ -11114,7 +11114,7 @@ mod tests {
             r#"
             state PairState {}
             state LauncherState {
-                covid pair_id;
+                cov_id pair_id;
                 actor_type<PairState> pair_type;
             }
 

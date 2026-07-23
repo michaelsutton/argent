@@ -1,6 +1,6 @@
 state AssetCapsule {
     int owner_kind;
-    covid owner_id;
+    cov_id owner_id;
     virtual policy;
     int balance;
 }

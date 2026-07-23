@@ -183,7 +183,7 @@ test('indexes owned-state fields and actor source ranges for self-member resolut
   const source = `
 state PairCapsule {
   /// Covenant id of the quote asset.
-  covid quote_id;
+  cov_id quote_id;
   actor_type<AssetCapsule> quote_type;
 }
 
@@ -204,7 +204,7 @@ actor Pair owns PairState {
   const actor = scan.declarations.find((item) => item.name === 'Pair');
   const quoteId = capsule.fields.find((field) => field.name === 'quote_id');
 
-  assert.equal(quoteId.type, 'covid');
+  assert.equal(quoteId.type, 'cov_id');
   assert.equal(quoteId.documentation, 'Covenant id of the quote asset.');
   assert.equal(capsule.fields.find((field) => field.name === 'quote_type').type, 'actor_type<AssetCapsule>');
   assert.equal(state.baseState, 'PairCapsule');
@@ -222,7 +222,7 @@ state PairState {
 
 actor Pair owns PairState {
   /// Exchanges one side of the pair.
-  entry swap(int amount, covid asset_id)
+  entry swap(int amount, cov_id asset_id)
   observes asset by asset_id {
     inputs {
       payment: Pair,
@@ -256,7 +256,7 @@ actor Pair owns PairState {
     swap.parameters.map(({ name, type }) => ({ name, type })),
     [
       { name: 'amount', type: 'int' },
-      { name: 'asset_id', type: 'covid' },
+      { name: 'asset_id', type: 'cov_id' },
     ],
   );
   assert.ok(swap.bodyStart < source.indexOf('require(amount'));
@@ -273,9 +273,9 @@ actor Pair owns PairState {
 });
 
 test('documents Argent-specific identity and actor-handle types', () => {
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /^A 32-byte handle identifying a covenant instance/);
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /target of an `observes` clause/);
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /co_spent/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /^A 32-byte handle identifying a covenant instance/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /target of an `observes` clause/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /co_spent/);
   assert.match(PRIMITIVE_DOCUMENTATION.actor_type, /runtime-selected actor implementation/);
   assert.match(PRIMITIVE_DOCUMENTATION.actor_type, /not an actor instance/);
 });

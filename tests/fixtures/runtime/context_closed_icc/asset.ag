@@ -1,6 +1,6 @@
 state BadgeState {
     pubkey owner;
-    covid controller_id;
+    cov_id controller_id;
     int balance;
 }
 

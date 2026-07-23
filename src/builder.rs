@@ -2355,7 +2355,7 @@ mod tests {
             "anonymous-open-binding-agent",
             r#"
             state AgentCapsule {
-                covid controller_id;
+                cov_id controller_id;
                 byte[32] caps_digest;
                 int energy;
             }
@@ -2474,7 +2474,7 @@ mod tests {
                 byte[32] agent_id;
                 byte[32] species_id;
 
-                covid controller_id;
+                cov_id controller_id;
                 byte[32] capabilities_digest;
                 virtual strategy;
 

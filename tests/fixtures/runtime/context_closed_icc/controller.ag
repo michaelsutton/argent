@@ -5,7 +5,7 @@ state ControllerState {
 }
 
 actor Controller owns ControllerState {
-    entry mint(covid asset_id, int amount)
+    entry mint(cov_id asset_id, int amount)
     observes asset by asset_id {
         inputs {
             badge: Badge,

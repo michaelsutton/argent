@@ -1,4 +1,5 @@
 use crate::error::{ArgentError, Result};
+use crate::language::word;
 
 pub const RESERVED_GENERATED_PREFIX: &str = "gen__";
 pub const RESERVED_GENERATED_TYPE_PREFIX: &str = "Gen__";
@@ -124,6 +125,13 @@ impl Lexer<'_> {
             self.pos += 1;
         }
         let ident = self.source[start..self.pos].to_string();
+        if ident == word::LEGACY_COVENANT_ID {
+            return Err(ArgentError::new(format!(
+                "`{}` was renamed to `{}` at offset {start}",
+                word::LEGACY_COVENANT_ID,
+                word::COVENANT_ID
+            )));
+        }
         let generated_prefix =
             [RESERVED_GENERATED_PREFIX, RESERVED_GENERATED_TYPE_PREFIX].into_iter().find(|prefix| ident.starts_with(prefix));
         if let Some(generated_prefix) = generated_prefix {
@@ -150,5 +158,11 @@ mod tests {
             let err = lex(source).expect_err("reserved generated namespace must be rejected");
             assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
         }
+    }
+
+    #[test]
+    fn rejects_legacy_covenant_id_keyword() {
+        let err = lex("covid value;").expect_err("the legacy covenant id keyword must be rejected");
+        assert!(err.to_string().contains("`covid` was renamed to `cov_id`"), "unexpected error: {err}");
     }
 }
