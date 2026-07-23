@@ -33,6 +33,92 @@ those pieces usable from Argent.
   code. Silverscript remains responsible for final helper/body validity where
   Argent has not lowered the expression itself.
 
+## Surface syntax conventions
+
+Argent uses different word orders for declarations and bindings. The syntax
+reflects the purpose of each construct.
+
+Declarations and value bindings follow Silverscript syntax. Argent-specific
+transaction clauses extend the binding model to transaction roles and routes.
+
+### Declarations
+
+State fields, local variables, and callable parameters are declarations. A
+declaration puts the type before the name.
+
+```rust
+state WalletState {
+    int credits;
+    pubkey initializer;
+}
+
+entry transfer(pubkey pk, int amount)
+```
+
+Type-first declarations preserve a direct high-level-to-Sil surface.
+
+### Value bindings
+
+A state value expression binds each field name to a value expression. A colon
+separates the field name from the value expression. Commas separate the
+bindings.
+
+```rust
+AgentCapsule next_agent = {
+    energy: prev_state.energy - 1,
+    generation: prev_state.generation,
+};
+```
+
+`AgentCapsule next_agent` is a type-first declaration. The items in the braces
+are value bindings. The final semicolon terminates the declaration.
+
+### Role bindings
+
+The `consumes`, `emits`, `spawns`, and `observes` clauses bind role names to
+actor targets. A colon separates the role name from the actor target. Commas
+separate the role bindings.
+
+An actor target can be a fixed actor or a dynamic actor handle. This `observes`
+clause uses a dynamic actor handle:
+
+```rust
+observes remote by self.agent_cov_id {
+    inputs {
+        agent: self.agent_type,
+    }
+
+    outputs {
+        agent: self.agent_type,
+    }
+}
+```
+
+`agent` is the role name. `self.agent_type` selects the actor
+implementation at runtime.
+
+### Route bindings
+
+A `become` block binds each output role to its next actor and state. The `<-`
+operator separates the output role from the successor expression. Commas
+separate the route bindings.
+
+```rust
+become {
+    white_out <- Player(next_white),
+    black_out <- Player(next_black),
+};
+```
+
+`white_out` and `black_out` refer to roles in the `emits` clause. The final
+semicolon terminates the `become` statement.
+
+### Consistency rule
+
+Declarations put the type before the declared name. Value, role, and route
+bindings put the local name on the left. Commas separate items in binding
+lists. Semicolons terminate declarations and statements.
+
 ## Template hash rule
 
 Template hashes must exclude all instance state, including hidden template fields.

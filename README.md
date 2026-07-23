@@ -105,6 +105,11 @@ app Tickets {
 }
 ```
 
+Argent uses type-first syntax for declarations and callable parameters.
+Bindings put the local name on the left. See
+[Surface syntax conventions](docs/argent-design.md#surface-syntax-conventions)
+for the rules and examples.
+
 Argent actors are not async actors with mailboxes or message queues. They are
 covenant objects that get consumed and recreated by transactions. The shared
 idea with actor models is state ownership: an actor's code is the only
