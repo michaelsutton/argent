@@ -95,6 +95,24 @@ another actor in the same covenant, a launcher likely needs to create at least
 one genesis output for it, unless the app intentionally leaves that actor
 unlaunched.
 
+## Decode observed application transactions
+
+An observer can use covenant IDs to find raw Kaspa transactions that belong to
+an application. The observer must then decode the spent actor state, the called
+entry, and the produced actor states. The observer uses these values to
+reconstruct the application state.
+
+Add `argent-rt` helpers that use the Argent artifact to decode this information.
+Application code must not know generated field or argument names such as
+`gen__mux_routes`.
+
+Return source-declared values by their source names. Provide stable accessors
+for compiler-generated templates and route data. Validate the actor, entry,
+state layout, and value types against the artifact.
+
+Add a test in which an actor rename changes generated ABI names. The observer
+must continue to work without a code change.
+
 ## Launch proofs
 
 Support producing and verifying a launch proof for one genesis covenant group.
