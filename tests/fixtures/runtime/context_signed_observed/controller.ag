@@ -6,13 +6,13 @@ state ControllerState {
 }
 
 actor Controller owns ControllerState {
-    entry swap(asset_id: covid, next_owner: pubkey)
+    entry swap(cov_id asset_id, pubkey next_owner)
     observes flow by asset_id {
         inputs {
-            payment: self.asset_type;
+            payment: self.asset_type,
         }
         outputs {
-            reserve: self.asset_type;
+            reserve: self.asset_type,
         }
     }
     emits one Controller {
@@ -23,7 +23,7 @@ actor Controller owns ControllerState {
         };
 
         require flow.outputs become {
-            reserve <- self.asset_type(reserve);
+            reserve <- self.asset_type(reserve),
         };
 
         ControllerState next = {

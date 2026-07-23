@@ -15,11 +15,11 @@ state PlayerState {
 }
 actor enum PlayerKind { Player; }
 actor League owns PlayerState {
-  entry join(owner: pubkey) emits one League {
+  entry join(pubkey owner) emits one League {
     // The body is intentionally unfinished.
   }
 }
-fn player_ref(owner: byte[32], id: int) -> byte[32] {
+fn player_ref(byte[32] owner, int id) -> byte[32] {
   return blake2b(owner
 app Stones {
   actor League;
@@ -54,6 +54,7 @@ app Stones {
       { name: 'id', type: 'int' },
     ],
   );
+  assert.equal(scan.declarations.at(-1).parameters[0].signature, 'byte[32] owner');
   assert.ok(scan.declarations.at(-1).bodyStart < source.lastIndexOf('owner'));
   assert.equal(scan.declarations.at(-1).bodyEnd, source.length);
 });
@@ -160,7 +161,7 @@ state PlayerState {
  *
  * The result is always 32 bytes.
  */
-fn playerId(owner: pubkey) -> byte[32] {
+fn playerId(pubkey owner) -> byte[32] {
   return blake2b(owner);
 }
 
@@ -182,7 +183,7 @@ test('indexes owned-state fields and actor source ranges for self-member resolut
   const source = `
 state PairCapsule {
   /// Covenant id of the quote asset.
-  covid quote_id;
+  cov_id quote_id;
   actor_type<AssetCapsule> quote_type;
 }
 
@@ -203,7 +204,7 @@ actor Pair owns PairState {
   const actor = scan.declarations.find((item) => item.name === 'Pair');
   const quoteId = capsule.fields.find((field) => field.name === 'quote_id');
 
-  assert.equal(quoteId.type, 'covid');
+  assert.equal(quoteId.type, 'cov_id');
   assert.equal(quoteId.documentation, 'Covenant id of the quote asset.');
   assert.equal(capsule.fields.find((field) => field.name === 'quote_type').type, 'actor_type<AssetCapsule>');
   assert.equal(state.baseState, 'PairCapsule');
@@ -221,18 +222,18 @@ state PairState {
 
 actor Pair owns PairState {
   /// Exchanges one side of the pair.
-  entry swap(amount: int, asset_id: covid)
+  entry swap(int amount, cov_id asset_id)
   observes asset by asset_id {
     inputs {
-      payment: Pair;
+      payment: Pair,
     }
   }
   emits none {
     require(amount > 0);
   }
 
-  delegate authorize(owner_sig: sig) consumes {
-    controller: Pair;
+  delegate authorize(sig owner_sig) consumes {
+    controller: Pair,
   } {
     require(checkSig(owner_sig, controller.owner));
   }
@@ -255,7 +256,7 @@ actor Pair owns PairState {
     swap.parameters.map(({ name, type }) => ({ name, type })),
     [
       { name: 'amount', type: 'int' },
-      { name: 'asset_id', type: 'covid' },
+      { name: 'asset_id', type: 'cov_id' },
     ],
   );
   assert.ok(swap.bodyStart < source.indexOf('require(amount'));
@@ -272,9 +273,9 @@ actor Pair owns PairState {
 });
 
 test('documents Argent-specific identity and actor-handle types', () => {
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /^A 32-byte handle identifying a covenant instance/);
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /target of an `observes` clause/);
-  assert.match(PRIMITIVE_DOCUMENTATION.covid, /co_spent/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /^A 32-byte handle identifying a covenant instance/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /target of an `observes` clause/);
+  assert.match(PRIMITIVE_DOCUMENTATION.cov_id, /co_spent/);
   assert.match(PRIMITIVE_DOCUMENTATION.actor_type, /runtime-selected actor implementation/);
   assert.match(PRIMITIVE_DOCUMENTATION.actor_type, /not an actor instance/);
 });

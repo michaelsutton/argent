@@ -5,11 +5,11 @@ import actor Player from "./player.ag";
 
 actor StonesSettle owns SettleState {
     entry settle() consumes {
-        player_a_in: Player;
-        player_b_in: Player;
+        player_a_in: Player,
+        player_b_in: Player,
     } emits {
-        player_a_out: Player;
-        player_b_out: Player;
+        player_a_out: Player,
+        player_b_out: Player,
     } {
         require(status == A_WIN || status == B_WIN);
 
@@ -58,8 +58,8 @@ actor StonesSettle owns SettleState {
 
         // Atomic `become` emits both updated Player actors together.
         become {
-            player_a_out <- Player(next_player_a);
-            player_b_out <- Player(next_player_b);
+            player_a_out <- Player(next_player_a),
+            player_b_out <- Player(next_player_b),
         };
     }
 }

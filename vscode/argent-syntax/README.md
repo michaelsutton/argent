@@ -11,7 +11,7 @@ Features:
 - Current language words such as `delegate`, `actor enum`, `virtual`,
   `expands`, `const`, `inputs`, `outputs`, and `as` are highlighted.
 - Current primitive/source types such as `int`, `byte`, `bool`, `sig`, `pubkey`,
-  `covid`, `datasig`, and `actor_type<State>` are highlighted.
+  `cov_id`, `datasig`, and `actor_type<State>` are highlighted.
 - The rest of the file falls through to Rust TextMate highlighting.
 - Completion includes Argent keywords, primitive types, builtins, top-level
   `state`, `actor`, `actor enum`, `fn`, `const`, and `app` declarations, plus

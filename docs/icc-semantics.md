@@ -58,12 +58,12 @@ An `observes` clause declares a foreign covenant view for one entrypoint.
 ```rust
 observes asset by self.asset_covid {
     inputs {
-        proxy: MinterProxy;
+        proxy: MinterProxy,
     }
 
     outputs {
-        proxy: MinterProxy;
-        recipient: KCC20;
+        proxy: MinterProxy,
+        recipient: KCC20,
     }
 }
 ```
@@ -83,8 +83,8 @@ and can require named observed outputs to become specific actors:
 
 ```rust
 require asset.outputs become {
-    proxy <- MinterProxy(next_proxy);
-    recipient <- KCC20(next_recipient);
+    proxy <- MinterProxy(next_proxy),
+    recipient <- KCC20(next_recipient),
 };
 ```
 
@@ -130,12 +130,12 @@ actor Minter owns MinterState {
     entry mint(...)
     observes asset by self.kcc20_covid {
         inputs {
-            proxy: MinterProxy;
+            proxy: MinterProxy,
         }
 
         outputs {
-            proxy: MinterProxy;
-            recipient: KCC20;
+            proxy: MinterProxy,
+            recipient: KCC20,
         }
     }
     ...
@@ -182,7 +182,7 @@ hard-code every possible implementation.
 
 ```rust
 state CellState {
-    covid agent_covid;
+    cov_id agent_covid;
     actor_type<AgentState> agent_type;
     int tick;
 }
@@ -197,15 +197,15 @@ An open ICC entry can then observe that agent:
 entry advance()
 observes remote by self.agent_covid {
     inputs {
-        agent: self.agent_type;
+        agent: self.agent_type,
     }
 
     outputs {
-        agent: self.agent_type;
+        agent: self.agent_type,
     }
 }
 emits {
-    cell: Cell;
+    cell: Cell,
 } {
     AgentState prev_state = remote.inputs.agent.state;
 
@@ -216,7 +216,7 @@ emits {
     };
 
     require remote.outputs become {
-        agent <- self.agent_type(next_state);
+        agent <- self.agent_type(next_state),
     };
 
     CellState next_cell = {
@@ -241,11 +241,11 @@ bind a scoped runtime handle with `as`:
 ```rust
 observes remote by self.agent_covid {
     inputs {
-        agent: actor_type<AgentState> as observed_agent;
+        agent: actor_type<AgentState> as observed_agent,
     }
 
     outputs {
-        agent: observed_agent;
+        agent: observed_agent,
     }
 }
 ```
@@ -325,7 +325,7 @@ Legal state-carried form:
 
 ```rust
 state CellState {
-    covid agent_covid;
+    cov_id agent_covid;
     actor_type<AgentState> agent_type;
 }
 ```
@@ -333,10 +333,10 @@ state CellState {
 Legal entry-parameter form:
 
 ```rust
-entry inspect(agent_type: actor_type<AgentState>)
+entry inspect(actor_type<AgentState> agent_type)
 observes remote by self.agent_covid {
     inputs {
-        agent: self.agent_type;
+        agent: self.agent_type,
     }
 } {
     AgentState current_state = remote.inputs.agent.state;
@@ -371,17 +371,17 @@ should not accidentally become a closed dependency on one implementation.
 
 Current and expected source-level ICC features:
 
-- `covid`: covenant id value type
+- `cov_id`: covenant id value type
 - `id.co_spent()`: require the covenant id to be present in the transaction
-- `observes <name> by <covid_expr>`: declare an observed covenant view
-- `inputs { handle: Actor; }`: name observed inputs
-- `outputs { handle: Actor; }`: name observed outputs
-- `inputs { handle: self.actor_field; }`: constrain an observed input by a
+- `observes <name> by <cov_id_expr>`: declare an observed covenant view
+- `inputs { handle: Actor, }`: name observed inputs
+- `outputs { handle: Actor, }`: name observed outputs
+- `inputs { handle: self.actor_field, }`: constrain an observed input by a
   stored actor handle
-- `outputs { handle: self.actor_field; }`: constrain an observed output by a
+- `outputs { handle: self.actor_field, }`: constrain an observed output by a
   stored actor handle
-- `inputs { handle: actor_type<State> as observed; }`: bind an open observed actor handle
-- `outputs { handle: observed; }`: require an output to use the same open actor handle
+- `inputs { handle: actor_type<State> as observed, }`: bind an open observed actor handle
+- `outputs { handle: observed, }`: require an output to use the same open actor handle
 - `<observe>.inputs.<handle>.state`: read observed input state
 - `require <observe>.outputs become { ... };`: constrain observed outputs
 - `actor_type<State>`: first-class actor handle type

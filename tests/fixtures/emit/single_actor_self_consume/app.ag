@@ -5,7 +5,7 @@ state CounterState {
 actor Counter owns CounterState {
     entry merge()
     consumes {
-        other: Counter;
+        other: Counter,
     }
     emits one Counter {
         CounterState next = {

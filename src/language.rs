@@ -10,7 +10,8 @@ pub(crate) mod word {
     pub const CO_SPENT: &str = "co_spent";
     pub const CONSUMES: &str = "consumes";
     pub const CONST: &str = "const";
-    pub const COVENANT_ID: &str = "covid";
+    pub const COVENANT_ID: &str = "cov_id";
+    pub const LEGACY_COVENANT_ID: &str = "covid";
     pub const DELEGATE: &str = "delegate";
     pub const ELSE: &str = "else";
     pub const EMITS: &str = "emits";
@@ -29,6 +30,7 @@ pub(crate) mod word {
     pub const OUTPUTS: &str = "outputs";
     pub const OWNS: &str = "owns";
     pub const REQUIRE: &str = "require";
+    pub const RESERVED_SELF_MEMBERS: [&str; 5] = [STATE, "value", COVENANT_ID, "type", "ref"];
     pub const SELF: &str = "self";
     pub const SPAWNS: &str = "spawns";
     pub const STATE: &str = "state";

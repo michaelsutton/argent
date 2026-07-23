@@ -52,7 +52,7 @@
         },
         {
           "name": "storage.type.argent",
-          "match": "\\b(actor_type|bool|byte|bytes|covid|datasig|int|pubkey|sig|string)\\b"
+          "match": "\\b(actor_type|bool|byte|bytes|cov_id|datasig|int|pubkey|sig|string)\\b"
         }
       ]
     },

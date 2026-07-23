@@ -8,7 +8,7 @@ state AgentCapsule {
     byte[32] agent_id;
     byte[32] species_id;
 
-    covid controller_id;
+    cov_id controller_id;
     byte[32] capabilities_digest;
     virtual strategy;
 
@@ -24,12 +24,12 @@ state CellState {
     int y;
     int food;
 
-    covid occupant_agent_covid;
+    cov_id occupant_agent_covid;
     actor_type<AgentCapsule> occupant_agent_type;
     byte[32] occupant_caps_digest;
 }
 
-fn abs1(value: int) -> int {
+fn abs1(int value) -> int {
     int result = value;
     if (value < 0) {
         result = 0 - value;
@@ -41,15 +41,15 @@ actor Cell owns CellState {
     entry advance()
     observes remote by self.occupant_agent_covid {
         inputs {
-            agent: self.occupant_agent_type;
+            agent: self.occupant_agent_type,
         }
 
         outputs {
-            agent: self.occupant_agent_type;
+            agent: self.occupant_agent_type,
         }
     }
     emits {
-        cell: Cell;
+        cell: Cell,
     } {
         AgentCapsule prev_state = remote.inputs.agent.state;
 
@@ -69,7 +69,7 @@ actor Cell owns CellState {
         };
 
         require remote.outputs become {
-            agent <- self.occupant_agent_type(next_state);
+            agent <- self.occupant_agent_type(next_state),
         };
 
         CellState next_cell = {
@@ -86,27 +86,27 @@ actor Cell owns CellState {
     }
 
     entry move(
-        dx: int,
-        dy: int,
-        empty_agent_covid: covid,
-        empty_agent_type: actor_type<AgentCapsule>,
-        empty_caps_digest: byte[32]
+        int dx,
+        int dy,
+        cov_id empty_agent_covid,
+        actor_type<AgentCapsule> empty_agent_type,
+        byte[32] empty_caps_digest
     )
     observes remote by self.occupant_agent_covid {
         inputs {
-            agent: self.occupant_agent_type;
+            agent: self.occupant_agent_type,
         }
 
         outputs {
-            agent: self.occupant_agent_type;
+            agent: self.occupant_agent_type,
         }
     }
     consumes {
-        target_cell: Cell;
+        target_cell: Cell,
     }
     emits {
-        source_cell: Cell;
-        target_cell: Cell;
+        source_cell: Cell,
+        target_cell: Cell,
     } {
         AgentCapsule prev_state = remote.inputs.agent.state;
 
@@ -158,12 +158,12 @@ actor Cell owns CellState {
         };
 
         require remote.outputs become {
-            agent <- self.occupant_agent_type(next_agent);
+            agent <- self.occupant_agent_type(next_agent),
         };
 
         become {
-            source_cell <- Cell(next_source);
-            target_cell <- Cell(next_target);
+            source_cell <- Cell(next_source),
+            target_cell <- Cell(next_target),
         };
     }
 }

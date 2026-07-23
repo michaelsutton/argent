@@ -39,7 +39,7 @@ const PRIMITIVE_TYPES = Object.freeze([
   'bool',
   'byte',
   'bytes',
-  'covid',
+  'cov_id',
   'datasig',
   'int',
   'pubkey',
@@ -48,7 +48,7 @@ const PRIMITIVE_TYPES = Object.freeze([
 ]);
 
 const PRIMITIVE_DOCUMENTATION = Object.freeze({
-  covid:
+  cov_id:
     'A 32-byte handle identifying a covenant instance; use it as the target of an `observes` clause or call `.co_spent()` to require that covenant as a valid input in the current transaction.',
   actor_type:
     'A first-class handle to a runtime-selected actor implementation compatible with `State`; it identifies the implementation/template, not an actor instance.',
@@ -399,18 +399,17 @@ function functionParameters(source, tokens, nameIndex) {
       }
       continue;
     }
-    if (depth === 1 && ident(tokens[index]) && symbol(tokens[index + 1], ':')) {
-      const typeStart = index + 2;
-      const endIndex = typeEnd(tokens, typeStart);
-      if (ident(tokens[typeStart])) {
-        const type = normalizedSlice(source, tokens[typeStart].start, tokens[Math.max(typeStart, endIndex - 1)].end);
+    if (depth === 1 && ident(tokens[index])) {
+      const nameIndex = typeEnd(tokens, index);
+      if (ident(tokens[nameIndex])) {
+        const type = normalizedSlice(source, tokens[index].start, tokens[Math.max(index, nameIndex - 1)].end);
         params.push({
           kind: 'parameter',
-          name: tokens[index].value,
+          name: tokens[nameIndex].value,
           type,
-          signature: `${tokens[index].value}: ${type}`,
-          start: tokens[index].start,
-          end: tokens[index].end,
+          signature: `${type} ${tokens[nameIndex].value}`,
+          start: tokens[nameIndex].start,
+          end: tokens[nameIndex].end,
         });
       }
     }

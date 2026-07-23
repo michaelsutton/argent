@@ -10,21 +10,21 @@ state KCC20State {
 }
 
 state MinterProxyState {
-    covid controller_id;
+    cov_id controller_id;
 }
 
 actor KCC20 owns KCC20State {
     entry transfer(
-        new_owner_identifier: byte[32],
-        new_identifier_type: byte,
-        owner_sig: sig
+        byte[32] new_owner_identifier,
+        byte new_identifier_type,
+        sig owner_sig
     ) emits {
-        next: KCC20;
+        next: KCC20,
     } {
         if (identifier_type == IDENTIFIER_PUBKEY) {
             require(checkSig(owner_sig, owner_identifier));
         } else if (identifier_type == IDENTIFIER_COVENANT_ID) {
-            require(covid(owner_identifier).co_spent());
+            require(cov_id(owner_identifier).co_spent());
         } else {
             require(false);
         }
@@ -41,18 +41,18 @@ actor KCC20 owns KCC20State {
 
 actor MinterProxy owns MinterProxyState {
     entry mint(
-        next_proxy: MinterProxyState,
-        recipient: KCC20State
+        MinterProxyState next_proxy,
+        KCC20State recipient
     ) emits {
-        proxy: MinterProxy;
-        recipient: KCC20;
+        proxy: MinterProxy,
+        recipient: KCC20,
     } {
         require(controller_id.co_spent());
         require(next_proxy.controller_id == controller_id);
 
         become {
-            proxy <- MinterProxy(next_proxy);
-            recipient <- KCC20(recipient);
+            proxy <- MinterProxy(next_proxy),
+            recipient <- KCC20(recipient),
         };
     }
 }

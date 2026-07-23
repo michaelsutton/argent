@@ -86,7 +86,7 @@ state CounterState {
 }
 
 actor Counter owns CounterState {
-    entry bump(delta: int) emits one Counter {
+    entry bump(int delta) emits one Counter {
         CounterState next = {
             count: count + delta,
         };
@@ -102,26 +102,26 @@ app CounterApp {
 
     const TWO_APPS: &str = r#"
 state LeftState {
-    int value;
+    int amount;
 }
 
 actor Left owns LeftState {
     entry bump() emits one Left {
         LeftState next = {
-            value: value + 1,
+            amount: amount + 1,
         };
         become Left(next);
     }
 }
 
 state RightState {
-    int value;
+    int amount;
 }
 
 actor Right owns RightState {
     entry bump() emits one Right {
         RightState next = {
-            value: value + 1,
+            amount: amount + 1,
         };
         become Right(next);
     }
@@ -130,7 +130,7 @@ actor Right owns RightState {
 actor RightAlt owns RightState {
     entry bump() emits one RightAlt {
         RightState next = {
-            value: value + 1,
+            amount: amount + 1,
         };
         become RightAlt(next);
     }

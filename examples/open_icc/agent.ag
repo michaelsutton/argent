@@ -16,8 +16,8 @@ state ForagerState expands AgentCapsule {
 }
 
 actor Agent owns AgentCapsule {
-    entry step(next_agent: AgentCapsule) emits {
-        agent: Agent;
+    entry step(AgentCapsule next_agent) emits {
+        agent: Agent,
     } {
         require(controller_id.co_spent());
         require(next_agent.world_id == world_id);
@@ -33,8 +33,8 @@ actor Agent owns AgentCapsule {
 }
 
 actor Forager owns ForagerState {
-    entry step(next_x: int, next_y: int, next_energy: int) emits {
-        agent: Forager;
+    entry step(int next_x, int next_y, int next_energy) emits {
+        agent: Forager,
     } {
         require(controller_id.co_spent());
         require(next_energy == energy - 1);

@@ -14,7 +14,7 @@ actor enum MoveActor {
 actor Lobby owns LobbyState {
     // `next_board` has no single generated layout until this branch chooses
     // between the open Mux cut and Spectator's empty cut.
-    entry open_or_watch(watch: bool) emits one Mux | Spectator {
+    entry open_or_watch(bool watch) emits one Mux | Spectator {
         BoardState next_board = {
             ply: nonce,
         };
@@ -28,7 +28,7 @@ actor Lobby owns LobbyState {
 }
 
 actor Mux owns BoardState {
-    entry choose(target: MoveActor) emits one MoveActor {
+    entry choose(MoveActor target) emits one MoveActor {
         BoardState next_board = {
             ply: ply + 1,
         };

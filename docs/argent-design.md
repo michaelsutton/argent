@@ -33,6 +33,140 @@ those pieces usable from Argent.
   code. Silverscript remains responsible for final helper/body validity where
   Argent has not lowered the expression itself.
 
+## Surface syntax conventions
+
+Argent uses different word orders for declarations and bindings. The syntax
+reflects the purpose of each construct.
+
+Declarations and value bindings follow Silverscript syntax. Argent-specific
+transaction clauses extend the binding model to transaction roles and routes.
+
+### Declarations
+
+State fields, local variables, and callable parameters are declarations. A
+declaration puts the type before the name.
+
+```rust
+state WalletState {
+    int credits;
+    pubkey initializer;
+}
+
+entry transfer(pubkey pk, int amount)
+```
+
+Type-first declarations preserve a direct high-level-to-Sil surface.
+
+### Value bindings
+
+A state value expression binds each field name to a value expression. A colon
+separates the field name from the value expression. Commas separate the
+bindings.
+
+```rust
+AgentCapsule next_agent = {
+    energy: prev_state.energy - 1,
+    generation: prev_state.generation,
+};
+```
+
+`AgentCapsule next_agent` is a type-first declaration. The items in the braces
+are value bindings. The final semicolon terminates the declaration.
+
+### Role bindings
+
+The `consumes`, `emits`, `spawns`, and `observes` clauses bind role names to
+actor targets. A colon separates the role name from the actor target. Commas
+separate the role bindings.
+
+An actor target can be a fixed actor or a dynamic actor handle. This `observes`
+clause uses a dynamic actor handle:
+
+```rust
+observes remote by self.agent_cov_id {
+    inputs {
+        agent: self.agent_type,
+    }
+
+    outputs {
+        agent: self.agent_type,
+    }
+}
+```
+
+`agent` is the role name. `self.agent_type` selects the actor
+implementation at runtime.
+
+### Route bindings
+
+A `become` block binds each output role to its next actor and state. The `<-`
+operator separates the output role from the successor expression. Commas
+separate the route bindings.
+
+```rust
+become {
+    white_out <- Player(next_white),
+    black_out <- Player(next_black),
+};
+```
+
+`white_out` and `black_out` refer to roles in the `emits` clause. The final
+semicolon terminates the `become` statement.
+
+### Consistency rule
+
+Declarations put the type before the declared name. Value, role, and route
+bindings put the local name on the left. Commas separate items in binding
+lists. Semicolons terminate declarations and statements.
+
+## Execution context ladder
+
+Silverscript provides `tx` and `this`. Argent adds `self`. Together, these names
+form an abstraction ladder:
+
+```text
+tx      complete transaction
+this    active consensus input and script
+self    logical Argent actor
+```
+
+For example, `tx.outputs[i].value` reads the transaction, and
+`this.activeInputIndex` identifies the input that runs the script.
+
+The ladder moves through three abstraction levels. `tx` exposes the complete
+transaction. `this` identifies the active input and script. `self` presents the
+active input as a logical Argent actor.
+
+`self` is a context namespace. It is not an actor handle or another first-class
+actor value. Its valid and reserved members are:
+
+```text
+self.value  // Native KAS value of the UTXO consumed by the active input.
+            // Type: int.
+self.state  // Complete typed source-level state owned by the actor.
+            // Type: the state named in the actor's owns clause.
+self.cov_id // Reserved.
+self.type   // Reserved.
+self.ref    // Reserved.
+```
+
+An actor's effective top-level state cannot declare `state`, `value`, `cov_id`,
+`type`, or `ref` as a field. This rule also applies to base fields and expansion
+slots that are exposed by an expanded owned state.
+
+The rule does not apply to fields of a nested state value. For example, the
+`value` field below is valid because it is accessed through `payload`:
+
+```rust
+state Payload {
+    int value;
+}
+
+state WalletState {
+    Payload payload;
+}
+```
+
 ## Template hash rule
 
 Template hashes must exclude all instance state, including hidden template fields.
@@ -69,8 +203,6 @@ Open questions:
 - Do we need explicit source syntax for privileged bootstrap/handoff paths?
 - How should generated code prevent user code from accidentally shadowing hidden
   field names?
-- Should `self.state` include hidden ABI state implicitly, or mean only user
-  state with compiler-added ABI fields copied around it?
 
 ## Bootstrap and launch proofs
 

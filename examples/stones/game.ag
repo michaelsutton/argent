@@ -5,13 +5,13 @@ import actor StonesSettle from "./settle.ag";
 
 actor StonesGame owns GameState {
     entry take(
-        amount: int,
-        player_id: byte[32],
-        move_sig: sig,
-        move_pk: pubkey
+        int amount,
+        byte[32] player_id,
+        sig move_sig,
+        pubkey move_pk
     ) emits {
         // Union-typed output: the entry chooses one successor actor at runtime.
-        next: StonesGame | StonesSettle;
+        next: StonesGame | StonesSettle,
     } {
         require(pile > 0);
         require(amount >= 1);
@@ -50,11 +50,11 @@ actor StonesGame owns GameState {
     }
 
     entry concede(
-        player_id: byte[32],
-        move_sig: sig,
-        move_pk: pubkey
+        byte[32] player_id,
+        sig move_sig,
+        pubkey move_pk
     ) emits {
-        settle: StonesSettle;
+        settle: StonesSettle,
     } {
         byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
         byte[32] expected_ref = side_player(turn, player_a, player_b);

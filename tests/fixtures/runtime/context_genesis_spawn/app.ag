@@ -4,23 +4,23 @@ state ControllerState {
 }
 
 state PairState {
-    int value;
+    int amount;
 }
 
 actor Controller owns ControllerState {
-    entry launch(left_value: int, right_value: int)
+    entry launch(int left_amount, int right_amount)
     spawns new_pair by pair_id {
         outputs {
-            left: self.pair_type;
-            right: self.pair_type;
+            left: self.pair_type,
+            right: self.pair_type,
         }
     }
     emits one Controller {
         PairState left = {
-            value: left_value,
+            amount: left_amount,
         };
         PairState right = {
-            value: right_value,
+            amount: right_amount,
         };
         ControllerState next = {
             pair_type: pair_type,
@@ -28,8 +28,8 @@ actor Controller owns ControllerState {
         };
 
         require new_pair.outputs become {
-            left <- self.pair_type(left);
-            right <- self.pair_type(right);
+            left <- self.pair_type(left),
+            right <- self.pair_type(right),
         };
         become Controller(next);
     }

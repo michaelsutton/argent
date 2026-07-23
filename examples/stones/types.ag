@@ -37,11 +37,11 @@ state SettleState {
     int status;
 }
 
-fn player_ref(owner: byte[32], player_id: byte[32]) -> byte[32] {
+fn player_ref(byte[32] owner, byte[32] player_id) -> byte[32] {
     return blake2b(owner + player_id);
 }
 
-fn side_player(side: int, player_a: byte[32], player_b: byte[32]) -> byte[32] {
+fn side_player(int side, byte[32] player_a, byte[32] player_b) -> byte[32] {
     require(side == SIDE_A || side == SIDE_B);
     byte[32] result = player_b;
     if (side == SIDE_A) {
@@ -50,7 +50,7 @@ fn side_player(side: int, player_a: byte[32], player_b: byte[32]) -> byte[32] {
     return result;
 }
 
-fn other_side(side: int) -> int {
+fn other_side(int side) -> int {
     require(side == SIDE_A || side == SIDE_B);
     int result = SIDE_A;
     if (side == SIDE_A) {
@@ -59,7 +59,7 @@ fn other_side(side: int) -> int {
     return result;
 }
 
-fn win_status(side: int) -> int {
+fn win_status(int side) -> int {
     require(side == SIDE_A || side == SIDE_B);
     int result = B_WIN;
     if (side == SIDE_A) {

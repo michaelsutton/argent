@@ -5,7 +5,7 @@ pragma silverscript ^0.1.0;
 contract Child(
     byte[32] gen__init_child_template,
     byte[32] gen__init_launcher_template,
-    int init_value
+    int init_amount
 ) {
     // :: state layouts
     struct LauncherState {
@@ -21,7 +21,7 @@ contract Child(
     byte[32] gen__launcher_template = gen__init_launcher_template;
 
     // :: state fields: Child
-    int value = init_value;
+    int amount = init_amount;
 
     // :: entrypoints
     // :: leader entry (1:N)

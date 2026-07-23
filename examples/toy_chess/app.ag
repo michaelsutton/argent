@@ -38,7 +38,7 @@ actor Player owns PlayerState {
 }
 
 actor Mux owns BoardState {
-    entry choose(target: MoveActor) emits one MoveActor {
+    entry choose(MoveActor target) emits one MoveActor {
         if (target == MoveActor::Knight) {
             require(selector >= 0);
         }

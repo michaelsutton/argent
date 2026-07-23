@@ -27,7 +27,7 @@ actor Lobby owns LobbyState {
 }
 
 actor Mux owns BoardState {
-    entry choose(target: MoveActor) emits one MoveActor {
+    entry choose(MoveActor target) emits one MoveActor {
         BoardState next_board = {
             ply: ply + 1,
         };

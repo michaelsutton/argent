@@ -87,7 +87,10 @@ state TicketState {
 }
 
 actor Ticket owns TicketState {
-    entry transfer(next_owner: byte[32]) emits one Ticket {
+    entry transfer(byte[32] next_owner, sig owner_sig, pubkey owner_pk) emits one Ticket {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+
         TicketState next = {
             owner: next_owner,
             value: value,
@@ -101,6 +104,11 @@ app Tickets {
     actor Ticket;
 }
 ```
+
+Argent uses type-first syntax for declarations and callable parameters.
+Bindings put the local name on the left. See
+[Surface syntax conventions](docs/argent-design.md#surface-syntax-conventions)
+for the rules and examples.
 
 Argent actors are not async actors with mailboxes or message queues. They are
 covenant objects that get consumed and recreated by transactions. The shared
