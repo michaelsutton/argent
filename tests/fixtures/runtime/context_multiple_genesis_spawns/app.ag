@@ -9,11 +9,11 @@ state PairState {
 
 actor Controller owns ControllerState {
     entry launch(
-        first_left_value: int,
-        first_right_value: int,
-        second_value: int,
-        third_left_value: int,
-        third_right_value: int
+        int first_left_value,
+        int first_right_value,
+        int second_value,
+        int third_left_value,
+        int third_right_value
     )
     spawns first_pair by first_pair_id {
         outputs {

@@ -14,7 +14,7 @@ state MinterState {
 }
 
 actor Minter owns MinterState {
-    entry mint(owner_sig: sig, recipient_owner: byte[32], minted_amount: int)
+    entry mint(sig owner_sig, byte[32] recipient_owner, int minted_amount)
     // `observes` declares a foreign covenant id for this transition.
     observes asset by self.kcc20_covid {
         // Named handles are exhaustive over the observed covenant inputs.

@@ -87,7 +87,10 @@ state TicketState {
 }
 
 actor Ticket owns TicketState {
-    entry transfer(next_owner: byte[32]) emits one Ticket {
+    entry transfer(byte[32] next_owner, sig owner_sig, pubkey owner_pk) emits one Ticket {
+        require(blake2b(owner_pk) == owner);
+        require(checkSig(owner_sig, owner_pk));
+
         TicketState next = {
             owner: next_owner,
             value: value,

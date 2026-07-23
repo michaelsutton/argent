@@ -300,7 +300,7 @@ mod tests {
             }
 
             actor Blob owns BlobState {
-                entry store(data: byte[]) emits one Blob {
+                entry store(byte[] data) emits one Blob {
                     BlobState next = {
                         size: data.length,
                         digest: blake2b(data),
@@ -391,7 +391,7 @@ mod tests {
             }
 
             actor Counter owns CounterState {
-                entry bump(owner_sig: sig, delta: int) emits one Counter {
+                entry bump(sig owner_sig, int delta) emits one Counter {
                     require(checkSig(owner_sig, owner));
 
                     CounterState next = {
@@ -462,7 +462,7 @@ mod tests {
             }
 
             actor Left owns BoxState {
-                entry shift(amount: int) consumes {
+                entry shift(int amount) consumes {
                     peer: Right;
                 } emits {
                     left_out: Left;
@@ -1552,7 +1552,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose(target: MoveActor) emits one MoveActor {
+                entry choose(MoveActor target) emits one MoveActor {
                     BoardState next = {
                         ply: ply + 1,
                     };
@@ -1721,7 +1721,7 @@ mod tests {
             }
 
             actor Foo owns FooState {
-                entry bump(amount: int) emits one Foo {
+                entry bump(int amount) emits one Foo {
                     State next_state = {
                         count: count + amount,
                     };
@@ -2361,7 +2361,7 @@ mod tests {
             }
 
             actor Agent owns AgentCapsule {
-                entry step(next_state: AgentCapsule) emits one Agent {
+                entry step(AgentCapsule next_state) emits one Agent {
                     require(controller_id.co_spent());
                     become Agent(next_state);
                 }

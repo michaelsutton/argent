@@ -8,7 +8,7 @@ state PairState {
 }
 
 actor Controller owns ControllerState {
-    entry launch(left_value: int, right_value: int)
+    entry launch(int left_value, int right_value)
     spawns new_pair by pair_id {
         outputs {
             left: self.pair_type;

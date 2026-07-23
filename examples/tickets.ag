@@ -16,9 +16,9 @@ state TicketState {
 
 actor Issuer owns IssuerState {
     entry issue(
-        admin_sig: sig,
-        admin_pk: pubkey,
-        owner_pk: pubkey
+        sig admin_sig,
+        pubkey admin_pk,
+        pubkey owner_pk
     )
     // `emits` declares the complete output shape this entry may create.
     emits {
@@ -49,7 +49,7 @@ actor Issuer owns IssuerState {
 }
 
 actor Ticket owns TicketState {
-    entry redeem(owner_sig: sig, owner_pk: pubkey) emits {
+    entry redeem(sig owner_sig, pubkey owner_pk) emits {
         next: Ticket;
     } {
         require(blake2b(owner_pk) == owner);

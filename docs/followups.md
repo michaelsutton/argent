@@ -126,7 +126,7 @@ uninitialized controller state. The controller needs this value because
 The entry has this shape:
 
 ```rust
-entry init(owner_sig: sig)
+entry init(sig owner_sig)
 spawns asset by asset_id {
     outputs {
         proxy: self.proxy_type;

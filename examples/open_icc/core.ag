@@ -29,7 +29,7 @@ state CellState {
     byte[32] occupant_caps_digest;
 }
 
-fn abs1(value: int) -> int {
+fn abs1(int value) -> int {
     int result = value;
     if (value < 0) {
         result = 0 - value;
@@ -86,11 +86,11 @@ actor Cell owns CellState {
     }
 
     entry move(
-        dx: int,
-        dy: int,
-        empty_agent_covid: covid,
-        empty_agent_type: actor_type<AgentCapsule>,
-        empty_caps_digest: byte[32]
+        int dx,
+        int dy,
+        covid empty_agent_covid,
+        actor_type<AgentCapsule> empty_agent_type,
+        byte[32] empty_caps_digest
     )
     observes remote by self.occupant_agent_covid {
         inputs {

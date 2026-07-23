@@ -333,7 +333,7 @@ state CellState {
 Legal entry-parameter form:
 
 ```rust
-entry inspect(agent_type: actor_type<AgentState>)
+entry inspect(actor_type<AgentState> agent_type)
 observes remote by self.agent_covid {
     inputs {
         agent: self.agent_type;

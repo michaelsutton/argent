@@ -44,7 +44,7 @@ integers. A range handle is an array in the entry body.
 The same form applies to all ordered entry sections:
 
 ```rust
-entry rebalance(next_states: AccountState[])
+entry rebalance(AccountState[] next_states)
 consumes {
     accounts: Account[1..=MAX_ACCOUNTS];
 }

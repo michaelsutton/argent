@@ -15,11 +15,11 @@ state PlayerState {
 }
 actor enum PlayerKind { Player; }
 actor League owns PlayerState {
-  entry join(owner: pubkey) emits one League {
+  entry join(pubkey owner) emits one League {
     // The body is intentionally unfinished.
   }
 }
-fn player_ref(owner: byte[32], id: int) -> byte[32] {
+fn player_ref(byte[32] owner, int id) -> byte[32] {
   return blake2b(owner
 app Stones {
   actor League;
@@ -54,6 +54,7 @@ app Stones {
       { name: 'id', type: 'int' },
     ],
   );
+  assert.equal(scan.declarations.at(-1).parameters[0].signature, 'byte[32] owner');
   assert.ok(scan.declarations.at(-1).bodyStart < source.lastIndexOf('owner'));
   assert.equal(scan.declarations.at(-1).bodyEnd, source.length);
 });
@@ -160,7 +161,7 @@ state PlayerState {
  *
  * The result is always 32 bytes.
  */
-fn playerId(owner: pubkey) -> byte[32] {
+fn playerId(pubkey owner) -> byte[32] {
   return blake2b(owner);
 }
 
@@ -221,7 +222,7 @@ state PairState {
 
 actor Pair owns PairState {
   /// Exchanges one side of the pair.
-  entry swap(amount: int, asset_id: covid)
+  entry swap(int amount, covid asset_id)
   observes asset by asset_id {
     inputs {
       payment: Pair;
@@ -231,7 +232,7 @@ actor Pair owns PairState {
     require(amount > 0);
   }
 
-  delegate authorize(owner_sig: sig) consumes {
+  delegate authorize(sig owner_sig) consumes {
     controller: Pair;
   } {
     require(checkSig(owner_sig, controller.owner));

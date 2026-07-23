@@ -233,9 +233,8 @@ impl Parser {
         self.expect_symbol('(')?;
         let mut params = Vec::new();
         while !self.check_symbol(')') {
+            let ty = self.parse_type()?;
             let name = self.expect_any_ident()?;
-            self.expect_symbol(':')?;
-            let ty = self.parse_type_from_current()?;
             params.push(ParamDecl { name, ty });
             if self.consume_symbol(',') {
                 continue;
@@ -397,10 +396,6 @@ impl Parser {
     fn parse_type(&mut self) -> Result<TypeRef> {
         let name = self.expect_any_ident()?;
         self.parse_type_tail(name)
-    }
-
-    fn parse_type_from_current(&mut self) -> Result<TypeRef> {
-        self.parse_type()
     }
 
     fn parse_type_tail(&mut self, name: String) -> Result<TypeRef> {
@@ -607,5 +602,59 @@ impl Parser {
 
     fn error(&self, message: impl Into<String>) -> ArgentError {
         ArgentError::at(&self.path, format!("{} at byte {}", message.into(), self.current().span.start))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::parse_module;
+    use crate::ast::TypeRef;
+
+    #[test]
+    fn parses_type_first_function_entry_and_delegate_parameters() {
+        let module = parse_module(
+            PathBuf::from("params.ag"),
+            r#"
+            state State {
+                int value;
+            }
+
+            fn helper(byte[32] owner, int amount,) -> int {
+                return amount;
+            }
+
+            actor Actor owns State {
+                entry update(int amount, actor_type<State> target,) emits none {}
+                delegate verify(sig owner_sig,) consumes {
+                    leader: Actor;
+                } {}
+            }
+            "#
+            .to_string(),
+        )
+        .expect("type-first parameters parse");
+
+        assert_eq!(module.functions[0].params[0].name, "owner");
+        assert_eq!(module.functions[0].params[0].ty, TypeRef::array("byte", 32));
+        assert_eq!(module.functions[0].params[1].name, "amount");
+        assert_eq!(module.functions[0].params[1].ty, TypeRef::new("int"));
+
+        let actor = &module.actors[0];
+        assert_eq!(actor.entries[0].params[0].name, "amount");
+        assert_eq!(actor.entries[0].params[0].ty, TypeRef::new("int"));
+        assert_eq!(actor.entries[0].params[1].name, "target");
+        assert_eq!(actor.entries[0].params[1].ty, TypeRef::actor_type("State"));
+        assert_eq!(actor.entries[1].params[0].name, "owner_sig");
+        assert_eq!(actor.entries[1].params[0].ty, TypeRef::new("sig"));
+    }
+
+    #[test]
+    fn rejects_name_first_parameters() {
+        let err = parse_module(PathBuf::from("params.ag"), "fn helper(amount: int) -> int { return amount; }".to_string())
+            .expect_err("name-first parameters must not parse");
+
+        assert!(err.to_string().contains("expected identifier, found `:`"), "unexpected error: {err}");
     }
 }

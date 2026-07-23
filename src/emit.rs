@@ -7468,7 +7468,7 @@ mod tests {
             }
 
             actor Foo owns FooState {
-                entry bump(amount: int) emits one Foo {
+                entry bump(int amount) emits one Foo {
                     State next_state = {
                         count: count + amount,
                     };
@@ -7577,7 +7577,7 @@ mod tests {
             }
 
             actor Foo owns FooState {
-                entry step(amount: int) emits one Foo {
+                entry step(int amount) emits one Foo {
                     require(next.value == self.value);
                     become Foo(self.state);
                 }
@@ -7889,7 +7889,7 @@ mod tests {
             }
 
             actor Minter owns MinterState {
-                entry mint(minted_amount: int)
+                entry mint(int minted_amount)
                 observes asset by self.kcc20_covid {
                     inputs {
                         proxy: MinterProxy;
@@ -8035,7 +8035,7 @@ mod tests {
             }
 
             actor Local owns LocalState {
-                entry step(unused: int, target_id: covid)
+                entry step(int unused, covid target_id)
                 observes asset by target_id {
                     inputs {
                         foreign: Foreign;
@@ -8064,7 +8064,7 @@ mod tests {
             state LocalState {}
 
             actor Local owns LocalState {
-                entry step(first: covid, second: covid)
+                entry step(covid first, covid second)
                 observes asset by first + second {}
                 emits none {
                     require(1 == 1);
@@ -8216,7 +8216,7 @@ mod tests {
             }
 
             actor Local owns LocalState {
-                entry inspect(self_target: actor_type<RemoteState>)
+                entry inspect(actor_type<RemoteState> self_target)
                 observes remote by self.remote_id {
                     inputs {
                         stored: self.target;
@@ -9391,7 +9391,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose(target: MoveActor) emits one MoveActor {
+                entry choose(MoveActor target) emits one MoveActor {
                     BoardState next = {
                         ply: ply + 1,
                     };
@@ -9789,7 +9789,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose(target: MoveActor) emits one MoveActor {
+                entry choose(MoveActor target) emits one MoveActor {
                     BoardState next_board = {
                         ply: ply + 1,
                     };
@@ -10003,7 +10003,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose_first(target: FirstMove) emits one FirstMove {
+                entry choose_first(FirstMove target) emits one FirstMove {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
@@ -10011,7 +10011,7 @@ mod tests {
                     become target(next_board);
                 }
 
-                entry choose_second(target: SecondMove) emits one SecondMove {
+                entry choose_second(SecondMove target) emits one SecondMove {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
@@ -10051,7 +10051,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose(target: MoveActor) emits one MoveActor {
+                entry choose(MoveActor target) emits one MoveActor {
                     BoardState next_board = {
                         selector: selector,
                         ply: ply + 1,
@@ -10110,7 +10110,7 @@ mod tests {
             }
 
             actor Challenge owns SharedState {
-                entry choose(target: NextActor) emits one NextActor {
+                entry choose(NextActor target) emits one NextActor {
                     SharedState next = {
                         value: value + 1,
                     };
@@ -10679,7 +10679,7 @@ mod tests {
             }
 
             actor Launcher owns LauncherState {
-                entry launch(self_pair_type: actor_type<PairState>)
+                entry launch(actor_type<PairState> self_pair_type)
                 spawns stored by stored_id {
                     outputs {
                         pair: self.pair_type;
@@ -10851,7 +10851,7 @@ mod tests {
             }
 
             actor Launcher owns LauncherState {
-                entry launch(value: int)
+                entry launch(int value)
                 spawns child_group by child_id {
                     outputs {
                         child: Child;
@@ -10929,7 +10929,7 @@ mod tests {
             }
 
             actor Node owns NodeState {
-                entry fork(next_value: int)
+                entry fork(int next_value)
                 spawns child_group by child_id {
                     outputs {
                         child: Node;
@@ -11176,7 +11176,7 @@ mod tests {
             }
 
             actor Mux owns BoardState {
-                entry choose(target: MoveActor) emits one MoveActor {
+                entry choose(MoveActor target) emits one MoveActor {
                     if (target == MoveActor::Knight) {
                         require(selector >= 0);
                     }
@@ -11261,7 +11261,7 @@ mod tests {
             }
 
             actor Foo owns FooState {
-                entry bump(amount: int, next_tag: byte[4], next_flag: bool, b: byte) emits none {
+                entry bump(int amount, byte[4] next_tag, bool next_flag, byte b) emits none {
                     require(amount >= 0);
                 }
 
