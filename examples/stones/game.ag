@@ -11,7 +11,7 @@ actor StonesGame owns GameState {
         pubkey move_pk
     ) emits {
         // Union-typed output: the entry chooses one successor actor at runtime.
-        next: StonesGame | StonesSettle;
+        next: StonesGame | StonesSettle,
     } {
         require(pile > 0);
         require(amount >= 1);
@@ -54,7 +54,7 @@ actor StonesGame owns GameState {
         sig move_sig,
         pubkey move_pk
     ) emits {
-        settle: StonesSettle;
+        settle: StonesSettle,
     } {
         byte[32] actor_ref = player_ref(blake2b(move_pk), player_id);
         byte[32] expected_ref = side_player(turn, player_a, player_b);

@@ -129,7 +129,7 @@ The entry has this shape:
 entry init(sig owner_sig)
 spawns asset by asset_id {
     outputs {
-        proxy: self.proxy_type;
+        proxy: self.proxy_type,
     }
 }
 emits one Minter {
@@ -140,7 +140,7 @@ emits one Minter {
         controller_id: self.covenant_id,
     };
     require asset.outputs become {
-        proxy <- self.proxy_type(proxy_state);
+        proxy <- self.proxy_type(proxy_state),
     };
 
     MinterState next_controller = {
@@ -170,8 +170,8 @@ For example:
 
 ```rust
 emits {
-    left: A | C;
-    right: B | D;
+    left: A | C,
+    right: B | D,
 }
 ```
 
@@ -185,11 +185,11 @@ The artifact also cannot describe the relationship to a typed builder.
 
 ```rust
 emits {
-    left: A;
-    right: B;
+    left: A,
+    right: B,
 } | {
-    left: C;
-    right: D;
+    left: C,
+    right: D,
 }
 ```
 

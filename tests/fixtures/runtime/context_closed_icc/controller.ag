@@ -8,15 +8,15 @@ actor Controller owns ControllerState {
     entry mint(covid asset_id, int amount)
     observes asset by asset_id {
         inputs {
-            badge: Badge;
+            badge: Badge,
         }
 
         outputs {
-            badge: Badge;
+            badge: Badge,
         }
     }
     emits {
-        controller: Controller;
+        controller: Controller,
     } {
         BadgeState previous = asset.inputs.badge.state;
         BadgeState next_badge = {
@@ -26,7 +26,7 @@ actor Controller owns ControllerState {
         };
 
         require asset.outputs become {
-            badge <- Badge(next_badge);
+            badge <- Badge(next_badge),
         };
 
         ControllerState next = {

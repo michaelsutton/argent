@@ -15,10 +15,10 @@ actor Peer owns PeerState {
 actor Controller owns ControllerState {
     entry step()
     consumes {
-        peer: Peer;
+        peer: Peer,
     }
     emits {
-        peer: Peer;
+        peer: Peer,
     } {
         PeerState next_peer = {
             count: peer.count + 1,

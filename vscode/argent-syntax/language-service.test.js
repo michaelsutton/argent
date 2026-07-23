@@ -225,7 +225,7 @@ actor Pair owns PairState {
   entry swap(int amount, covid asset_id)
   observes asset by asset_id {
     inputs {
-      payment: Pair;
+      payment: Pair,
     }
   }
   emits none {
@@ -233,7 +233,7 @@ actor Pair owns PairState {
   }
 
   delegate authorize(sig owner_sig) consumes {
-    controller: Pair;
+    controller: Pair,
   } {
     require(checkSig(owner_sig, controller.owner));
   }

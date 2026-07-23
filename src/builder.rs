@@ -463,24 +463,24 @@ mod tests {
 
             actor Left owns BoxState {
                 entry shift(int amount) consumes {
-                    peer: Right;
+                    peer: Right,
                 } emits {
-                    left_out: Left;
-                    peer_out: Right;
+                    left_out: Left,
+                    peer_out: Right,
                 } {
                     BoxState next_left = { units: units - amount, };
                     BoxState next_peer = { units: peer.units + amount, };
 
                     become {
-                        left_out <- Left(next_left);
-                        peer_out <- Right(next_peer);
+                        left_out <- Left(next_left),
+                        peer_out <- Right(next_peer),
                     };
                 }
             }
 
             actor Right owns BoxState {
                 delegate accept_shift() consumes {
-                    leader: Left;
+                    leader: Left,
                 } {}
             }
 
@@ -2496,7 +2496,7 @@ mod tests {
 
             actor Forager owns ForagerState {
                 entry step() emits {
-                    agent: Forager;
+                    agent: Forager,
                 } {
                     require(controller_id.co_spent());
 

@@ -22,8 +22,8 @@ actor Issuer owns IssuerState {
     )
     // `emits` declares the complete output shape this entry may create.
     emits {
-        issuer: Issuer;
-        ticket: Ticket;
+        issuer: Issuer,
+        ticket: Ticket,
     } {
         require(blake2b(admin_pk) == admin);
         require(checkSig(admin_sig, admin_pk));
@@ -42,15 +42,15 @@ actor Issuer owns IssuerState {
         // that into a check that the output scriptPubKey is the expected P2SH
         // of the full Ticket contract template plus the expected state bytes.
         become {
-            issuer <- Issuer(next_issuer);
-            ticket <- Ticket(new_ticket);
+            issuer <- Issuer(next_issuer),
+            ticket <- Ticket(new_ticket),
         };
     }
 }
 
 actor Ticket owns TicketState {
     entry redeem(sig owner_sig, pubkey owner_pk) emits {
-        next: Ticket;
+        next: Ticket,
     } {
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));

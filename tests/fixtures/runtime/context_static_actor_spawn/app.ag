@@ -10,7 +10,7 @@ actor Launcher owns LauncherState {
     entry launch(int value)
     spawns child_group by child_id {
         outputs {
-            child: Child;
+            child: Child,
         }
     }
     emits one Launcher {
@@ -22,7 +22,7 @@ actor Launcher owns LauncherState {
         };
 
         require child_group.outputs become {
-            child <- Child(child_state);
+            child <- Child(child_state),
         };
         become Launcher(next);
     }

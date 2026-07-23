@@ -2776,7 +2776,7 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             let mut routes = Vec::new();
             while !self.check_symbol('}') && !self.is_eof() {
                 routes.push(self.parse_become_route()?);
-                self.consume_symbol(';');
+                self.expect_list_separator_or_end('}')?;
             }
             self.expect_symbol('}')?;
             self.consume_symbol(';');
@@ -3719,6 +3719,10 @@ impl<'a, 'm> BodyLowerer<'a, 'm> {
             }
             _ => false,
         }
+    }
+
+    fn expect_list_separator_or_end(&mut self, end: char) -> Result<()> {
+        if self.consume_symbol(',') || self.check_symbol(end) { Ok(()) } else { Err(self.error(format!("expected `,` or `{end}`"))) }
     }
 
     fn consume_left_arrow(&mut self) -> bool {
@@ -7107,8 +7111,8 @@ mod tests {
 
             actor Foo owns FooState {
                 entry step() emits {
-                    a: Foo;
-                    b: Foo;
+                    a: Foo,
+                    b: Foo,
                 } {
                     become a <- Foo(next_a);
                 }
@@ -7137,7 +7141,7 @@ mod tests {
 
             actor Foo owns FooState {
                 entry bump() emits {
-                    next: Foo at auth[0];
+                    next: Foo at auth[0],
                 } {
                     FooState next_state = {
                         value: value + 1,
@@ -7154,7 +7158,7 @@ mod tests {
         )
         .expect_err("explicit auth output indexes must not be source syntax");
 
-        assert!(err.to_string().contains("expected `;`"), "unexpected error: {err}");
+        assert!(err.to_string().contains("expected `,` or `}`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -7225,7 +7229,7 @@ mod tests {
                 }
 
                 entry coordinated() consumes {
-                    worker: Worker;
+                    worker: Worker,
                 } emits one Leader {
                     require(worker.value >= 0);
                     become Leader(self.state);
@@ -7234,7 +7238,7 @@ mod tests {
 
             actor Worker owns WorkerState {
                 delegate assist() consumes {
-                    leader: Leader;
+                    leader: Leader,
                 } {
                     require(leader.value >= 0);
                 }
@@ -7892,16 +7896,16 @@ mod tests {
                 entry mint(int minted_amount)
                 observes asset by self.kcc20_covid {
                     inputs {
-                        proxy: MinterProxy;
+                        proxy: MinterProxy,
                     }
 
                     outputs {
-                        proxy: MinterProxy;
-                        recipient: KCC20;
+                        proxy: MinterProxy,
+                        recipient: KCC20,
                     }
                 }
                 emits {
-                    controller: Minter;
+                    controller: Minter,
                 } {
                     MinterState next_minter = {
                         kcc20_covid: kcc20_covid,
@@ -8038,7 +8042,7 @@ mod tests {
                 entry step(int unused, covid target_id)
                 observes asset by target_id {
                     inputs {
-                        foreign: Foreign;
+                        foreign: Foreign,
                     }
                 }
                 emits none {
@@ -8150,7 +8154,7 @@ mod tests {
                 entry step()
                 observes asset by self.target_id {
                     inputs {
-                        foreign: foreign_type;
+                        foreign: foreign_type,
                     }
                 }
                 emits none {
@@ -8184,7 +8188,7 @@ mod tests {
                 entry launch()
                 spawns pair by pair_id {
                     outputs {
-                        next_pair: pair_type;
+                        next_pair: pair_type,
                     }
                 }
                 emits none {
@@ -8219,8 +8223,8 @@ mod tests {
                 entry inspect(actor_type<RemoteState> self_target)
                 observes remote by self.remote_id {
                     inputs {
-                        stored: self.target;
-                        argument: self_target;
+                        stored: self.target,
+                        argument: self_target,
                     }
                 }
                 emits none {
@@ -8377,12 +8381,12 @@ mod tests {
                 entry step()
                 observes asset by self.target_id {
                     inputs {
-                        foreign: Foreign;
+                        foreign: Foreign,
                     }
                 }
                 observes asset by self.target_id {
                     outputs {
-                        foreign: Foreign;
+                        foreign: Foreign,
                     }
                 }
                 emits none {
@@ -8419,8 +8423,8 @@ mod tests {
                 entry step()
                 observes asset by self.target_id {
                     inputs {
-                        foreign: Foreign;
-                        foreign: Foreign;
+                        foreign: Foreign,
+                        foreign: Foreign,
                     }
                 }
                 emits none {
@@ -8529,7 +8533,7 @@ mod tests {
             actor Counter owns CounterState {
                 entry merge()
                 consumes {
-                    other: Counter;
+                    other: Counter,
                 }
                 emits one Counter {
                     CounterState next = {
@@ -8650,7 +8654,7 @@ mod tests {
                 entry inspect()
                 observes remote by self.agent_covid {
                     inputs {
-                        agent: actor_type<AgentCapsule> as observed_agent;
+                        agent: actor_type<AgentCapsule> as observed_agent,
                     }
                 }
                 emits none {
@@ -8694,8 +8698,8 @@ mod tests {
                 entry step()
                 observes asset by self.target_id {
                     outputs {
-                        a: Foreign;
-                        b: Foreign;
+                        a: Foreign,
+                        b: Foreign,
                     }
                 }
                 emits none {
@@ -8704,7 +8708,7 @@ mod tests {
                     };
 
                     require asset.outputs become {
-                        a <- Foreign(next);
+                        a <- Foreign(next),
                     };
                 }
             }
@@ -8716,6 +8720,53 @@ mod tests {
         );
 
         assert!(err.to_string().contains("observe `asset` does not validate output `b`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_semicolons_in_observed_become_route_lists() {
+        let err = emit_inline_error(
+            r#"
+            state ForeignState {
+                int amount;
+            }
+
+            state LocalState {
+                covid target_id;
+            }
+
+            actor Foreign owns ForeignState {
+                entry hold() emits none {
+                    require(amount >= 0);
+                }
+            }
+
+            actor Local owns LocalState {
+                entry step()
+                observes asset by self.target_id {
+                    outputs {
+                        a: Foreign,
+                        b: Foreign,
+                    }
+                }
+                emits none {
+                    ForeignState next = {
+                        amount: 1,
+                    };
+
+                    require asset.outputs become {
+                        a <- Foreign(next);
+                        b <- Foreign(next);
+                    };
+                }
+            }
+
+            app Test {
+                actor Local;
+            }
+            "#,
+        );
+
+        assert!(err.to_string().contains("expected `,` or `}`"), "unexpected error: {err}");
     }
 
     #[test]
@@ -8746,7 +8797,7 @@ mod tests {
                 entry step()
                 observes asset by self.target_id {
                     outputs {
-                        next: ForeignA;
+                        next: ForeignA,
                     }
                 }
                 emits none {
@@ -8755,7 +8806,7 @@ mod tests {
                     };
 
                     require asset.outputs become {
-                        next <- ForeignB(next_state);
+                        next <- ForeignB(next_state),
                     };
                 }
             }
@@ -9413,7 +9464,7 @@ mod tests {
 
             actor Consumer owns ConsumerState {
                 entry verify() consumes {
-                    pawn: Pawn;
+                    pawn: Pawn,
                 } emits one Archive {
                     require(pawn.ply >= 0);
 
@@ -10682,22 +10733,22 @@ mod tests {
                 entry launch(actor_type<PairState> self_pair_type)
                 spawns stored by stored_id {
                     outputs {
-                        pair: self.pair_type;
+                        pair: self.pair_type,
                     }
                 }
                 spawns argument by argument_id {
                     outputs {
-                        pair: self_pair_type;
+                        pair: self_pair_type,
                     }
                 }
                 emits one Launcher {
                     PairState stored_pair = { value: 1 };
                     PairState argument_pair = { value: 2 };
                     require stored.outputs become {
-                        pair <- self.pair_type(stored_pair);
+                        pair <- self.pair_type(stored_pair),
                     };
                     require argument.outputs become {
-                        pair <- self_pair_type(argument_pair);
+                        pair <- self_pair_type(argument_pair),
                     };
                     become Launcher(self.state);
                 }
@@ -10740,13 +10791,13 @@ mod tests {
                 entry launch_first()
                 spawns child by child_id {
                     outputs {
-                        pair: self.first_type;
+                        pair: self.first_type,
                     }
                 }
                 emits one Launcher {
                     PairState pair = { value: 1 };
                     require child.outputs become {
-                        pair <- self.first_type(pair);
+                        pair <- self.first_type(pair),
                     };
                     become Launcher(self.state);
                 }
@@ -10754,13 +10805,13 @@ mod tests {
                 entry launch_second()
                 spawns child by child_id {
                     outputs {
-                        pair: self.second_type;
+                        pair: self.second_type,
                     }
                 }
                 emits one Launcher {
                     PairState pair = { value: 2 };
                     require child.outputs become {
-                        pair <- self.second_type(pair);
+                        pair <- self.second_type(pair),
                     };
                     become Launcher(self.state);
                 }
@@ -10805,21 +10856,21 @@ mod tests {
                 entry launch()
                 spawns first by first_id {
                     outputs {
-                        pair: self.pair_type;
+                        pair: self.pair_type,
                     }
                 }
                 spawns second by second_id {
                     outputs {
-                        pair: self.pair_type;
+                        pair: self.pair_type,
                     }
                 }
                 emits one Launcher {
                     PairState pair = { value: 1 };
                     require first.outputs become {
-                        pair <- self.pair_type(pair);
+                        pair <- self.pair_type(pair),
                     };
                     require second.outputs become {
-                        pair <- self.pair_type(pair);
+                        pair <- self.pair_type(pair),
                     };
                     become Launcher(self.state);
                 }
@@ -10854,8 +10905,8 @@ mod tests {
                 entry launch(int value)
                 spawns child_group by child_id {
                     outputs {
-                        child: Child;
-                        sibling: Child;
+                        child: Child,
+                        sibling: Child,
                     }
                 }
                 emits one Launcher {
@@ -10863,8 +10914,8 @@ mod tests {
                     ChildState sibling_state = { value: value + 1 };
                     LauncherState next = { launches: launches + 1 };
                     require child_group.outputs become {
-                        child <- Child(child_state);
-                        sibling <- Child(sibling_state);
+                        child <- Child(child_state),
+                        sibling <- Child(sibling_state),
                     };
                     become Launcher(next);
                 }
@@ -10932,14 +10983,14 @@ mod tests {
                 entry fork(int next_value)
                 spawns child_group by child_id {
                     outputs {
-                        child: Node;
+                        child: Node,
                     }
                 }
                 emits one Node {
                     NodeState child = { value: next_value };
                     NodeState next = { value: next_value + 1 };
                     require child_group.outputs become {
-                        child <- Node(child);
+                        child <- Node(child),
                     };
                     become Node(next);
                 }
@@ -10973,14 +11024,14 @@ mod tests {
                 entry launch()
                 spawns game by game_id {
                     outputs {
-                        mux: Mux;
+                        mux: Mux,
                     }
                 }
                 emits one Launcher {
                     BoardState board = { turn: 0 };
                     LauncherState next = { launches: launches + 1 };
                     require game.outputs become {
-                        mux <- Mux(board);
+                        mux <- Mux(board),
                     };
                     become Launcher(next);
                 }
@@ -11038,7 +11089,7 @@ mod tests {
                 observes pair by self.observed_id {}
                 spawns pair by pair_id {
                     outputs {
-                        next_pair: self.pair_type;
+                        next_pair: self.pair_type,
                     }
                 }
                 emits one Launcher {
@@ -11071,7 +11122,7 @@ mod tests {
                 entry launch()
                 spawns pair by pair_id {
                     outputs {
-                        next_pair: self.pair_type;
+                        next_pair: self.pair_type,
                     }
                 }
                 emits one Launcher {

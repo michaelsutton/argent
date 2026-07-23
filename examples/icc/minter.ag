@@ -19,17 +19,17 @@ actor Minter owns MinterState {
     observes asset by self.kcc20_covid {
         // Named handles are exhaustive over the observed covenant inputs.
         inputs {
-            proxy: MinterProxy;
+            proxy: MinterProxy,
         }
 
         // Declaration order defines the op_cov_output_idx order; no auth/cov index syntax.
         outputs {
-            proxy: MinterProxy;
-            recipient: KCC20;
+            proxy: MinterProxy,
+            recipient: KCC20,
         }
     }
     emits {
-        controller: Minter;
+        controller: Minter,
     } {
         MinterProxyState prev_proxy = asset.inputs.proxy.state;
 
@@ -49,8 +49,8 @@ actor Minter owns MinterState {
         };
 
         require asset.outputs become {
-            proxy <- MinterProxy(next_proxy);
-            recipient <- KCC20(next_recipient);
+            proxy <- MinterProxy(next_proxy),
+            recipient <- KCC20(next_recipient),
         };
 
         MinterState next_controller = {

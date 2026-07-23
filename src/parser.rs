@@ -253,8 +253,8 @@ impl Parser {
             let name = self.expect_any_ident()?;
             self.expect_symbol(':')?;
             let actor = self.expect_any_ident()?;
-            self.expect_symbol(';')?;
             consumes.push(ConsumeDecl { name, actor });
+            self.expect_list_separator_or_end('}')?;
         }
         self.expect_symbol('}')?;
         Ok(consumes)
@@ -296,8 +296,8 @@ impl Parser {
             let name = self.expect_any_ident()?;
             self.expect_symbol(':')?;
             let actor = self.take_observed_actor_target()?;
-            self.expect_symbol(';')?;
             outputs.push(SpawnOutputDecl { name, actor, group_index: outputs.len() });
+            self.expect_list_separator_or_end('}')?;
         }
         self.expect_symbol('}')?;
         self.expect_symbol('}')?;
@@ -359,8 +359,8 @@ impl Parser {
             } else {
                 (self.take_observed_actor_target()?, None)
             };
-            self.expect_symbol(';')?;
             actors.push(ObservedActorDecl { name, actor, open_state });
+            self.expect_list_separator_or_end('}')?;
         }
         self.expect_symbol('}')?;
         Ok(actors)
@@ -376,16 +376,16 @@ impl Parser {
                     depth += 1;
                     self.advance();
                 }
-                TokenKind::Symbol('}') | TokenKind::Symbol(')') | TokenKind::Symbol(']') | TokenKind::Symbol('>') => {
-                    depth = depth.saturating_sub(1);
-                    self.advance();
-                }
-                TokenKind::Symbol(';') if depth == 0 => {
+                TokenKind::Symbol(',' | '}' | ';') if depth == 0 => {
                     let text = self.source[start..token.span.start].trim().to_string();
                     if text.is_empty() {
                         return Err(self.error("observed actor target is empty"));
                     }
                     return Ok(text);
+                }
+                TokenKind::Symbol('}') | TokenKind::Symbol(')') | TokenKind::Symbol(']') | TokenKind::Symbol('>') => {
+                    depth = depth.saturating_sub(1);
+                    self.advance();
                 }
                 _ => self.advance(),
             }
@@ -429,8 +429,8 @@ impl Parser {
                 self.expect_symbol(':')?;
                 let actors = self.parse_actor_union()?;
                 let auth_index = outputs.len();
-                self.expect_symbol(';')?;
                 outputs.push(EmitOutput { name, actors, auth_index });
+                self.expect_list_separator_or_end('}')?;
             }
             self.expect_symbol('}')?;
             Ok(EmitSpec::Outputs(outputs))
@@ -556,6 +556,14 @@ impl Parser {
         }
     }
 
+    fn expect_list_separator_or_end(&mut self, end: char) -> Result<()> {
+        if self.consume_symbol(',') || self.check_symbol(end) {
+            Ok(())
+        } else {
+            Err(self.error(format!("expected `,` or `{end}`, found {}", self.describe_current())))
+        }
+    }
+
     fn check_symbol(&self, expected: char) -> bool {
         matches!(self.current().kind, TokenKind::Symbol(actual) if actual == expected)
     }
@@ -628,7 +636,7 @@ mod tests {
             actor Actor owns State {
                 entry update(int amount, actor_type<State> target,) emits none {}
                 delegate verify(sig owner_sig,) consumes {
-                    leader: Actor;
+                    leader: Actor,
                 } {}
             }
             "#
@@ -656,5 +664,96 @@ mod tests {
             .expect_err("name-first parameters must not parse");
 
         assert!(err.to_string().contains("expected identifier, found `:`"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn parses_comma_separated_role_and_route_bindings() {
+        let module = parse_module(
+            PathBuf::from("bindings.ag"),
+            r#"
+            state State {
+                int value;
+            }
+
+            actor Actor owns State {
+                entry update()
+                observes remote by remote_id {
+                    inputs {
+                        input: actor_type<State> as observed_actor,
+                    }
+                    outputs {
+                        output: observed_actor
+                    }
+                }
+                spawns child by child_id {
+                    outputs {
+                        first: Actor,
+                        second: observed_actor
+                    }
+                }
+                consumes {
+                    peer: Actor,
+                    other: Actor
+                }
+                emits {
+                    first: Actor,
+                    second: Actor
+                } {
+                    become {
+                        first <- Actor(self.state),
+                        second <- Actor(self.state)
+                    };
+                }
+            }
+            "#
+            .to_string(),
+        )
+        .expect("comma-separated bindings parse");
+
+        let entry = &module.actors[0].entries[0];
+        assert_eq!(entry.observes[0].inputs.len(), 1);
+        assert_eq!(entry.observes[0].outputs.len(), 1);
+        assert_eq!(entry.spawns[0].outputs.len(), 2);
+        assert_eq!(entry.consumes.len(), 2);
+        assert!(matches!(&entry.emits, crate::ast::EmitSpec::Outputs(outputs) if outputs.len() == 2));
+        assert_eq!(entry.routes.len(), 2);
+    }
+
+    #[test]
+    fn rejects_semicolons_in_role_binding_lists() {
+        for source in [
+            r#"
+                state State {}
+                actor Actor owns State {
+                    entry update() consumes { peer: Actor; } emits none {}
+                }
+            "#,
+            r#"
+                state State {}
+                actor Actor owns State {
+                    entry update() emits { next: Actor; } {}
+                }
+            "#,
+            r#"
+                state State {}
+                actor Actor owns State {
+                    entry update()
+                    spawns child by child_id { outputs { next: Actor; } }
+                    emits none {}
+                }
+            "#,
+            r#"
+                state State {}
+                actor Actor owns State {
+                    entry update()
+                    observes remote by remote_id { inputs { peer: Actor; } }
+                    emits none {}
+                }
+            "#,
+        ] {
+            let err = parse_module(PathBuf::from("bindings.ag"), source.to_string())
+                .expect_err("semicolon-separated role bindings must not parse");
+            assert!(err.to_string().contains("expected `,` or `}`"), "unexpected error: {err}");
+        }
     }
 }

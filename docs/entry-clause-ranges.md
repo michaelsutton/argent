@@ -24,7 +24,7 @@ Use the current singleton form for one item:
 
 ```rust
 consumes {
-    owner: Account;
+    owner: Account,
 }
 ```
 
@@ -34,7 +34,7 @@ Use a cardinality suffix for a range:
 const int MAX_ACCOUNTS = 8;
 
 consumes {
-    accounts: Account[1..=MAX_ACCOUNTS];
+    accounts: Account[1..=MAX_ACCOUNTS],
 }
 ```
 
@@ -46,10 +46,10 @@ The same form applies to all ordered entry sections:
 ```rust
 entry rebalance(AccountState[] next_states)
 consumes {
-    accounts: Account[1..=MAX_ACCOUNTS];
+    accounts: Account[1..=MAX_ACCOUNTS],
 }
 emits {
-    next: Account[1..=MAX_ACCOUNTS];
+    next: Account[1..=MAX_ACCOUNTS],
 } {
     require(accounts.length == next_states.length);
     become next <- Account(next_states);
@@ -64,16 +64,16 @@ Observed and spawned ranges use the same rule:
 ```rust
 observes assets by self.asset_id {
     inputs {
-        previous: Asset[1..=MAX_ASSETS];
+        previous: Asset[1..=MAX_ASSETS],
     }
     outputs {
-        next: Asset[1..=MAX_ASSETS];
+        next: Asset[1..=MAX_ASSETS],
     }
 }
 
 spawns batch by batch_id {
     outputs {
-        items: Item[1..=MAX_ITEMS];
+        items: Item[1..=MAX_ITEMS],
     }
 }
 ```
@@ -185,7 +185,7 @@ For this declaration:
 
 ```rust
 consumes {
-    accounts: Account[1..=MAX_ACCOUNTS];
+    accounts: Account[1..=MAX_ACCOUNTS],
 }
 ```
 

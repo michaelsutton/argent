@@ -16,11 +16,11 @@ actor Local owns LocalState {
     entry step()
     observes asset by self.target_id {
         inputs {
-            src: Foreign;
+            src: Foreign,
         }
 
         outputs {
-            dst: Foreign;
+            dst: Foreign,
         }
     }
     emits none {
@@ -30,7 +30,7 @@ actor Local owns LocalState {
         };
 
         require asset.outputs become {
-            dst <- Foreign(next);
+            dst <- Foreign(next),
         };
     }
 }

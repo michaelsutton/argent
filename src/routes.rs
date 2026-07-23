@@ -121,7 +121,7 @@ impl TerminalParser<'_> {
                     return Err(self.error("nested `become` blocks are not supported yet"));
                 }
                 routes.push(self.parse_route()?);
-                self.consume_symbol(';');
+                self.expect_list_separator_or_end('}')?;
             }
             self.expect_symbol('}')?;
             self.consume_symbol(';');
@@ -277,6 +277,10 @@ impl TerminalParser<'_> {
         }
     }
 
+    fn expect_list_separator_or_end(&mut self, end: char) -> Result<()> {
+        if self.consume_symbol(',') || self.check_symbol(end) { Ok(()) } else { Err(self.error(format!("expected `,` or `{end}`"))) }
+    }
+
     fn check_symbol(&self, expected: char) -> bool {
         matches!(self.current().kind, TokenKind::Symbol(actual) if actual == expected)
     }
@@ -315,8 +319,8 @@ mod tests {
         let routes = collect_routes(
             r#"
             become {
-                player_a_out <- Player(next_player_a);
-                player_b_out <- Player(next_player_b);
+                player_a_out <- Player(next_player_a),
+                player_b_out <- Player(next_player_b),
             };
             "#,
         )
@@ -329,6 +333,21 @@ mod tests {
         assert_eq!(routes[1].output.as_deref(), Some("player_b_out"));
         assert_eq!(routes[1].actor, "Player");
         assert_eq!(routes[1].state, "next_player_b");
+    }
+
+    #[test]
+    fn rejects_semicolons_in_become_route_lists() {
+        let err = collect_routes(
+            r#"
+            become {
+                player_a_out <- Player(next_player_a);
+                player_b_out <- Player(next_player_b);
+            };
+            "#,
+        )
+        .expect_err("semicolon-separated routes must not parse");
+
+        assert!(err.to_string().contains("expected `,` or `}`"), "unexpected error: {err}");
     }
 
     #[test]

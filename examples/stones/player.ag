@@ -13,11 +13,11 @@ actor Player owns PlayerState {
         int max_take
     ) consumes {
         // Consumed actors join the same coordinated transition as `self`.
-        opponent: Player;
+        opponent: Player,
     } emits {
-        self_out: Player;
-        opponent_out: Player;
-        game: StonesGame;
+        self_out: Player,
+        opponent_out: Player,
+        game: StonesGame,
     } {
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
@@ -62,15 +62,15 @@ actor Player owns PlayerState {
 
         // Multi-output `become` is an atomic successor set.
         become {
-            self_out <- Player(next_self);
-            opponent_out <- Player(next_opponent);
-            game <- StonesGame(next_game);
+            self_out <- Player(next_self),
+            opponent_out <- Player(next_opponent),
+            game <- StonesGame(next_game),
         };
     }
 
     // Delegate entries are non-leader checks in a coordinated transition.
     delegate accept_start(sig owner_sig, pubkey owner_pk) consumes {
-        starter: Player;
+        starter: Player,
     } {
         require(blake2b(owner_pk) == owner);
         require(checkSig(owner_sig, owner_pk));
@@ -79,7 +79,7 @@ actor Player owns PlayerState {
     }
 
     delegate settle() consumes {
-        settle: StonesSettle;
+        settle: StonesSettle,
     } {
         byte[32] self_ref = player_ref(owner, player_id);
         require(self_ref == settle.player_a || self_ref == settle.player_b);

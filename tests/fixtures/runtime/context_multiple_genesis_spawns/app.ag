@@ -17,19 +17,19 @@ actor Controller owns ControllerState {
     )
     spawns first_pair by first_pair_id {
         outputs {
-            left: self.pair_type;
-            right: self.pair_type;
+            left: self.pair_type,
+            right: self.pair_type,
         }
     }
     spawns second_pair by second_pair_id {
         outputs {
-            pair: self.pair_type;
+            pair: self.pair_type,
         }
     }
     spawns third_pair by third_pair_id {
         outputs {
-            left: self.pair_type;
-            right: self.pair_type;
+            left: self.pair_type,
+            right: self.pair_type,
         }
     }
     emits one Controller {
@@ -54,15 +54,15 @@ actor Controller owns ControllerState {
         };
 
         require first_pair.outputs become {
-            left <- self.pair_type(first_left);
-            right <- self.pair_type(first_right);
+            left <- self.pair_type(first_left),
+            right <- self.pair_type(first_right),
         };
         require second_pair.outputs become {
-            pair <- self.pair_type(second);
+            pair <- self.pair_type(second),
         };
         require third_pair.outputs become {
-            left <- self.pair_type(third_left);
-            right <- self.pair_type(third_right);
+            left <- self.pair_type(third_left),
+            right <- self.pair_type(third_right),
         };
         become Controller(next);
     }

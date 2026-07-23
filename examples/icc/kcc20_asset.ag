@@ -19,7 +19,7 @@ actor KCC20 owns KCC20State {
         byte new_identifier_type,
         sig owner_sig
     ) emits {
-        next: KCC20;
+        next: KCC20,
     } {
         if (identifier_type == IDENTIFIER_PUBKEY) {
             require(checkSig(owner_sig, owner_identifier));
@@ -44,15 +44,15 @@ actor MinterProxy owns MinterProxyState {
         MinterProxyState next_proxy,
         KCC20State recipient
     ) emits {
-        proxy: MinterProxy;
-        recipient: KCC20;
+        proxy: MinterProxy,
+        recipient: KCC20,
     } {
         require(controller_id.co_spent());
         require(next_proxy.controller_id == controller_id);
 
         become {
-            proxy <- MinterProxy(next_proxy);
-            recipient <- KCC20(recipient);
+            proxy <- MinterProxy(next_proxy),
+            recipient <- KCC20(recipient),
         };
     }
 }

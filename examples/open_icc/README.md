@@ -18,13 +18,13 @@ The cell does not know which concrete agent template it is controlling. It store
 an `actor_type<AgentCapsule>` handle and uses it in the `observes` clause:
 
 ```rust
-observes remote by self.occupant_agent_covid {
+observes remote by self.bound_agent_cov_id {
     inputs {
-        agent: self.occupant_agent_type;
+        agent: self.bound_agent_type,
     }
 
     outputs {
-        agent: self.occupant_agent_type;
+        agent: self.bound_agent_type,
     }
 }
 ```

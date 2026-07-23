@@ -5,8 +5,8 @@ import actor Player from "./player.ag";
 
 actor League owns LeagueState {
     entry register_player(sig owner_sig, pubkey owner_pk) emits {
-        league: League;
-        player: Player;
+        league: League,
+        player: Player,
     } {
         require(checkSig(owner_sig, owner_pk));
         byte[32] owner = blake2b(owner_pk);
@@ -27,8 +27,8 @@ actor League owns LeagueState {
 
         // Atomic `become` lowers to output-count and template checks.
         become {
-            league <- League(self.state);
-            player <- Player(next_player);
+            league <- League(self.state),
+            player <- Player(next_player),
         };
     }
 }

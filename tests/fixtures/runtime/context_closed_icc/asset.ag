@@ -6,7 +6,7 @@ state BadgeState {
 
 actor Badge owns BadgeState {
     entry apply(int next_balance, sig owner_sig) emits {
-        badge: Badge;
+        badge: Badge,
     } {
         require(controller_id.co_spent());
         require(checkSig(owner_sig, owner));
