@@ -4,16 +4,16 @@ state ControllerState {
 }
 
 state PairState {
-    int value;
+    int amount;
 }
 
 actor Controller owns ControllerState {
     entry launch(
-        int first_left_value,
-        int first_right_value,
-        int second_value,
-        int third_left_value,
-        int third_right_value
+        int first_left_amount,
+        int first_right_amount,
+        int second_amount,
+        int third_left_amount,
+        int third_right_amount
     )
     spawns first_pair by first_pair_id {
         outputs {
@@ -34,19 +34,19 @@ actor Controller owns ControllerState {
     }
     emits one Controller {
         PairState first_left = {
-            value: first_left_value,
+            amount: first_left_amount,
         };
         PairState first_right = {
-            value: first_right_value,
+            amount: first_right_amount,
         };
         PairState second = {
-            value: second_value,
+            amount: second_amount,
         };
         PairState third_left = {
-            value: third_left_value,
+            amount: third_left_amount,
         };
         PairState third_right = {
-            value: third_right_value,
+            amount: third_right_amount,
         };
         ControllerState next = {
             pair_type: pair_type,

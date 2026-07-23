@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "id": "02b1f698cd935c26b2473819ebee0556311cbbaebedc38834635fd27a3f1625e",
+  "id": "940372fe130d999edc57b08debbe617a0692ad900fc247704db4292e7764fbaa",
   "generator": {
     "name": "argentc",
     "version": "0.1.0"
@@ -111,7 +111,7 @@
           "id": "interface/actor/Pair",
           "actor": "Pair",
           "state": "PairState",
-          "fingerprint_hex": "390ce38ff0111780a277e613cd601439539996d1e728cdffe11107891cfeaff3"
+          "fingerprint_hex": "9b0368f937b81c0b086a8abeb52c233617acf970bf24e2c5a984a2f682689bb2"
         }
       ],
       "imports": []
@@ -139,7 +139,7 @@
         "name": "PairState",
         "fields": [
           {
-            "name": "value",
+            "name": "amount",
             "type": {
               "kind": "int"
             }
@@ -435,7 +435,7 @@
         "name": "PairState",
         "fields": [
           {
-            "name": "value",
+            "name": "amount",
             "type": {
               "kind": "int"
             }
@@ -471,13 +471,13 @@
             "selector": null,
             "params": [
               {
-                "name": "left_value",
+                "name": "left_amount",
                 "type": {
                   "kind": "int"
                 }
               },
               {
-                "name": "right_value",
+                "name": "right_amount",
                 "type": {
                   "kind": "int"
                 }
@@ -529,7 +529,7 @@
           "source": "PairState",
           "fields": [
             {
-              "name": "value",
+              "name": "amount",
               "type": {
                 "kind": "int"
               }

@@ -343,6 +343,7 @@ impl<'a> Model<'a> {
     fn validate(&self) -> Result<()> {
         self.validate_reserved_identifiers()?;
         self.validate_state_expansions()?;
+        self.validate_reserved_self_members()?;
         self.validate_generated_actor_suffixes()?;
         self.validate_route_plan_coverage()?;
 
@@ -353,6 +354,19 @@ impl<'a> Model<'a> {
             }
         }
         self.validate_observed_template_state_fields()?;
+        Ok(())
+    }
+
+    fn validate_reserved_self_members(&self) -> Result<()> {
+        for actor in &self.actors {
+            let state = self.storage_state(&actor.state)?;
+            if let Some(field) = state.fields.iter().find(|field| word::RESERVED_SELF_MEMBERS.contains(&field.name.as_str())) {
+                return Err(ArgentError::new(format!(
+                    "actor `{}` owned state `{}` exposes field `{}` as `self.{}`; this actor member name is reserved",
+                    actor.name, actor.state, field.name, field.name
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -7136,7 +7150,7 @@ mod tests {
         let err = parse_and_validate(
             r#"
             state FooState {
-                int value;
+                int amount;
             }
 
             actor Foo owns FooState {
@@ -7144,7 +7158,7 @@ mod tests {
                     next: Foo at auth[0],
                 } {
                     FooState next_state = {
-                        value: value + 1,
+                        amount: amount + 1,
                     };
 
                     become next <- Foo(next_state);
@@ -7212,15 +7226,15 @@ mod tests {
     fn leader_actors_close_all_leader_input_groups() {
         let source = r#"
             state LeaderState {
-                int value;
+                int amount;
             }
 
             state WorkerState {
-                int value;
+                int amount;
             }
 
             state UnrelatedState {
-                int value;
+                int amount;
             }
 
             actor Leader owns LeaderState {
@@ -7359,6 +7373,85 @@ mod tests {
 
         let err = Model::from_program(&program).expect_err("reserved state field must be rejected");
         assert!(err.to_string().contains("reserved generated namespace"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn rejects_reserved_self_members_on_owned_state_surface() {
+        for member in word::RESERVED_SELF_MEMBERS {
+            let source = format!(
+                r#"
+                state WalletState {{
+                    int {member};
+                }}
+
+                actor Wallet owns WalletState {{}}
+
+                app Test {{
+                    actor Wallet;
+                }}
+                "#
+            );
+            let err = parse_and_validate(&source).expect_err("reserved self member must be rejected on an owned state");
+            assert!(
+                err.to_string()
+                    .contains(&format!("actor `Wallet` owned state `WalletState` exposes field `{member}` as `self.{member}`")),
+                "unexpected error for `{member}`: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn allows_reserved_self_member_names_in_nested_state_values() {
+        parse_and_validate(
+            r#"
+            state Payload {
+                int value;
+                int ref;
+            }
+
+            state WalletState {
+                Payload payload;
+            }
+
+            actor Wallet owns WalletState {}
+
+            app Test {
+                actor Wallet;
+            }
+            "#,
+        )
+        .expect("reserved self member names are valid below the actor state surface");
+    }
+
+    #[test]
+    fn rejects_reserved_self_member_in_expanded_base_state() {
+        let err = parse_and_validate(
+            r#"
+            state Capsule {
+                virtual state;
+            }
+
+            state Memory {
+                int counter;
+            }
+
+            state Expanded expands Capsule {
+                state: Memory;
+            }
+
+            actor Worker owns Expanded {}
+
+            app Test {
+                actor Worker;
+            }
+            "#,
+        )
+        .expect_err("expanded base fields remain on the owned state surface");
+
+        assert!(
+            err.to_string().contains("actor `Worker` owned state `Expanded` exposes field `state` as `self.state`"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -9007,74 +9100,74 @@ mod tests {
 
         let source = r#"
             state SourceState {
-                int value;
+                int amount;
             }
 
             state SharedState {
-                int value;
+                int amount;
             }
 
             state TailState {
-                int value;
+                int amount;
             }
 
             actor Source owns SourceState {
                 entry start() emits one HubA {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become HubA(next);
                 }
             }
 
             actor HubA owns SharedState {
                 entry advance() emits one A1 {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become A1(next);
                 }
             }
 
             actor A1 owns SharedState {
                 entry advance() emits one A2 {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become A2(next);
                 }
             }
 
             actor A2 owns SharedState {
                 entry cross() emits one HubB {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become HubB(next);
                 }
             }
 
             actor HubB owns SharedState {
                 entry advance() emits one B1 {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become B1(next);
                 }
 
                 entry rewind() emits one A1 {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become A1(next);
                 }
             }
 
             actor B1 owns SharedState {
                 entry advance() emits one B2 {
-                    SharedState next = { value: value + 1 };
+                    SharedState next = { amount: amount + 1 };
                     become B2(next);
                 }
             }
 
             actor B2 owns SharedState {
                 entry finish() emits one Tail {
-                    TailState next = { value: value + 1 };
+                    TailState next = { amount: amount + 1 };
                     become Tail(next);
                 }
             }
 
             actor Tail owns TailState {
                 entry finish() emits none {
-                    require(value >= 0);
+                    require(amount >= 0);
                 }
             }
 
@@ -9187,17 +9280,17 @@ mod tests {
             path.clone(),
             r#"
             state SharedState {
-                int value;
+                int amount;
             }
 
             state TailState {
-                int value;
+                int amount;
             }
 
             actor A owns SharedState {
                 entry leave() emits one Tail {
                     TailState next_tail = {
-                        value: value,
+                        amount: amount,
                     };
                     become Tail(next_tail);
                 }
@@ -9245,7 +9338,7 @@ mod tests {
                 .into_iter()
                 .map(|field| field.name)
                 .collect::<Vec<_>>(),
-            ["gen__tail_template", "value"]
+            ["gen__tail_template", "amount"]
         );
         assert_eq!(
             runtime_state_fields_for_actor(actor_b, &model)
@@ -9253,7 +9346,7 @@ mod tests {
                 .into_iter()
                 .map(|field| field.name)
                 .collect::<Vec<_>>(),
-            ["value"]
+            ["amount"]
         );
     }
 
@@ -9261,25 +9354,25 @@ mod tests {
     fn foreign_routes_materialize_the_target_actors_cut() {
         let source = r#"
             state SourceState {
-                int value;
+                int amount;
             }
 
             state SharedState {
-                int value;
+                int amount;
             }
 
             state TailAState {
-                int value;
+                int amount;
             }
 
             state TailBState {
-                int value;
+                int amount;
             }
 
             actor Source owns SourceState {
                 entry send() emits one A {
                     SharedState next = {
-                        value: value,
+                        amount: amount,
                     };
                     become A(next);
                 }
@@ -9288,7 +9381,7 @@ mod tests {
             actor A owns SharedState {
                 entry leave() emits one TailA {
                     TailAState next = {
-                        value: value,
+                        amount: amount,
                     };
                     become TailA(next);
                 }
@@ -9297,7 +9390,7 @@ mod tests {
             actor B owns SharedState {
                 entry leave() emits one TailB {
                     TailBState next = {
-                        value: value,
+                        amount: amount,
                     };
                     become TailB(next);
                 }
@@ -9305,13 +9398,13 @@ mod tests {
 
             actor TailA owns TailAState {
                 entry hold() emits none {
-                    require(value >= 0);
+                    require(amount >= 0);
                 }
             }
 
             actor TailB owns TailBState {
                 entry hold() emits none {
-                    require(value >= 0);
+                    require(amount >= 0);
                 }
             }
 
@@ -10146,7 +10239,7 @@ mod tests {
             "self-selector-variant",
             r#"
             state SharedState {
-                int value;
+                int amount;
             }
 
             actor enum NextActor {
@@ -10156,14 +10249,14 @@ mod tests {
 
             actor Worker owns SharedState {
                 entry inspect() emits none {
-                    require(value >= 0);
+                    require(amount >= 0);
                 }
             }
 
             actor Challenge owns SharedState {
                 entry choose(NextActor target) emits one NextActor {
                     SharedState next = {
-                        value: value + 1,
+                        amount: amount + 1,
                     };
                     become target(next);
                 }
@@ -10898,11 +10991,11 @@ mod tests {
             }
 
             state ChildState {
-                int value;
+                int amount;
             }
 
             actor Launcher owns LauncherState {
-                entry launch(int value)
+                entry launch(int amount)
                 spawns child_group by child_id {
                     outputs {
                         child: Child,
@@ -10910,8 +11003,8 @@ mod tests {
                     }
                 }
                 emits one Launcher {
-                    ChildState child_state = { value: value };
-                    ChildState sibling_state = { value: value + 1 };
+                    ChildState child_state = { amount: amount };
+                    ChildState sibling_state = { amount: amount + 1 };
                     LauncherState next = { launches: launches + 1 };
                     require child_group.outputs become {
                         child <- Child(child_state),
@@ -10976,19 +11069,19 @@ mod tests {
             "fixed_actor_self_spawn",
             r#"
             state NodeState {
-                int value;
+                int amount;
             }
 
             actor Node owns NodeState {
-                entry fork(int next_value)
+                entry fork(int next_amount)
                 spawns child_group by child_id {
                     outputs {
                         child: Node,
                     }
                 }
                 emits one Node {
-                    NodeState child = { value: next_value };
-                    NodeState next = { value: next_value + 1 };
+                    NodeState child = { amount: next_amount };
+                    NodeState next = { amount: next_amount + 1 };
                     require child_group.outputs become {
                         child <- Node(child),
                     };

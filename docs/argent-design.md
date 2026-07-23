@@ -119,6 +119,54 @@ Declarations put the type before the declared name. Value, role, and route
 bindings put the local name on the left. Commas separate items in binding
 lists. Semicolons terminate declarations and statements.
 
+## Execution context ladder
+
+Silverscript provides `tx` and `this`. Argent adds `self`. Together, these names
+form an abstraction ladder:
+
+```text
+tx      complete transaction
+this    active consensus input and script
+self    logical Argent actor
+```
+
+For example, `tx.outputs[i].value` reads the transaction, and
+`this.activeInputIndex` identifies the input that runs the script.
+
+The ladder moves through three abstraction levels. `tx` exposes the complete
+transaction. `this` identifies the active input and script. `self` presents the
+active input as a logical Argent actor.
+
+`self` is a context namespace. It is not an actor handle or another first-class
+actor value. Its valid and reserved members are:
+
+```text
+self.value  // Native KAS value of the UTXO consumed by the active input.
+            // Type: int.
+self.state  // Complete typed source-level state owned by the actor.
+            // Type: the state named in the actor's owns clause.
+self.cov_id // Reserved.
+self.type   // Reserved.
+self.ref    // Reserved.
+```
+
+An actor's effective top-level state cannot declare `state`, `value`, `cov_id`,
+`type`, or `ref` as a field. This rule also applies to base fields and expansion
+slots that are exposed by an expanded owned state.
+
+The rule does not apply to fields of a nested state value. For example, the
+`value` field below is valid because it is accessed through `payload`:
+
+```rust
+state Payload {
+    int value;
+}
+
+state WalletState {
+    Payload payload;
+}
+```
+
 ## Template hash rule
 
 Template hashes must exclude all instance state, including hidden template fields.
@@ -155,8 +203,6 @@ Open questions:
 - Do we need explicit source syntax for privileged bootstrap/handoff paths?
 - How should generated code prevent user code from accidentally shadowing hidden
   field names?
-- Should `self.state` include hidden ABI state implicitly, or mean only user
-  state with compiler-added ABI fields copied around it?
 
 ## Bootstrap and launch proofs
 

@@ -9,7 +9,7 @@ contract Controller(
     // :: state layouts
     struct PairState {
         // :: user declared fields
-        int value;
+        int amount;
     }
 
     // :: route templates
@@ -21,11 +21,11 @@ contract Controller(
     // :: entrypoints
     // :: leader entry (1:N)
     entrypoint function launch(
-        int first_left_value,
-        int first_right_value,
-        int second_value,
-        int third_left_value,
-        int third_right_value,
+        int first_left_amount,
+        int first_right_amount,
+        int second_amount,
+        int third_left_amount,
+        int third_right_amount,
         int gen__first_pair_left_output_idx,
         int gen__first_pair_right_output_idx,
         int gen__second_pair_pair_output_idx,
@@ -88,23 +88,23 @@ contract Controller(
 
         PairState first_left = {
             // :: user declared fields
-            value: first_left_value,
+            amount: first_left_amount,
         };
         PairState first_right = {
             // :: user declared fields
-            value: first_right_value,
+            amount: first_right_amount,
         };
         PairState second = {
             // :: user declared fields
-            value: second_value,
+            amount: second_amount,
         };
         PairState third_left = {
             // :: user declared fields
-            value: third_left_value,
+            amount: third_left_amount,
         };
         PairState third_right = {
             // :: user declared fields
-            value: third_right_value,
+            amount: third_right_amount,
         };
         State next = {
             // :: user declared fields

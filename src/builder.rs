@@ -676,10 +676,10 @@ mod tests {
         let genesis_spk = ScriptPublicKey::new(0, vec![OpTrue].into());
         let context = TxContext::new()
             .input(funding_outpoint, funding_utxo, Vec::new(), 0)
-            .actor_genesis_output(0, "launch::pair", "Pair", state! { value: 7 }, 2_000)
+            .actor_genesis_output(0, "launch::pair", "Pair", state! { amount: 7 }, 2_000)
             .output(unrelated_spk, None, 1_000)
             .genesis_output(0, "launch::pair", genesis_spk.clone(), 500)
-            .actor_genesis_output(0, "launch::pair", "Pair", state! { value: 8 }, 2_000)
+            .actor_genesis_output(0, "launch::pair", "Pair", state! { amount: 8 }, 2_000)
             .genesis_output(0, "launch::other", genesis_spk, 500);
 
         let transaction = builder.build(&context).expect("ordinary input launches both named covenant groups");
@@ -703,7 +703,7 @@ mod tests {
                 Vec::new(),
                 0,
             )
-            .actor_genesis_output(0, "pair", "Pair", state! { value: 7 }, 2_000);
+            .actor_genesis_output(0, "pair", "Pair", state! { amount: 7 }, 2_000);
         let err = builder.build(&invalid_path).expect_err("genesis paths require the launch namespace");
         assert!(matches!(err, BuilderError::InvalidGenesisPath(ref path) if path == "pair"), "unexpected error: {err}");
 
@@ -714,7 +714,7 @@ mod tests {
                 Vec::new(),
                 0,
             )
-            .actor_genesis_output(1, "launch::pair", "Pair", state! { value: 7 }, 2_000);
+            .actor_genesis_output(1, "launch::pair", "Pair", state! { amount: 7 }, 2_000);
         let err = builder.build(&missing_input).expect_err("launch paths must name an existing authorizing input");
         assert!(
             matches!(err, BuilderError::GenesisAuthorizingInputOutOfRange { authorizing_input: 1, input_count: 1 }),
@@ -744,8 +744,8 @@ mod tests {
             pair_type: pair_type,
             launches: 1,
         };
-        let left_pair_state = state! { value: 42 };
-        let right_pair_state = state! { value: 43 };
+        let left_pair_state = state! { amount: 42 };
+        let right_pair_state = state! { amount: 43 };
         let controller_utxo = builder
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");
@@ -846,7 +846,7 @@ mod tests {
             0,
             "spawn::new_pair",
             "pair_app::Pair",
-            state! { value: 42 },
+            state! { amount: 42 },
             2_000,
         );
         let err = builder.build(&ordinary_spawn).expect_err("spawn paths require an actor authorizing input");
@@ -878,7 +878,7 @@ mod tests {
                 0,
             )
             .actor_output("Launcher", state! { launches: 1 }, CovenantBinding::new(0, launcher_id), 3_000)
-            .actor_genesis_output(0, "spawn::child_group", "Child", state! { value: 42 }, 2_000);
+            .actor_genesis_output(0, "spawn::child_group", "Child", state! { amount: 42 }, 2_000);
 
         let transaction = builder.build(&context).expect("static actor spawn executes");
         let child_id = covenant_id(launcher_outpoint, [(1, &transaction.outputs[1])].into_iter());
@@ -915,9 +915,9 @@ mod tests {
         let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
         let controller_state = state! { pair_type: pair_type.clone(), launches: 0 };
         let next_controller_state = state! { pair_type: pair_type, launches: 3 };
-        let first_left_state = state! { value: 11 };
-        let first_right_state = state! { value: 12 };
-        let second_state = state! { value: 21 };
+        let first_left_state = state! { amount: 11 };
+        let first_right_state = state! { amount: 12 };
+        let second_state = state! { amount: 21 };
         // Matching states let the adversarial execution reuse the first group
         // for the third clause without failing output-state validation first.
         let third_left_state = first_left_state.clone();
@@ -1074,11 +1074,11 @@ mod tests {
         let pair_type = builder.actor_type_handle("pair_app::Pair", "PairState").expect("pair type handle resolves");
         let controller_state = state! { pair_type: pair_type.clone(), launches: 0 };
         let next_controller_state = state! { pair_type: pair_type, launches: 3 };
-        let first_left_state = state! { value: 11 };
-        let first_right_state = state! { value: 12 };
-        let second_state = state! { value: 21 };
-        let third_left_state = state! { value: 31 };
-        let third_right_state = state! { value: 32 };
+        let first_left_state = state! { amount: 11 };
+        let first_right_state = state! { amount: 12 };
+        let second_state = state! { amount: 21 };
+        let third_left_state = state! { amount: 31 };
+        let third_right_state = state! { amount: 32 };
         let controller_utxo = builder
             .covenant_utxo("controller_app::Controller", controller_state.clone(), 10_000, 0, false, Some(controller_id))
             .expect("controller UTXO builds");

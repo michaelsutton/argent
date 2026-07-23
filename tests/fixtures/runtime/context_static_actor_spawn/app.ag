@@ -3,11 +3,11 @@ state LauncherState {
 }
 
 state ChildState {
-    int value;
+    int amount;
 }
 
 actor Launcher owns LauncherState {
-    entry launch(int value)
+    entry launch(int amount)
     spawns child_group by child_id {
         outputs {
             child: Child,
@@ -15,7 +15,7 @@ actor Launcher owns LauncherState {
     }
     emits one Launcher {
         ChildState child_state = {
-            value: value,
+            amount: amount,
         };
         LauncherState next = {
             launches: launches + 1,

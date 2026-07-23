@@ -4,11 +4,11 @@ state ControllerState {
 }
 
 state PairState {
-    int value;
+    int amount;
 }
 
 actor Controller owns ControllerState {
-    entry launch(int left_value, int right_value)
+    entry launch(int left_amount, int right_amount)
     spawns new_pair by pair_id {
         outputs {
             left: self.pair_type,
@@ -17,10 +17,10 @@ actor Controller owns ControllerState {
     }
     emits one Controller {
         PairState left = {
-            value: left_value,
+            amount: left_amount,
         };
         PairState right = {
-            value: right_value,
+            amount: right_amount,
         };
         ControllerState next = {
             pair_type: pair_type,
