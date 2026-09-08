@@ -174,6 +174,18 @@ impl IntoArtifactValue for BTreeMap<String, ArtifactValue> {
     }
 }
 
+impl IntoArtifactValue for Vec<BTreeMap<String, ArtifactValue>> {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Array(self.into_iter().map(ArtifactValue::Object).collect())
+    }
+}
+
+impl IntoArtifactValue for &[BTreeMap<String, ArtifactValue>] {
+    fn into_artifact_value(self) -> ArtifactValue {
+        ArtifactValue::Array(self.iter().cloned().map(ArtifactValue::Object).collect())
+    }
+}
+
 /// Build an Argent source-state object for `TxBuilder` calls.
 ///
 /// Returns a `BTreeMap<String, ArtifactValue>` keyed by Argent source field
@@ -214,6 +226,19 @@ macro_rules! state {
 /// // Builds:
 /// // vec![ArgValue::Value(ArtifactValue::Int(3)), ArgValue::Actor("Alpha".to_string())]
 /// let args = args![3, actor("Alpha")];
+/// ```
+///
+/// Vectors and slices of source-state maps become one array argument. Byte
+/// vectors and slices retain their bytes representation. Borrowed state maps
+/// are cloned into owned ABI objects.
+///
+/// ```
+/// use argent_runtime::{args, state};
+///
+/// let next_states = vec![state! { amount: 90 }, state! { amount: 10 }];
+/// let witness = vec![0u8; 65];
+/// let arguments = args![next_states.as_slice(), witness];
+/// assert_eq!(arguments.len(), 2);
 /// ```
 #[macro_export]
 macro_rules! args {
@@ -2086,6 +2111,28 @@ mod tests {
                 ArgValue::Actor("Alpha".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn args_macro_converts_state_vectors_and_slices_and_preserves_bytes() {
+        let first = state! { amount: 90 };
+        let second = state! { amount: 10 };
+        let states = vec![first.clone(), second.clone()];
+        let bytes = vec![0u8, 1];
+        let expected = vec![
+            ArgValue::Value(ArtifactValue::Array(vec![ArtifactValue::Object(first), ArtifactValue::Object(second)])),
+            ArgValue::Value(ArtifactValue::Bytes(bytes.clone())),
+        ];
+        assert_eq!(args![states.as_slice(), bytes.as_slice()], expected);
+        assert_eq!(args![states, bytes], expected);
+    }
+
+    #[test]
+    fn args_macro_converts_empty_state_vectors_and_slices() {
+        let states: Vec<BTreeMap<String, ArtifactValue>> = Vec::new();
+        let expected = vec![ArgValue::Value(ArtifactValue::Array(Vec::new()))];
+        assert_eq!(args![states.as_slice()], expected);
+        assert_eq!(args![states], expected);
     }
 
     #[test]

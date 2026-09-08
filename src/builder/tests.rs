@@ -655,8 +655,7 @@ fn context_executes_source_state_arguments_without_exposing_generated_fields() {
     let covenant_id = Hash::from_bytes([0x45; 32]);
     let input_value = 1_000;
     let initial = state! { nonce: 0 };
-    let state_array =
-        |nonces: &[i64]| ArtifactValue::Array(nonces.iter().map(|nonce| ArtifactValue::Object(state! { nonce: *nonce })).collect());
+    let state_array = |nonces: &[i64]| nonces.iter().map(|nonce| state! { nonce: *nonce }).collect::<Vec<_>>();
 
     let scalar_utxo =
         builder.covenant_utxo("Note", initial.clone(), input_value, 0, false, Some(covenant_id)).expect("scalar Note UTXO builds");
@@ -712,11 +711,12 @@ fn context_executes_source_state_arguments_without_exposing_generated_fields() {
     let dynamic_utxo = builder
         .covenant_utxo("Note", initial.clone(), input_value, 0, false, Some(covenant_id))
         .expect("dynamic-array Note UTXO builds");
+    let dynamic_states = state_array(&[2, 5, 9]);
     let dynamic = TxContext::new()
         .actor_input(
             "Note",
             initial,
-            EntryCall::new("choose_dynamic").args(args![state_array(&[2, 5, 9])]),
+            EntryCall::new("choose_dynamic").args_with(|_, _| args![dynamic_states.as_slice()]),
             TransactionOutpoint::new(TransactionId::from_bytes([0x47; 32]), 0),
             dynamic_utxo,
             0,
