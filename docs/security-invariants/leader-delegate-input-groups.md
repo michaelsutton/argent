@@ -35,10 +35,11 @@ outputs.
 ## Model
 
 - `c` is the active covenant ID.
-- `I(c)` is the ordered list of transaction inputs carrying `c`.
+- `I(c)` is the ordered list of transaction input indices carrying `c`.
 - `O(c)` is the set of continuation outputs carrying `c`. Genesis outputs are
   not members of `O(c)`.
-- `A(i)` is the set of outputs in `O(c)` authorized by input `i`.
+- For `i ∈ I(c)`, `A(i)` is the set of outputs in `O(c)` authorized by
+  transaction input `i`.
 - Every continuation output has one authorizer. Therefore `A(i) ⊆ O(c)`, and
   `A(i)` and `A(j)` are disjoint for distinct inputs `i` and `j`.
 - `m(e)` is the minimum number of current-covenant continuations permitted by
@@ -84,20 +85,20 @@ outputs.
    OpCovOutputCount(c) == OpAuthOutputCount(l)
    ```
 
-   **[NOT IMPLEMENTED]**
+   ***[NOT IMPLEMENTED]***
 
-6. **Rule 6 — Zero-continuation isolation.** An otherwise-batchable,
-   consumes-free ordinary entry on a delegate-capable actor requires
-   `|I(c)| = 1` when `m(e) = 0`. This includes `emits none`, zero-minimum output
-   ranges, and spawn-only entries.
+6. **Rule 6 — Zero-continuation position.** An otherwise-batchable,
+   consumes-free ordinary entry on a delegate-capable actor requires its active
+   input `i` to equal `I(c)[0]` when `m(e) = 0`. This includes `emits none`,
+   zero-minimum output ranges, and spawn-only entries.
 
    Generated Silverscript expresses this as:
 
    ```text
-   OpCovInputCount(c) == 1
+   OpCovInputIdx(c, 0) == this.activeInputIndex
    ```
 
-   **[NOT IMPLEMENTED]**
+   ***[NOT IMPLEMENTED]***
 
 ## Security properties
 
@@ -114,8 +115,9 @@ outputs.
 5. **Property 5 — Spawn compatibility.** Genesis outputs created by `spawns`
    remain valid because they are outside `O(c)` and every `A(i)`.
 6. **Property 6 — Minimal batching restriction.** Continuation closure does not
-   restrict independent batches. Among otherwise-batchable entries, only
-   zero-capable entries on delegate-capable actors lose batching.
+   restrict independent batches. Rule 6 requires an otherwise-batchable,
+   zero-capable entry to execute first, but does not require it to be the only
+   input in its covenant group.
 7. **Property 7 — Actor-level scope.** Delegation authenticates actor contracts,
    not entrypoint dispatch tags. Compatible leader or delegate entries on the
    same actor remain intentionally indistinguishable.
@@ -147,9 +149,8 @@ Consider an ordinary entry selected at a delegate position:
 - If it is consumes-free and `m(e) > 0`, Rule 4 gives it at least one output in
   `A(i)`. That output is not in the disjoint `A(l)`, which contradicts Claim 1.
 - If it is consumes-free and `m(e) = 0`, Rule 3 already isolates it when its
-  actor is also a leader actor. Otherwise, Rule 6 isolates it because its actor
-  is delegate-capable. Both cases require `|I(c)| = 1`, while a delegated
-  transition has at least a leader and this delegate position.
+  actor is also a leader actor. Otherwise, Rule 6 requires it to execute at
+  `I(c)[0]`. Neither case permits execution at a nonzero delegate position.
 
 All cases fail. This proves the ordinary-entry exclusion in Property 4.
 
@@ -180,9 +181,10 @@ their own `A(i)` sets through the cheaper authorization-output opcodes.
 
 A continuing ordinary entry on a delegate-capable actor also remains batchable.
 If it replaces a delegate in a coordinated transition, its nonempty `A(i)`
-violates Claim 1. Rule 6 adds a one-input restriction only when the entry could
-produce no continuation and would otherwise look like an outputless delegate.
-This proves Property 6.
+violates Claim 1. A zero-capable entry could otherwise look like an outputless
+delegate, so Rule 6 requires it to lead its covenant group. It may still share
+that group with other entries that remain batchable, but two entries subject to
+Rule 6 cannot both occupy its first position. This proves Property 6.
 
 The remaining limit is intentional. If several delegate entries on one actor
 trust the same leader actor, any one of them may be selected. Two coordinated
