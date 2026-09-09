@@ -91,6 +91,12 @@ outputs.
    `|I(c)| = 1` when `m(e) = 0`. This includes `emits none`, zero-minimum output
    ranges, and spawn-only entries.
 
+   Generated Silverscript expresses this as:
+
+   ```text
+   OpCovInputCount(c) == 1
+   ```
+
    **[NOT IMPLEMENTED]**
 
 ## Security properties
