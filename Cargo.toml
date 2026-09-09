@@ -1,14 +1,14 @@
-[package]
-name = "argent"
+[workspace]
+members = [".", "crates/argent-artifact", "crates/argent-runtime"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.0"
 license = "ISC"
 authors = ["Argent-lang developers"]
-
-[workspace]
-members = [".", "crates/argent-artifact", "crates/argent-runtime"]
-resolver = "3"
+repository = "https://github.com/argent-lang/argent"
 
 [workspace.dependencies]
 argent-artifact = { path = "crates/argent-artifact" }
@@ -27,6 +27,15 @@ serde_json = "1"
 silverscript-abi = { git = "https://github.com/kaspanet/silverscript", rev = "158534d606e9d5541e932c7575ff331e12699fb5", package = "silverscript-abi" }
 silverscript-lang = { git = "https://github.com/kaspanet/silverscript", rev = "158534d606e9d5541e932c7575ff331e12699fb5", package = "silverscript-lang" }
 thiserror = "2"
+
+[package]
+name = "argent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [lib]
 name = "argent"
