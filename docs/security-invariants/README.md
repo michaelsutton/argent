@@ -54,8 +54,9 @@ witness and use `readInputStateWithTemplate`.
 ## Leader and delegate input groups
 
 Delegate entries authenticate a coordinating actor without authorizing outputs
-of their own. Argent closes coordinated same-covenant input groups because an
-input cannot safely determine which entrypoint another input selected.
+of their own. Argent closes coordinated same-covenant input and continuation
+groups because an input cannot safely determine which entrypoint another input
+selected.
 
 The complete argument is in
 [Leader and delegate input groups](leader-delegate-input-groups.md).
