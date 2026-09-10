@@ -9,9 +9,11 @@
 //! families, or hidden-field roles into `silverscript-abi`. Store them here as
 //! metadata that points at Sil ABI contract and field names.
 
+mod cardinality;
 mod template_frames;
 mod verify_spawns;
 
+pub use cardinality::{ArtifactCardinalityError, MAX_ENTRY_RANGE_CARDINALITY};
 pub use template_frames::{TemplateFrameLengths, TemplateFrameVerificationError};
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,8 @@ pub struct Artifact {
 pub enum ArtifactVerificationError {
     #[error(transparent)]
     Version(#[from] ArtifactVersionError),
+    #[error(transparent)]
+    Cardinality(#[from] ArtifactCardinalityError),
     #[error(transparent)]
     SilAbi(#[from] SilAbiVerificationError),
     #[error(transparent)]
@@ -114,22 +118,23 @@ fn is_false(value: &bool) -> bool {
 }
 
 impl Artifact {
-    /// Verifies the complete portable Argent artifact.
+    /// Checks the complete portable Argent artifact for internal consistency.
     ///
-    /// Verification checks consistency between the artifact's schema, ABI,
-    /// template plan, compiled frames, and declared identity. It assumes the
-    /// artifact was produced by supported Argent and Silverscript compilers and
-    /// may rely on their representation invariants.
+    /// The check compares the artifact's schema, interaction cardinalities,
+    /// ABI, template plan, compiled frames, and declared identity. It assumes
+    /// the artifact was produced by supported Argent and Silverscript compilers
+    /// and may rely on their representation invariants.
     ///
     /// This method does not prove that the embedded bytecode was generated from
     /// the recorded source or make an attacker-supplied artifact trustworthy.
     /// Consumers must obtain the artifact from a trusted build or compare its
     /// computed identity with a separately trusted identity.
-    pub fn verify(&self) -> std::result::Result<(), ArtifactVerificationError> {
+    pub fn check_consistency(&self) -> std::result::Result<(), ArtifactVerificationError> {
         self.check_schema_version()?;
-        self.verify_sil_abi()?;
+        self.check_sil_abi_consistency()?;
         self.verify_template_frames()?;
-        self.verify_template_plan()?;
+        self.check_template_plan_consistency()?;
+        self.check_cardinality_consistency()?;
         self.verify_id()?;
         Ok(())
     }
@@ -145,12 +150,12 @@ impl Artifact {
         self.sil_abi.check_schema_version()
     }
 
-    pub fn verify_template_plan(&self) -> std::result::Result<(), TemplatePlanError> {
-        self.argent.template_plan.verify(self)
+    pub fn check_template_plan_consistency(&self) -> std::result::Result<(), TemplatePlanError> {
+        self.argent.template_plan.check_consistency(self)
     }
 
-    pub fn verify_sil_abi(&self) -> std::result::Result<(), SilAbiVerificationError> {
-        self.sil_abi.verify()
+    pub fn check_sil_abi_consistency(&self) -> std::result::Result<(), SilAbiVerificationError> {
+        self.sil_abi.check_consistency()
     }
 
     /// Verifies that local actor frames are unambiguous under Argent's
@@ -747,12 +752,6 @@ pub struct EmitOutputArtifact {
     pub cardinality: CardinalityArtifact,
 }
 
-/// Maximum range cardinality accepted by Argent compilers and runtimes.
-///
-/// Keeping the limit in the portable artifact layer prevents compiler and
-/// consumer implementations from drifting on generated-loop resource bounds.
-pub const MAX_ENTRY_RANGE_CARDINALITY: i64 = 512;
-
 /// Resolved transaction cardinality of one named interaction handle.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -936,7 +935,7 @@ pub enum ArtifactIdentityError {
 }
 
 impl TemplatePlanArtifact {
-    /// Verifies that this template plan is a complete and internally consistent
+    /// Checks that this template plan is a complete and internally consistent
     /// coordination view of the containing artifact.
     ///
     /// Within supported compiler output, the embedded Silverscript ABI is the
@@ -944,10 +943,10 @@ impl TemplatePlanArtifact {
     /// that template receipts, actor-type handles, route metadata, spawn groups,
     /// and witness recipes agree with that ABI and with each other.
     ///
-    /// Like `Artifact::verify`, this is a consistency check that may rely on
+    /// Like `Artifact::check_consistency`, this check may rely on
     /// compiler-enforced invariants. It does not attest compilation provenance or
     /// validate arbitrary attacker-supplied bytecode.
-    pub fn verify(&self, artifact: &Artifact) -> std::result::Result<(), TemplatePlanError> {
+    pub fn check_consistency(&self, artifact: &Artifact) -> std::result::Result<(), TemplatePlanError> {
         use std::collections::{BTreeMap, BTreeSet};
 
         // TODO: Extract template receipt and actor-type handle verification into dedicated helpers.
@@ -2163,7 +2162,7 @@ mod tests {
         let mut artifact = empty_artifact();
         artifact.id = artifact.computed_id_hex().expect("artifact id computes");
 
-        artifact.verify().expect("complete artifact verifies");
+        artifact.check_consistency().expect("complete artifact is consistent");
     }
 
     #[test]
@@ -2183,7 +2182,7 @@ mod tests {
         });
 
         assert!(matches!(
-            artifact.verify(),
+            artifact.check_consistency(),
             Err(ArtifactVerificationError::TemplatePlan(TemplatePlanError::UnknownContract(contract)))
                 if contract == "Missing"
         ));
@@ -2194,7 +2193,7 @@ mod tests {
         let artifact = empty_artifact();
 
         assert!(matches!(
-            artifact.verify(),
+            artifact.check_consistency(),
             Err(ArtifactVerificationError::Identity(ArtifactIdentityError::MissingArtifactId { app }))
                 if app == "Tiny"
         ));
@@ -2305,7 +2304,7 @@ mod tests {
             },
         };
 
-        artifact.verify_template_plan().expect("missing runtime state plan means all fields are source");
+        artifact.check_template_plan_consistency().expect("missing runtime state plan means all fields are source");
     }
 
     #[test]
@@ -2319,7 +2318,7 @@ mod tests {
             actors: vec!["Mux".to_string(), "Mux".to_string()],
         }]);
 
-        let err = artifact.verify_template_plan().expect_err("duplicate actor must be rejected");
+        let err = artifact.check_template_plan_consistency().expect_err("duplicate actor must be rejected");
         assert_eq!(
             err,
             TemplatePlanError::DuplicateRouteFamilyActor { id: "route_family/BoardState/mux".to_string(), actor: "Mux".to_string() }
@@ -2337,7 +2336,7 @@ mod tests {
             actors: vec!["Mux".to_string(), "Player".to_string()],
         }]);
 
-        let err = artifact.verify_template_plan().expect_err("foreign representative must be rejected");
+        let err = artifact.check_template_plan_consistency().expect_err("foreign representative must be rejected");
         assert_eq!(
             err,
             TemplatePlanError::RouteFamilyRepresentativeOutsideFamily {
@@ -2358,7 +2357,7 @@ mod tests {
             actors: vec!["Mux".to_string(), "Player".to_string()],
         }]);
 
-        let err = artifact.verify_template_plan().expect_err("state mismatch must be rejected");
+        let err = artifact.check_template_plan_consistency().expect_err("state mismatch must be rejected");
         assert_eq!(
             err,
             TemplatePlanError::RouteFamilyStateMismatch {
@@ -2549,7 +2548,7 @@ mod tests {
             },
         };
 
-        let err = artifact.verify_template_plan().expect_err("nested family tables must be rejected");
+        let err = artifact.check_template_plan_consistency().expect_err("nested family tables must be rejected");
         assert_eq!(
             err,
             TemplatePlanError::NestedRouteFamilyLeaf {

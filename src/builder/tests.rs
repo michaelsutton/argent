@@ -2091,7 +2091,7 @@ fn context_spawns_a_static_actor_from_a_linked_app() {
         launcher_artifact.argent.interfaces.imports[0].fingerprint_hex,
         child_artifact.argent.interfaces.exports[0].fingerprint_hex
     );
-    launcher_artifact.verify_template_plan().expect("linked static-spawn template plan verifies");
+    launcher_artifact.check_template_plan_consistency().expect("linked static-spawn template plan verifies");
     let mut malformed_target = launcher_artifact.clone();
     let Some(ActorTargetArtifact::StaticActor { app, .. }) =
         &mut malformed_target.argent.actors[0].entries[0].spawns[0].outputs[0].target
@@ -2100,7 +2100,7 @@ fn context_spawns_a_static_actor_from_a_linked_app() {
     };
     *app = "OtherApp".to_string();
     assert!(
-        matches!(malformed_target.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+        matches!(malformed_target.check_template_plan_consistency(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
         "linked spawn metadata must agree with its shared actor-template witnesses"
     );
     assert_eq!(
@@ -2937,7 +2937,7 @@ fn gate_less_route_family_rejects_selector_for_appended_rep() {
 #[test]
 fn builder_rejects_template_plan_hash_mismatch() {
     let mut artifact = tickets_artifact();
-    artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+    artifact.check_template_plan_consistency().expect("fixture receipt verifies before mutation");
     let issuer_receipt = artifact
         .argent
         .template_plan
@@ -2965,7 +2965,7 @@ fn builder_rejects_template_plan_hash_mismatch() {
 #[test]
 fn builder_rejects_sil_template_hash_mismatch() {
     let mut artifact = tickets_artifact();
-    artifact.verify_sil_abi().expect("fixture Sil ABI verifies before mutation");
+    artifact.check_sil_abi_consistency().expect("fixture Sil ABI is consistent before mutation");
     let issuer_contract = artifact.sil_abi.contracts.get_mut("Issuer").expect("Issuer Sil contract exists");
     issuer_contract.compiled.template_hash = [0; 32];
     let issuer_receipt = artifact
@@ -2995,7 +2995,7 @@ fn builder_rejects_sil_template_hash_mismatch() {
 #[test]
 fn builder_rejects_route_template_table_mismatch() {
     let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-table-plan");
-    artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+    artifact.check_template_plan_consistency().expect("fixture receipt verifies before mutation");
     let table = artifact
         .argent
         .template_plan
@@ -3027,7 +3027,7 @@ fn builder_rejects_route_template_table_mismatch() {
 #[test]
 fn builder_rejects_route_template_merkle_proof_mismatch() {
     let mut artifact = example_artifact("examples/toy_chess/app.ag", "toy-chess-route-proof-plan");
-    artifact.verify_template_plan().expect("fixture receipt verifies before mutation");
+    artifact.check_template_plan_consistency().expect("fixture receipt verifies before mutation");
     let proof = artifact
         .argent
         .template_plan

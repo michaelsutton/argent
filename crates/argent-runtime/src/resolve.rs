@@ -934,12 +934,11 @@ mod tests {
     use std::{cell::Cell, collections::BTreeMap};
 
     use argent_artifact::{
-        ARTIFACT_SCHEMA_VERSION, ActorAbiRefArtifact, ActorArtifact, ActorTargetArtifact, ArgentArtifact, CardinalityArtifact,
-        CompiledContractArtifact, ConsumeArtifact, CovenantIdSourceArtifact, DispatchTag, EmitArtifact, EmitOutputArtifact,
-        EntryAbiRefArtifact, EntryArtifact, EntryKindArtifact, EntryRefArtifact, EntryRoutePlanArtifact, GeneratorArtifact,
-        InterfaceSetArtifact, ObserveArtifact, ObservedActorArtifact, RuntimeFieldArtifact, RuntimeStateArtifact,
-        SIL_ABI_SCHEMA_VERSION, SilAbiArtifact, SilContractArtifact, SilEntryArtifact, SpawnArtifact, SpawnOutputArtifact,
-        StateSpanArtifact, TemplatePlanArtifact, TemplateSelectorArtifact, TypeArtifact,
+        ARTIFACT_SCHEMA_VERSION, ActorAbiRefArtifact, ActorArtifact, ArgentArtifact, CardinalityArtifact, CompiledContractArtifact,
+        ConsumeArtifact, DispatchTag, EmitArtifact, EntryAbiRefArtifact, EntryArtifact, EntryKindArtifact, EntryRefArtifact,
+        EntryRoutePlanArtifact, GeneratorArtifact, InterfaceSetArtifact, RuntimeFieldArtifact, RuntimeStateArtifact,
+        SIL_ABI_SCHEMA_VERSION, SilAbiArtifact, SilContractArtifact, SilEntryArtifact, StateSpanArtifact, TemplatePlanArtifact,
+        TemplateSelectorArtifact, TypeArtifact,
     };
     use kaspa_consensus_core::{
         Hash,
@@ -1188,146 +1187,6 @@ mod tests {
         assert!(matches!(
             builder.validate_leader_actor_input_counts(&resolved),
             Err(BuilderError::LeaderActorInputCardinalityMismatch { minimum: 2, maximum: 4, found: 5, .. })
-        ));
-    }
-
-    #[test]
-    fn artifact_attachment_rejects_invalid_or_runtime_unsupported_cardinality() {
-        let mut observed = artifact("primary", "Counter", "merge");
-        observed.argent.actors[0].entries[0].observes.push(ObserveArtifact {
-            name: "peers".to_string(),
-            covenant_expr: "peer_id".to_string(),
-            covenant_id_source: CovenantIdSourceArtifact::StateField { field: "peer_id".to_string() },
-            inputs: vec![ObservedActorArtifact {
-                name: "items".to_string(),
-                target: ActorTargetArtifact::StaticActor { app: "primary".to_string(), actor: "Counter".to_string() },
-                cardinality: CardinalityArtifact::Range { minimum: 1, maximum: 3 },
-            }],
-            outputs: Vec::new(),
-        });
-        observed.id = observed.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&observed),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "observed input",
-                ref handle,
-                ..
-            }) if handle == "peers.items"
-        ));
-
-        let mut spawned = artifact("primary", "Counter", "merge");
-        spawned.argent.actors[0].entries[0].spawns.push(SpawnArtifact {
-            name: "children".to_string(),
-            covenant: "child_id".to_string(),
-            outputs: vec![SpawnOutputArtifact {
-                name: "items".to_string(),
-                actor: "Counter".to_string(),
-                state: "CounterState".to_string(),
-                group_index: 0,
-                cardinality: CardinalityArtifact::Range { minimum: 1, maximum: 3 },
-                target: Some(ActorTargetArtifact::StaticActor { app: "primary".to_string(), actor: "Counter".to_string() }),
-            }],
-        });
-        assert!(matches!(
-            crate::validate_runtime_cardinality_support("primary", &spawned),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "spawn output",
-                ref handle,
-                ..
-            }) if handle == "children.items"
-        ));
-
-        let mut delegate = artifact("primary", "Counter", "merge");
-        let entry = &mut delegate.argent.actors[0].entries[0];
-        entry.kind = EntryKindArtifact::Delegate;
-        entry.consumes.push(ConsumeArtifact {
-            name: "items".to_string(),
-            actor: "Counter".to_string(),
-            cardinality: CardinalityArtifact::Range { minimum: 1, maximum: 3 },
-        });
-        assert!(matches!(
-            crate::validate_runtime_cardinality_support("primary", &delegate),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "delegate consume",
-                ref handle,
-                ..
-            }) if handle == "items"
-        ));
-
-        let mut malformed = artifact("primary", "Counter", "merge");
-        malformed.argent.actors[0].entries[0].consumes.push(ConsumeArtifact {
-            name: "items".to_string(),
-            actor: "Counter".to_string(),
-            cardinality: CardinalityArtifact::Range { minimum: -1, maximum: 3 },
-        });
-        malformed.id = malformed.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&malformed),
-            Err(BuilderError::InvalidArtifactCardinality { section: "consume", minimum: -1, maximum: 3, .. })
-        ));
-
-        let mut oversized = artifact("primary", "Counter", "merge");
-        oversized.argent.actors[0].entries[0].consumes.push(ConsumeArtifact {
-            name: "items".to_string(),
-            actor: "Counter".to_string(),
-            cardinality: CardinalityArtifact::Range { minimum: 0, maximum: argent_artifact::MAX_ENTRY_RANGE_CARDINALITY + 1 },
-        });
-        oversized.id = oversized.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&oversized),
-            Err(BuilderError::InvalidArtifactCardinality { section: "consume", minimum: 0, maximum, .. })
-                if maximum == argent_artifact::MAX_ENTRY_RANGE_CARDINALITY + 1
-        ));
-
-        let mut multiple_consumes = artifact("primary", "Counter", "merge");
-        multiple_consumes.argent.actors[0].entries[0].consumes = ["first", "second"]
-            .into_iter()
-            .map(|name| ConsumeArtifact {
-                name: name.to_string(),
-                actor: "Counter".to_string(),
-                cardinality: CardinalityArtifact::Range { minimum: 0, maximum: 2 },
-            })
-            .collect();
-        multiple_consumes.id = multiple_consumes.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&multiple_consumes),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "consume",
-                ref handle,
-                ..
-            }) if handle == "second"
-        ));
-
-        let ranged_output = |name: &str, actors: &[&str]| EmitOutputArtifact {
-            name: name.to_string(),
-            auth_index: None,
-            actors: actors.iter().map(|actor| (*actor).to_string()).collect(),
-            cardinality: CardinalityArtifact::Range { minimum: 0, maximum: 2 },
-        };
-        let mut multiple_outputs = artifact("primary", "Counter", "merge");
-        multiple_outputs.argent.actors[0].entries[0].emits =
-            EmitArtifact::Outputs { outputs: vec![ranged_output("first", &["Counter"]), ranged_output("second", &["Counter"])] };
-        multiple_outputs.id = multiple_outputs.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&multiple_outputs),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "emit",
-                ref handle,
-                ..
-            }) if handle == "second"
-        ));
-
-        let mut dynamic_output = artifact("primary", "Counter", "merge");
-        dynamic_output.argent.actors[0].entries[0].emits =
-            EmitArtifact::Outputs { outputs: vec![ranged_output("items", &["Counter", "Archive"])] };
-        dynamic_output.id = dynamic_output.computed_id_hex().expect("mutated artifact id computes");
-        assert!(matches!(
-            ArtifactBundle::new(&dynamic_output),
-            Err(BuilderError::UnsupportedArtifactCardinality {
-                section: "emit",
-                ref handle,
-                ..
-            }) if handle == "items"
         ));
     }
 

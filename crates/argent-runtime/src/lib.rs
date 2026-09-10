@@ -24,11 +24,10 @@ pub use context::{
 pub use silverscript_abi::ArtifactValue;
 
 use argent_artifact::{
-    ActorArtifact, ActorInterfaceArtifact, ActorTemplateArtifact, ArgentStateArtifact, ArtifactVerificationError, CardinalityArtifact,
-    EmitArtifact, EntryArtifact, EntryKindArtifact, HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact,
-    MAX_ENTRY_RANGE_CARDINALITY, ObserveArtifact, ObservedActorArtifact, ObservedActorSideArtifact, ObservedTargetArtifact,
-    RouteTemplateLeafArtifact, RouteTemplateProofArtifact, RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact,
-    SilEntryArtifact, fixed_runtime_context_value,
+    ActorArtifact, ActorInterfaceArtifact, ActorTemplateArtifact, ArgentStateArtifact, ArtifactVerificationError, EntryArtifact,
+    HiddenParamArtifact, HiddenParamPurposeArtifact, HiddenParamSubjectArtifact, ObserveArtifact, ObservedActorArtifact,
+    ObservedActorSideArtifact, ObservedTargetArtifact, RouteTemplateLeafArtifact, RouteTemplateProofArtifact,
+    RuntimeFieldRoleArtifact, RuntimeStatePlanArtifact, SilContractArtifact, SilEntryArtifact, fixed_runtime_context_value,
 };
 use kaspa_consensus_core::{
     Hash,
@@ -302,20 +301,6 @@ pub enum BuilderError {
     UnknownAppAlias(String),
     #[error("artifact `{app}` must be attached as `{expected}`, got `{found}`")]
     AppAliasMismatch { app: String, expected: String, found: String },
-    #[error(
-        "artifact bundle app `{app}` entry `{actor}::{entry}` has invalid cardinality {minimum}..={maximum} for {section} `{handle}`"
-    )]
-    InvalidArtifactCardinality {
-        app: Box<str>,
-        actor: String,
-        entry: String,
-        section: &'static str,
-        handle: Box<str>,
-        minimum: i64,
-        maximum: i64,
-    },
-    #[error("artifact bundle app `{app}` entry `{actor}::{entry}` uses unsupported ranged {section} interaction `{handle}`")]
-    UnsupportedArtifactCardinality { app: String, actor: String, entry: String, section: &'static str, handle: String },
     #[error(
         "artifact bundle app `{app}` requires dependency `{dependency}` artifact `{expected_artifact_id}`, but it is not attached"
     )]
@@ -670,7 +655,7 @@ impl<'a> ArtifactBundle<'a> {
         if alias != expected {
             return Err(BuilderError::AppAliasMismatch { app: primary.app.clone(), expected, found: alias });
         }
-        validate_artifact(&alias, primary)?;
+        check_artifact_consistency(&alias, primary)?;
         let apps = BTreeMap::from([(alias.clone(), primary)]);
         Ok(Self { primary_alias: alias, apps })
     }
@@ -684,7 +669,7 @@ impl<'a> ArtifactBundle<'a> {
         if self.apps.contains_key(&alias) {
             return Err(BuilderError::DuplicateAppAlias(alias));
         }
-        validate_artifact(&alias, artifact)?;
+        check_artifact_consistency(&alias, artifact)?;
         self.apps.insert(alias, artifact);
         Ok(self)
     }
@@ -1711,86 +1696,10 @@ impl<'a> TxBuilder<'a> {
     }
 }
 
-fn validate_artifact(app: &str, artifact: &Artifact) -> BuilderResult<()> {
-    artifact.verify().map_err(|source| BuilderError::ArtifactVerification { app: app.to_string(), source: Box::new(source) })?;
-    validate_runtime_cardinality_support(app, artifact)?;
-    Ok(())
-}
-
-fn validate_runtime_cardinality_support(app: &str, artifact: &Artifact) -> BuilderResult<()> {
-    for actor in &artifact.argent.actors {
-        for entry in &actor.entries {
-            let validate = |section, handle: &str, cardinality| {
-                if let CardinalityArtifact::Range { minimum, maximum } = cardinality
-                    && (minimum < 0 || minimum > maximum || maximum > MAX_ENTRY_RANGE_CARDINALITY)
-                {
-                    return Err(BuilderError::InvalidArtifactCardinality {
-                        app: app.into(),
-                        actor: actor.name.clone(),
-                        entry: entry.name.clone(),
-                        section,
-                        handle: handle.into(),
-                        minimum,
-                        maximum,
-                    });
-                }
-                Ok(())
-            };
-            let reject_unsupported_range = |section, handle: &str, cardinality| {
-                validate(section, handle, cardinality)?;
-                if matches!(cardinality, CardinalityArtifact::Range { .. }) {
-                    return Err(BuilderError::UnsupportedArtifactCardinality {
-                        app: app.to_string(),
-                        actor: actor.name.clone(),
-                        entry: entry.name.clone(),
-                        section,
-                        handle: handle.to_string(),
-                    });
-                }
-                Ok(())
-            };
-
-            let mut has_consume_range = false;
-            for consume in &entry.consumes {
-                if entry.kind == EntryKindArtifact::Delegate {
-                    reject_unsupported_range("delegate consume", &consume.name, consume.cardinality)?;
-                } else {
-                    validate("consume", &consume.name, consume.cardinality)?;
-                    if matches!(consume.cardinality, CardinalityArtifact::Range { .. }) {
-                        if has_consume_range {
-                            reject_unsupported_range("consume", &consume.name, consume.cardinality)?;
-                        }
-                        has_consume_range = true;
-                    }
-                }
-            }
-            if let EmitArtifact::Outputs { outputs } = &entry.emits {
-                let mut has_emit_range = false;
-                for output in outputs {
-                    validate("emit", &output.name, output.cardinality)?;
-                    if matches!(output.cardinality, CardinalityArtifact::Range { .. }) {
-                        if has_emit_range || output.actors.len() != 1 {
-                            reject_unsupported_range("emit", &output.name, output.cardinality)?;
-                        }
-                        has_emit_range = true;
-                    }
-                }
-            }
-            for observe in &entry.observes {
-                for input in &observe.inputs {
-                    reject_unsupported_range("observed input", &format!("{}.{}", observe.name, input.name), input.cardinality)?;
-                }
-                for output in &observe.outputs {
-                    reject_unsupported_range("observed output", &format!("{}.{}", observe.name, output.name), output.cardinality)?;
-                }
-            }
-            for spawn in &entry.spawns {
-                for output in &spawn.outputs {
-                    reject_unsupported_range("spawn output", &format!("{}.{}", spawn.name, output.name), output.cardinality)?;
-                }
-            }
-        }
-    }
+fn check_artifact_consistency(app: &str, artifact: &Artifact) -> BuilderResult<()> {
+    artifact
+        .check_consistency()
+        .map_err(|source| BuilderError::ArtifactVerification { app: app.to_string(), source: Box::new(source) })?;
     Ok(())
 }
 

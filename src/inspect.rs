@@ -89,7 +89,7 @@ pub fn inspect_path(input: impl AsRef<Path>) -> Result<InspectionReport> {
 }
 
 pub fn inspect_artifact(artifact: &Artifact) -> Result<InspectionReport> {
-    artifact.verify().map_err(|err| ArgentError::new(format!("invalid artifact: {err}")))?;
+    artifact.check_consistency().map_err(|err| ArgentError::new(format!("invalid artifact: {err}")))?;
 
     let mut actors = Vec::with_capacity(artifact.argent.actors.len());
     for actor in &artifact.argent.actors {
