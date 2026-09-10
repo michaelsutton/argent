@@ -1712,7 +1712,9 @@ impl<'a> TxBuilder<'a> {
 }
 
 fn validate_artifact(app: &str, artifact: &Artifact) -> BuilderResult<()> {
-    artifact.verify().map_err(|source| BuilderError::ArtifactVerification { app: app.to_string(), source: Box::new(source) })?;
+    artifact
+        .check_consistency()
+        .map_err(|source| BuilderError::ArtifactVerification { app: app.to_string(), source: Box::new(source) })?;
     validate_runtime_cardinality_support(app, artifact)?;
     Ok(())
 }

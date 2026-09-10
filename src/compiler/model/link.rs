@@ -44,7 +44,7 @@ pub(crate) fn link_imported_actors(
         if artifact.app != *app {
             return Err(ArgentError::new(format!("linked artifact for app `{app}` declares app `{}`", artifact.app)));
         }
-        artifact.verify().map_err(|err| ArgentError::new(format!("linked app `{app}` has an invalid artifact: {err}")))?;
+        artifact.check_consistency().map_err(|err| ArgentError::new(format!("linked app `{app}` has an invalid artifact: {err}")))?;
     }
 
     let mut bindings = BTreeMap::<String, (String, String)>::new();

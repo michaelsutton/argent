@@ -2011,7 +2011,7 @@ fn emit_artifact(program: &Program, model: &Model<'_>, actor_sil: &BTreeMap<Stri
     };
     artifact.id =
         artifact.computed_id_hex().map_err(|err| ArgentError::new(format!("failed to compute generated artifact id: {err}")))?;
-    artifact.verify().map_err(|err| ArgentError::new(format!("invalid generated artifact: {err}")))?;
+    artifact.check_consistency().map_err(|err| ArgentError::new(format!("invalid generated artifact: {err}")))?;
     Ok(artifact)
 }
 

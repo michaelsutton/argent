@@ -3342,7 +3342,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 [[package]]
 name = "silverscript-abi"
 version = "0.1.0"
-source = "git+https://github.com/kaspanet/silverscript?rev=158534d606e9d5541e932c7575ff331e12699fb5#158534d606e9d5541e932c7575ff331e12699fb5"
+source = "git+https://github.com/kaspanet/silverscript?rev=3ed973335b59269293564805cc2c58a14595ec03#3ed973335b59269293564805cc2c58a14595ec03"
 dependencies = [
  "blake3",
  "faster-hex 0.10.0",
@@ -3355,8 +3355,8 @@ dependencies = [
 
 [[package]]
 name = "silverscript-lang"
-version = "0.1.0"
-source = "git+https://github.com/kaspanet/silverscript?rev=158534d606e9d5541e932c7575ff331e12699fb5#158534d606e9d5541e932c7575ff331e12699fb5"
+version = "1.0.0"
+source = "git+https://github.com/kaspanet/silverscript?rev=3ed973335b59269293564805cc2c58a14595ec03#3ed973335b59269293564805cc2c58a14595ec03"
 dependencies = [
  "blake2b_simd",
  "blake3",

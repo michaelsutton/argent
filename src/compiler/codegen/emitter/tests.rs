@@ -1911,7 +1911,7 @@ fn named_exact_self_coexists_with_a_constructed_route() {
     assert_eq!(entry.routes[0].output, "current");
     assert!(matches!(entry.routes[0].successor, RouteSuccessorArtifact::ExactSelf));
     assert_eq!(artifact_constructed_actor(&entry.routes[1]), "Peer");
-    artifact.verify_template_plan().expect("exact and constructed successor metadata verifies");
+    artifact.check_template_plan_consistency().expect("exact and constructed successor metadata verifies");
 }
 
 #[test]
@@ -3743,7 +3743,7 @@ fn emits_portable_artifact_schema() {
         extract_sil_template(&artifact.sil_abi.contract("Foo").unwrap().compiled).expect("Sil template extracts"),
         "a plain actor still exports its Sil template as its source-state handle"
     );
-    artifact.verify_template_plan().expect("template plan receipt verifies");
+    artifact.check_template_plan_consistency().expect("template plan receipt verifies");
     assert!(artifact.sil_abi.structs.is_empty(), "the equivalent authored struct is absent from the exact Sil ABI");
 
     let state = artifact.argent.states.iter().find(|state| state.name == "FooState").expect("source state is present");
@@ -4441,7 +4441,7 @@ fn expanded_actor_records_sil_and_capsule_template_cuts() {
     assert!(capsule_prefix.starts_with(sil_prefix));
     assert!(capsule_prefix.len() > sil_prefix.len());
     assert_eq!(handle.template.suffix, sil_template.suffix);
-    artifact.verify_template_plan().expect("capsule template receipt verifies");
+    artifact.check_template_plan_consistency().expect("capsule template receipt verifies");
 
     // A direct template role always stores one fixed-width template hash.
     let mut dynamic_template_field = artifact.clone();
@@ -4453,7 +4453,7 @@ fn expanded_actor_records_sil_and_capsule_template_cuts() {
         .find(|field| field.name == "gen__reserve_asset_template")
         .expect("template context field exists")
         .ty = TypeArtifact::Bytes;
-    let err = dynamic_template_field.verify_template_plan().expect_err("dynamic template context is rejected");
+    let err = dynamic_template_field.check_template_plan_consistency().expect_err("dynamic template context is rejected");
     assert!(
         matches!(err, TemplatePlanError::RuntimeStatePlanMismatch { ref contract, .. } if contract == "ReserveAsset"),
         "unexpected error: {err}"
@@ -4474,7 +4474,7 @@ fn expanded_actor_records_sil_and_capsule_template_cuts() {
     handle.template.prefix = prefix.clone();
     let suffix = handle.template.suffix.clone();
     handle.template.hash = silverscript_lang::template::template_hash(&prefix, &suffix);
-    let err = corrupted.verify_template_plan().expect_err("corrupted capsule context is rejected");
+    let err = corrupted.check_template_plan_consistency().expect_err("corrupted capsule context is rejected");
     assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
 
     let mut corrupted = artifact.clone();
@@ -4497,14 +4497,14 @@ fn expanded_actor_records_sil_and_capsule_template_cuts() {
     let suffix = handle.template.suffix.clone();
     handle.template.prefix = noncanonical_prefix.clone();
     handle.template.hash = silverscript_lang::template::template_hash(&noncanonical_prefix, &suffix);
-    let err = corrupted.verify_template_plan().expect_err("non-canonical capsule context is rejected");
+    let err = corrupted.check_template_plan_consistency().expect_err("non-canonical capsule context is rejected");
     assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
 
     let mut corrupted = artifact.clone();
     let capsule =
         corrupted.argent.states.iter_mut().find(|state| state.name == "AssetCapsule").expect("AssetCapsule Argent layout exists");
     capsule.fields.last_mut().expect("AssetCapsule has fields").ty = TypeArtifact::Bool;
-    let err = corrupted.verify_template_plan().expect_err("capsule state layout mismatch is rejected");
+    let err = corrupted.check_template_plan_consistency().expect_err("capsule state layout mismatch is rejected");
     assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
 
     let mut corrupted = artifact.clone();
@@ -4517,7 +4517,7 @@ fn expanded_actor_records_sil_and_capsule_template_cuts() {
         .map(|template| &mut template.actor_type_handle)
         .expect("ReserveAsset capsule handle exists");
     handle.template.hash = [0; 32];
-    let err = corrupted.verify_template_plan().expect_err("corrupted capsule hash is rejected");
+    let err = corrupted.check_template_plan_consistency().expect_err("corrupted capsule hash is rejected");
     assert!(matches!(err, TemplatePlanError::ActorTypeHandleMismatch { .. }), "unexpected error: {err}");
 }
 
@@ -5016,7 +5016,7 @@ fn observed_slots_lower_to_foreign_state_checks() {
 
     let artifact_json = fs::read_to_string(out_dir.join("artifact.json")).expect("artifact json exists");
     let artifact: Artifact = serde_json::from_str(&artifact_json).expect("artifact deserializes");
-    artifact.verify_template_plan().expect("observed witness receipts verify");
+    artifact.check_template_plan_consistency().expect("observed witness receipts verify");
 
     let _ = fs::remove_dir_all(out_dir);
 }
@@ -6248,7 +6248,7 @@ fn compiler_lowers_injected_deep_forest_cuts() {
     assert!(hub_b_sil.contains("gen__hub_b_routes_digest: blake3(byte[](gen__hub_b_routes)),"), "{hub_b_sil}");
 
     let artifact = emit_artifact(&program, &model, &actor_sil).expect("deep-forest artifact emits");
-    artifact.verify_template_plan().expect("deep-forest template plan verifies");
+    artifact.check_template_plan_consistency().expect("deep-forest template plan verifies");
     assert_eq!(artifact.argent.template_plan.route_families.len(), 2);
 }
 
@@ -6615,7 +6615,7 @@ fn in_app_observed_output_opens_the_target_family_cut() {
         param.name == "gen__mux_suffix" && param.subject == HiddenParamSubjectArtifact::Actor { actor: "Mux".to_string() }
     }));
     assert!(!advance.hidden_params.iter().any(|param| matches!(param.subject, HiddenParamSubjectArtifact::ObservedActor { .. })));
-    artifact.verify_template_plan().expect("in-app observed output uses the planned target cut");
+    artifact.check_template_plan_consistency().expect("in-app observed output uses the planned target cut");
 }
 
 #[test]
@@ -6938,7 +6938,7 @@ fn selected_gates_open_from_the_family_table_and_direct_consumes_stay_concrete()
     );
 
     let artifact = emit_artifact(&program, &model, &actor_sil).expect("generated Sil compiles");
-    artifact.verify_template_plan().expect("representative actors may be stored inside their family table");
+    artifact.check_template_plan_consistency().expect("representative actors may be stored inside their family table");
 }
 
 #[test]
@@ -7175,7 +7175,7 @@ fn direct_route_families_are_inferred_without_hints() {
         vec![("target", "MoveActor", "BoardState", vec!["Pawn", "Knight"], Some("Knight"))]
     );
     assert_eq!(choose_knight_const.routes.iter().map(artifact_constructed_actor).collect::<Vec<_>>(), vec!["Knight"]);
-    artifact.verify_template_plan().expect("template plan receipt verifies inferred route family");
+    artifact.check_template_plan_consistency().expect("template plan receipt verifies inferred route family");
 }
 
 #[test]
@@ -7455,7 +7455,7 @@ fn gate_less_family_appends_rep_after_selector_variants() {
     assert!(mux_sil.contains("require(gen__target_selector < 2);"), "{mux_sil}");
     assert!(mux_sil.contains("byte[32] gen__target_template = byte[32]("), "{mux_sil}");
     assert!(mux_sil.contains("gen__mux_routes.slice(gen__target_selector * 32, gen__target_selector * 32 + 32)"), "{mux_sil}");
-    artifact.verify_template_plan().expect("template plan receipt verifies");
+    artifact.check_template_plan_consistency().expect("template plan receipt verifies");
 }
 
 #[test]
@@ -7518,7 +7518,7 @@ fn actor_enum_local_drives_selector_domain_and_route_expansion() {
     let mux_sil = actor_sil.get("Mux").expect("Mux Sil is emitted");
     assert!(mux_sil.contains("int target = index;"), "{mux_sil}");
     assert!(mux_sil.contains("int gen__target_selector = target;"), "{mux_sil}");
-    artifact.verify_template_plan().expect("local selector route plan verifies");
+    artifact.check_template_plan_consistency().expect("local selector route plan verifies");
 }
 
 #[test]
@@ -7667,7 +7667,7 @@ fn selector_can_include_its_source_actor() {
             "#,
     );
 
-    artifact.verify_template_plan().expect("self selector variant has a valid identity cut transition");
+    artifact.check_template_plan_consistency().expect("self selector variant has a valid identity cut transition");
 }
 
 #[test]
@@ -7755,7 +7755,7 @@ fn two_actor_routes_use_direct_template_fields() {
             ("gen__b_template", RuntimeFieldRoleArtifact::Template { contract: "B".to_string() }),
         ]
     );
-    artifact.verify_template_plan().expect("direct two-actor route plan verifies");
+    artifact.check_template_plan_consistency().expect("direct two-actor route plan verifies");
 }
 
 #[test]
@@ -7918,7 +7918,7 @@ fn route_family_state_can_have_multiple_disconnected_families() {
             RuntimeFieldRoleArtifact::TemplateTable { contracts: vec!["D".to_string(), "E".to_string(), "F".to_string()] }
         ),]
     );
-    artifact.verify_template_plan().expect("multi-family route state receipt verifies");
+    artifact.check_template_plan_consistency().expect("multi-family route state receipt verifies");
 }
 
 #[test]
@@ -8009,7 +8009,7 @@ fn route_family_with_one_table_actor_uses_direct_template_fields() {
             ("gen__leaf_template", RuntimeFieldRoleArtifact::Template { contract: "Leaf".to_string() }),
         ]
     );
-    artifact.verify_template_plan().expect("direct route plan verifies");
+    artifact.check_template_plan_consistency().expect("direct route plan verifies");
 }
 
 #[test]
@@ -8123,7 +8123,7 @@ fn route_family_with_multiple_external_entries_uses_first_entry_as_representativ
             ),
         ]
     );
-    artifact.verify_template_plan().expect("multi-entry route family receipt verifies");
+    artifact.check_template_plan_consistency().expect("multi-entry route family receipt verifies");
 }
 
 fn inline_artifact(name: &str, source: &str) -> Artifact {
@@ -8465,11 +8465,11 @@ fn genesis_spawn_lowers_to_pinned_sil_and_artifact_metadata() {
             "gen__actor_type_self_pair_type_suffix",
         ]
     );
-    controller_artifact.verify_template_plan().expect("spawn metadata verifies");
+    controller_artifact.check_template_plan_consistency().expect("spawn metadata verifies");
     let mut malformed = controller_artifact.clone();
     malformed.argent.actors[0].entries[0].spawns[0].outputs[1].group_index = 2;
     assert!(
-        matches!(malformed.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+        matches!(malformed.check_template_plan_consistency(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
         "malformed spawn output order must be rejected"
     );
     let mut noncanonical_template_subject = controller_artifact.clone();
@@ -8483,7 +8483,7 @@ fn genesis_spawn_lowers_to_pinned_sil_and_artifact_metadata() {
     };
     *handle = "right".to_string();
     assert!(
-        matches!(noncanonical_template_subject.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+        matches!(noncanonical_template_subject.check_template_plan_consistency(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
         "shared spawn template witnesses must use their first output as subject"
     );
 
@@ -8527,7 +8527,7 @@ fn multiple_genesis_spawns_lower_to_pinned_sil_and_artifact_metadata() {
             "gen__actor_type_self_pair_type_suffix",
         ]
     );
-    controller_artifact.verify_template_plan().expect("multiple-spawn metadata verifies");
+    controller_artifact.check_template_plan_consistency().expect("multiple-spawn metadata verifies");
 
     let (pair_sil, _) = emit_selected_fixture(source, "PairApp", "Pair");
     assert_eq!(pair_sil, include_str!("../../../../tests/fixtures/runtime/context_multiple_genesis_spawns/Pair.sil"));
@@ -8572,7 +8572,7 @@ fn observed_and_spawned_source_actor_share_pinned_witnesses() {
             "witness/Controller/advance/actor_type/self_pair_type/template_suffix_bytes",
         ]
     );
-    controller_artifact.verify_template_plan().expect("shared observe/spawn witness metadata verifies");
+    controller_artifact.check_template_plan_consistency().expect("shared observe/spawn witness metadata verifies");
 
     let mut malformed = controller_artifact.clone();
     let prefix = malformed.argent.actors[0].entries[0]
@@ -8585,7 +8585,7 @@ fn observed_and_spawned_source_actor_share_pinned_witnesses() {
     };
     *handle = "missing".to_string();
     assert!(
-        matches!(malformed.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+        matches!(malformed.check_template_plan_consistency(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
         "spawn metadata rejects an invalid observed witness provider"
     );
 
@@ -8905,11 +8905,11 @@ fn fixed_actor_spawn_uses_compiler_owned_template_and_keeps_its_closure() {
                 HiddenParamPurposeArtifact::TemplatePrefixBytes | HiddenParamPurposeArtifact::TemplateSuffixBytes
             )
     }));
-    artifact.verify_template_plan().expect("fixed spawn template closure verifies");
+    artifact.check_template_plan_consistency().expect("fixed spawn template closure verifies");
     let mut malformed = artifact.clone();
     malformed.argent.actors[0].entries[0].hidden_params.retain(|param| param.name != "gen__child_suffix");
     assert!(
-        matches!(malformed.verify_template_plan(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
+        matches!(malformed.check_template_plan_consistency(), Err(TemplatePlanError::InvalidSpawnMetadata { .. })),
         "static spawn metadata must retain one complete actor-scoped template pair"
     );
 
@@ -8951,7 +8951,7 @@ fn fixed_actor_spawn_reuses_consumed_template_in_pinned_sil() {
             ),
         ]
     );
-    launcher_artifact.verify_template_plan().expect("pinned fixed-spawn template plan verifies");
+    launcher_artifact.check_template_plan_consistency().expect("pinned fixed-spawn template plan verifies");
 }
 
 #[test]
@@ -8999,7 +8999,7 @@ fn fixed_actor_self_spawn_uses_the_active_template() {
                 | HiddenParamPurposeArtifact::TemplateSuffixLen
         )
     }));
-    artifact.verify_template_plan().expect("fixed self-spawn template plan verifies");
+    artifact.check_template_plan_consistency().expect("fixed self-spawn template plan verifies");
 }
 
 #[test]
@@ -9076,7 +9076,7 @@ fn fixed_actor_spawn_opens_the_target_family_cut() {
     assert!(launch.hidden_params.iter().any(|param| {
         param.name == "gen__mux_suffix" && param.subject == HiddenParamSubjectArtifact::Actor { actor: "Mux".to_string() }
     }));
-    artifact.verify_template_plan().expect("fixed family spawn template plan verifies");
+    artifact.check_template_plan_consistency().expect("fixed family spawn template plan verifies");
 }
 
 #[test]
@@ -9557,7 +9557,7 @@ fn assert_example_build_artifact(input: &str, name: &str, expected_hashes: &[(&s
 
     let artifact = crate::build_file(input, &out_dir).expect("example builds");
     artifact.check_schema_version().expect("artifact schema version is supported");
-    artifact.verify_template_plan().expect("template plan receipt verifies");
+    artifact.check_template_plan_consistency().expect("template plan receipt verifies");
 
     let expected_hashes = expected_hashes.iter().copied().collect::<BTreeMap<_, _>>();
     assert!(!artifact.argent.actors.is_empty(), "artifact should contain Argent actors");
