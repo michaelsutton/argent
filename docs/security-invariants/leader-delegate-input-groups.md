@@ -138,8 +138,8 @@ By definition, `A(l) ⊆ O(c)`. The sets are finite and have the same size, so:
 A(l) = O(c)
 ```
 
-This proves Property 3. Genesis outputs do not participate in either set, which
-also proves Property 5.
+This proves **Property 3**. Genesis outputs do not participate in either set,
+which also proves **Property 5**.
 
 ### Claim 2: an ordinary entry cannot occupy a delegate position
 
@@ -152,7 +152,7 @@ Consider an ordinary entry selected at a delegate position:
   actor is also a leader actor. Otherwise, Rule 6 requires it to execute at
   `I(c)[0]`. Neither case permits execution at a nonzero delegate position.
 
-All cases fail. This proves the ordinary-entry exclusion in Property 4.
+All cases fail. This proves the ordinary-entry exclusion in **Property 4**.
 
 ### Claim 3: the leader and delegates form one closed group
 
@@ -170,7 +170,7 @@ fails Rule 2. The successful entry must therefore be an outputless delegate
 which authenticates this leader actor.
 
 Rule 3 also rejects every wrong, extra, or undeclared input. This proves
-Properties 1, 2, and 4.
+**Property 1**, **Property 2**, and **Property 4**.
 
 ## Batching and scope
 
@@ -184,14 +184,14 @@ If it replaces a delegate in a coordinated transition, its nonempty `A(i)`
 violates Claim 1. A zero-capable entry could otherwise look like an outputless
 delegate, so Rule 6 requires it to lead its covenant group. It may still share
 that group with other entries that remain batchable, but two entries subject to
-Rule 6 cannot both occupy its first position. This proves Property 6.
+Rule 6 cannot both occupy its first position. This proves **Property 6**.
 
 The remaining limit is intentional. If several delegate entries on one actor
 trust the same leader actor, any one of them may be selected. Two coordinated
 entries on the leader actor can also be indistinguishable when they accept the
 same input shape. An application that needs entry-specific authorization must
 encode it in state or transaction checks, or use separate actor contracts.
-This is Property 7.
+This is **Property 7**.
 
 The artifact records the actor and delegate relationships used to derive these
 rules. The runtime transaction builder can report group-shape violations before
