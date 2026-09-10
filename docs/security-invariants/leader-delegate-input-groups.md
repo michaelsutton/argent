@@ -2,8 +2,8 @@
 
 Argent lets several inputs from the same covenant participate in one
 transaction. They may form one coordinated transition, where a leader consumes
-other actors and their delegate entries approve the coordination. They may also
-be independent transitions that are only batched together. This document
+other actors and declared delegate positions approve the coordination. They may
+also be independent transitions that are only batched together. This document
 defines how Argent secures the coordinated case without unnecessarily
 restricting the independent case.
 
@@ -66,10 +66,10 @@ outputs.
    actor at `I(c)[0]`, rejects execution at `I(c)[0]`, requires `A(d) = ∅`, and
    cannot use `become` or `spawns`.
 3. **Rule 3 — Input-group closure.** Every coordinated leader entry executes at
-   `I(c)[0]`, covers the complete `I(c)` group with its resolved `consumes`
-   cardinalities, and authenticates every consumed actor. Every ordinary entry
-   of a leader actor also closes its input group; without `consumes`, it
-   requires `|I(c)| = 1`.
+   `I(c)[0]`. Its resolved and bounds-checked `consumes` cardinalities cover
+   every nonleader position in `I(c)` exactly once and in transaction order. It
+   authenticates every consumed actor. Every ordinary entry of a leader actor
+   also closes its input group; without `consumes`, it requires `|I(c)| = 1`.
 4. **Rule 4 — Authorized-output integrity.** Every ordinary entry enforces the
    resolved cardinality of `A(i)` and validates every successor in `A(i)`.
 5. **Rule 5 — Continuation closure.** Every coordinated leader input `l`
@@ -112,8 +112,9 @@ outputs.
 4. **Property 4 — Delegate-position integrity.** An ordinary entry cannot replace
    a delegate. A successful delegate position executes an outputless delegate
    which authenticates the leader actor.
-5. **Property 5 — Spawn compatibility.** Genesis outputs created by `spawns`
-   remain valid because they are outside `O(c)` and every `A(i)`.
+5. **Property 5 — Spawn compatibility.** Genesis outputs created by `spawns` do
+   not interfere with continuation closure because they are outside `O(c)` and
+   every `A(i)`.
 6. **Property 6 — Minimal batching restriction.** Continuation closure does not
    restrict independent batches. Rule 6 requires an otherwise-batchable,
    zero-capable entry to execute first, but does not require it to be the only
