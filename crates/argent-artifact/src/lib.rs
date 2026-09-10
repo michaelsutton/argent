@@ -9,9 +9,11 @@
 //! families, or hidden-field roles into `silverscript-abi`. Store them here as
 //! metadata that points at Sil ABI contract and field names.
 
+mod cardinality;
 mod template_frames;
 mod verify_spawns;
 
+pub use cardinality::{ArtifactCardinalityError, MAX_ENTRY_RANGE_CARDINALITY};
 pub use template_frames::{TemplateFrameLengths, TemplateFrameVerificationError};
 
 use serde::{Deserialize, Serialize};
@@ -43,6 +45,8 @@ pub struct Artifact {
 pub enum ArtifactVerificationError {
     #[error(transparent)]
     Version(#[from] ArtifactVersionError),
+    #[error(transparent)]
+    Cardinality(#[from] ArtifactCardinalityError),
     #[error(transparent)]
     SilAbi(#[from] SilAbiVerificationError),
     #[error(transparent)]
@@ -116,10 +120,10 @@ fn is_false(value: &bool) -> bool {
 impl Artifact {
     /// Checks the complete portable Argent artifact for internal consistency.
     ///
-    /// The check compares the artifact's schema, ABI, template plan, compiled
-    /// frames, and declared identity. It assumes the artifact was produced by
-    /// supported Argent and Silverscript compilers and may rely on their
-    /// representation invariants.
+    /// The check compares the artifact's schema, interaction cardinalities,
+    /// ABI, template plan, compiled frames, and declared identity. It assumes
+    /// the artifact was produced by supported Argent and Silverscript compilers
+    /// and may rely on their representation invariants.
     ///
     /// This method does not prove that the embedded bytecode was generated from
     /// the recorded source or make an attacker-supplied artifact trustworthy.
@@ -130,6 +134,7 @@ impl Artifact {
         self.check_sil_abi_consistency()?;
         self.verify_template_frames()?;
         self.check_template_plan_consistency()?;
+        self.check_cardinality_consistency()?;
         self.verify_id()?;
         Ok(())
     }
@@ -746,12 +751,6 @@ pub struct EmitOutputArtifact {
     #[serde(default, skip_serializing_if = "CardinalityArtifact::is_one")]
     pub cardinality: CardinalityArtifact,
 }
-
-/// Maximum range cardinality accepted by Argent compilers and runtimes.
-///
-/// Keeping the limit in the portable artifact layer prevents compiler and
-/// consumer implementations from drifting on generated-loop resource bounds.
-pub const MAX_ENTRY_RANGE_CARDINALITY: i64 = 512;
 
 /// Resolved transaction cardinality of one named interaction handle.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
